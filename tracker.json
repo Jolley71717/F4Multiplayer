@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T19:46:51+00:00",
+ "updated": "2026-11-22T01:05:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -283,9 +283,17 @@
    "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix built (PR 532); its rig proof run passed every step, clean-up in progress.",
+   "stage": 4,
+   "note": "PR 532: proven in a game (enter, leave, leaving mid-exit six times, no crash); in review. Death in the armor not yet tested.",
    "pr": 495
+  },
+  {
+   "id": "2jhy",
+   "title": "A friend's power armor jetpack isn't shown: the stand-in rises with no jets, in the jump pose",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "2jop",
@@ -492,8 +500,8 @@
    "title": "Crash to desktop whenever a flying ant swarm is met in Nuka-World (only in a session)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Being worked"
+   "stage": 2,
+   "note": "Fix built (PR 545); proof run in a game under way."
   },
   {
    "id": "498g",
@@ -1070,6 +1078,22 @@
    "pr": 464
   },
   {
+   "id": "978o",
+   "title": "A limb a kill takes off (or a body blown apart) is whole in the other player's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "9e17",
+   "title": "A friend's gun bash isn't shown: the stand-in stands still while the target is hit",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "9f3p",
    "title": "Shared storage: one true copy of each home and settlement container",
    "kind": "feature",
@@ -1257,8 +1281,8 @@
    "title": "Updating the mod overwrites the player's F4Multiplayer.ini (the release zip ships the ini)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix built (PR 533): the zip no longer holds the ini; the plugin adds only missing settings. In review; a start-up check in a game is still to do."
+   "stage": 5,
+   "note": "Merged (PR 533). An update keeps the player's settings file; checked in a game on both machines."
   },
   {
    "id": "bbbp",
@@ -1362,6 +1386,14 @@
    "priority": 4,
    "stage": 1,
    "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
+  },
+  {
+   "id": "c8i6",
+   "title": "A friend's dead enemy held by a followed run's alias is still deleted with what is on it (save, cell unload, 9000 units, session end)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "c9zf",
@@ -1603,6 +1635,14 @@
    "desc": "Sometimes a friend put their weapon away but it stayed in their hand on your screen. The game's 'putting away' state was being read as 'already away', so when the friend's figure missed the holster (mid-throw or mid-reload) it was never asked again. Now it waits for the holster to finish and asks again if it stalls."
   },
   {
+   "id": "e5w7",
+   "title": "Kill moves and the Cannibal and Mister Sandman animations aren't shown on the attacker's stand-in",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "e5yp",
    "title": "Workshop copies lose their tracking when their cell unloads and loads again: power changes stop reaching them",
    "kind": "bug",
@@ -1683,6 +1723,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; weapons and armor on corpses stay per player on purpose.",
    "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
+  },
+  {
+   "id": "emzg",
+   "title": "A friend's melee block isn't shown, and their power attack shows as a plain swing",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "esyh",
@@ -1822,6 +1870,14 @@
    "note": "",
    "pr": 182,
    "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
+  },
+  {
+   "id": "ga0s",
+   "title": "The F1 menu's save can replace the whole ini with one line when the file can't be read at that moment",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Merged with PR 533: a save never writes over a settings file it could not read."
   },
   {
    "id": "gbfh",
@@ -2025,6 +2081,14 @@
    "pr": 487
   },
   {
+   "id": "hrw9",
+   "title": "A Far Harbor repair point one player repairs stays broken in the other's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "hsw8",
    "title": "A friend near us by their newest state with no stand-in placed is only logged, not mended",
    "kind": "bug",
@@ -2040,6 +2104,14 @@
    "stage": 7,
    "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
+  },
+  {
+   "id": "hv4u",
+   "title": "A hit an NPC lands on a friend's stand-in ignores the victim's own perks, legendary armor effects, limb damage, radiation and stagger",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "hwbu",
@@ -2081,6 +2153,14 @@
    "title": "Shared workshop: a friend can't move a power piece or anything wired or on the host's grid (generator, lights, switches), their own build included",
    "kind": "bug",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "ia5v",
+   "title": "Settings save in place: when the cut to length fails, the old file's last bytes stay behind the new text",
+   "kind": "bug",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -2178,6 +2258,14 @@
    "stage": 7,
    "note": "",
    "pr": 297
+  },
+  {
+   "id": "is18",
+   "title": "Check: things put into our copy of a friend's parked power armor frame when the copy goes",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "iubr",
@@ -2335,6 +2423,14 @@
   {
    "id": "kayn",
    "title": "A lower quest stage that play sets after a higher one, with no stage script between them, is still dropped in a friend's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "kbfe",
+   "title": "Players' state buffer has no guard for stamps far ahead of now: a friend whose first states arrive in one burst is drawn about 1.5 s behind for minutes",
    "kind": "bug",
    "priority": 4,
    "stage": 0,
@@ -2548,6 +2644,14 @@
    "partial": "0.19.0"
   },
   {
+   "id": "mc0s",
+   "title": "A pacify perk (Intimidation, Animal Friend, Wasteland Whisperer) or Robotics Expert used on an NPC another game runs holds only in the perk owner's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "mhvn",
    "title": "Linux coverage CI fails once a header passes 10000 lines: gcovr 7.0 can't parse gcov block lines of 5-digit line numbers",
    "kind": "bug",
@@ -2563,6 +2667,14 @@
    "stage": 7,
    "note": "",
    "pr": 305
+  },
+  {
+   "id": "mivl",
+   "title": "Enemies detect a sneaking friend's stand-in without the friend's stealth perks, Stealth Boy or shadowed armor",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "mkbe",
@@ -2709,6 +2821,14 @@
    "pr": 476
   },
   {
+   "id": "nnzu",
+   "title": "Question: a death reloads the newest save, losing what was looted since (bSaveOnDown off by default)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "np3",
    "title": "Molotov and fire damage moves who can hurt an enemy",
    "kind": "bug",
@@ -2801,6 +2921,14 @@
    "pr": 261
   },
   {
+   "id": "oxbc",
+   "title": "A friend's stimpak use isn't shown: their stand-in plays no injection animation",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ozb0",
    "title": "Shared resources: a builder's new game (or load) leaves its old pieces counting at friends'",
    "kind": "bug",
@@ -2846,6 +2974,14 @@
    "desc": "A player reported crashes when picking up from some containers and when using terminals such as the Red Rocket one, with no crash log. This was one bug in builds before 0.7.3 that affected containers with linked objects and terminals alike. We fixed it in 0.7.3 and hardened it further in 0.9.0, and could not make a current build crash. If it still happens, please update and send a crash log from Buffout 4 or Addictol."
   },
   {
+   "id": "pjlk",
+   "title": "A hand-edited ban list loses the lines the server can't read at the next ban (and a list with no salt line is replaced)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found while checking every read-change-write of a player file for PR 533."
+  },
+  {
    "id": "pn99",
    "title": "Show friends on the Pip-Boy world and local maps",
    "kind": "feature",
@@ -2854,6 +2990,14 @@
    "note": "Shipped in 0.21.0",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
+  },
+  {
+   "id": "pryo",
+   "title": "A mine a player lays is not in the friend's game: no mine to see or disarm, no warning on the HUD, and its blast is not shared when it goes off more than 8 s after it was laid",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "pttk",
@@ -2876,6 +3020,14 @@
   {
    "id": "q1nm",
    "title": "Shared bench: a build found short only after the host adopted it still stands short (needs a host-side unbuild)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "q3cx",
+   "title": "Shared loot left on a friend's dead enemy can be taken in both games once the corpse is handed over",
    "kind": "bug",
    "priority": 4,
    "stage": 0,
@@ -2913,6 +3065,14 @@
    "priority": 2,
    "stage": 1,
    "note": "Being worked"
+  },
+  {
+   "id": "qe0d",
+   "title": "A charged weapon's wind-up isn't shown on a friend's stand-in (laser musket crank, Gauss charge)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "qk3t",
@@ -3164,6 +3324,14 @@
    "note": ""
   },
   {
+   "id": "sh2c",
+   "title": "A perk's hit effect on an NPC another game runs (a crippled limb, a paralysing palm, a disarm, a knockdown, a stagger) shows only in the hitter's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "smoy",
    "title": "Host crash in the combat AI job on a runtime actor (BSFixedString::operator= under CombatBehaviorTree, pipe gun), 2026-11-10 12:32, no plugin frame, untracked",
    "kind": "bug",
@@ -3256,6 +3424,14 @@
    "stage": 7,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
+  },
+  {
+   "id": "t35f",
+   "title": "Check: items on our copy of a friend's rack or display when the copy goes",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "t5ng",
@@ -3506,6 +3682,14 @@
   {
    "id": "vn0r",
    "title": "Nick's talk after the memory (000FAC86): the host's start stage 10 never reaches a joiner with sQuests = safe",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "vqk3",
+   "title": "A fire critical kill's burnt body (and the frost and char shaders of a critical kill) shows only in the killer's game",
    "kind": "bug",
    "priority": 4,
    "stage": 0,
@@ -3906,6 +4090,14 @@
    "pr": 207
   },
   {
+   "id": "yqz5",
+   "title": "A player's Sneak perk (no enemy mines or floor traps set off) does not hold when a friend is near: their stand-in sets the trap off in the friend's game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "yr5j",
    "title": "Host's workshop junk doesn't count at crafting stations during a session (only their own inventory's components show)",
    "kind": "bug",
@@ -3959,6 +4151,14 @@
    "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
   },
   {
+   "id": "z1wi",
+   "title": "A friend with a crippled leg doesn't limp on the other screen",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "z93u",
    "title": "A friend's harmless stand-in laser beam still counts as a 0-damage hit on players and NPCs (a hit NPC flees and becomes shared)",
    "kind": "bug",
@@ -3974,6 +4174,14 @@
    "priority": 2,
    "stage": 7,
    "note": "PR open: five more quests shared; in review"
+  },
+  {
+   "id": "zb7x",
+   "title": "Server start with the session file held open for over a second, not renameable and with no .bak: the next saves replace it with a new session",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found while checking every read-change-write of a player file for PR 533."
   },
   {
    "id": "zbg2",
