@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T11:21:10+00:00",
+ "updated": "2026-11-22T12:02:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2151,8 +2151,9 @@
    "title": "A hit an NPC lands on a friend's stand-in ignores the victim's own perks, legendary armor effects, limb damage, radiation and stagger",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Opus agent on it: real engine hit on the victim's side"
+   "stage": 4,
+   "note": "Fixed and tested in a game; waits for the next minor release (it changes the protocol)",
+   "pr": 547
   },
   {
    "id": "hwbu",
@@ -3661,8 +3662,8 @@
    "title": "Localization gaps: name tags, compass marker names, the session-file notices, conversation fallback, key names and Steam status still English in code",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; needs an in-game check before merge",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 550
   },
   {
@@ -4261,8 +4262,8 @@
    "title": "The game runs on behind another window from the moment a host or join starts",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; waiting for a two-game test of alt-tabbing at the menu and during a join",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 549
   },
   {
