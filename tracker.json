@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T17:47:48+00:00",
+ "updated": "2026-11-22T17:56:30+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -564,8 +564,8 @@
    "title": "A friend's shots don't register in the Concord museum",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Found and reproduced: the raiders the quest makes in Concord's street were each game's own; fix in a draft PR"
+   "stage": 2,
+   "note": "Fix built; draft PR open; unit tests pass; rig re-test waiting for the rig"
   },
   {
    "id": "4n7r",
