@@ -81,22 +81,26 @@ namespace MirrorFrames
 		return a_dead || a_lifeState == LIFE_DYING || a_lifeState == LIFE_DEAD || a_knockState != 0;
 	}
 
-	// As we stop mirroring it (Leave): what becomes of it and its copy.
+	// As we stop mirroring it (Leave): what becomes of it and its copy. Every way mirroring stops (its owner's game no longer
+	// runs it here, its owner's copy elsewhere, far or silent past HOLD, its owner gone, its death, its cell unloaded here, a
+	// save, a load, the session's end) leaves it while it is still a mirror (NpcSync's StopMirroring before Puppets lets it
+	// go, MirrorFrames::LeaveAll before NpcSync::ReleaseMirrors), so the exit, which only ever takes a mirror out, takes it.
 	enum class Leaving
 	{
 		kDrop,     // not in its copy: the copy goes (RemotePlayers::Discard)
 		kExit,     // in it, on its feet: the engine's exit, then the copy goes; still in it after (refused, failed, or the engine's
 		           // preload still loading after the wait): kRelease
-		kRelease,  // in it and down: never taken out; the copy is left to the game with it in it (SaveGuard::Release), so a save
-		           // has the frame it wears, as the game's
+		kRelease,  // in it and down, or no longer a mirror (an NPC our game runs: never ours to take out): never taken out; the
+		           // copy is left to the game with it in it (SaveGuard::Release), so a save has the frame it wears, as the game's
 	};
 
-	constexpr Leaving ChooseLeaving(bool a_inCopy, bool a_down)
+	// a_mirror: still mirrored (Puppets), as every ending above leaves it; one that is not is a stop missed (Update's net).
+	constexpr Leaving ChooseLeaving(bool a_inCopy, bool a_down, bool a_mirror = true)
 	{
 		if (!a_inCopy) {
 			return Leaving::kDrop;
 		}
-		return a_down ? Leaving::kRelease : Leaving::kExit;
+		return a_down || !a_mirror ? Leaving::kRelease : Leaving::kExit;
 	}
 
 	// After the exit (Leaving::kExit): still in the copy, it is left to the game with it in it; out, the copy goes.
@@ -105,27 +109,19 @@ namespace MirrorFrames
 		return a_stillInCopy ? Leaving::kRelease : Leaving::kDrop;
 	}
 
-	// A mirror whose owner's copy went silent is held in its copy a while before it is taken out (Leave with a_hold): an NPC
-	// killed in its owner's game goes silent there first (its states stop), and its death is said a moment later. Taken out at
-	// once, the body was out of its suit here and in it there (rig, 2026-11-21: out 44 ms before the death came).
+	// A mirror in its copy whose owner's copy went silent (NpcPlace::Lost::kSilent) is held there, still a mirror and still at
+	// its owner's last state (NpcSync's UpdateMirrors), for up to HOLD of silence: an NPC killed in its owner's game goes silent
+	// there first (a runner sends no state for one dying), and its death is said a moment later. Let go at once, the body was
+	// out of its suit here and in it there (rig, 2026-11-21: out 44 ms before the death came, 3 s into the silence). Its death
+	// within the hold leaves the body in its suit (Down: kRelease); its states back, it is mirrored on; anything else that
+	// ends it (HOLD over, its owner gone, a save, the session's end) is a stop as any, the mirror taken out as it stops. Only
+	// silence holds: an owner's copy that went through a door or ran far is alive there, and ours gets out at once.
 	constexpr auto HOLD = std::chrono::seconds(10);
 
-	enum class Held
+	// a_silentFor: since its owner's last state.
+	constexpr bool HoldWhileSilent(bool a_inCopy, Duration a_silentFor)
 	{
-		kWait,     // still in its copy, on its feet, within HOLD: left as it is (mirrored again, it carries on as before)
-		kRelease,  // down in its copy (its death came): never taken out, the copy left to the game with it (Leaving::kRelease)
-		kLeave,    // out of its copy, or HOLD over: left as any mirror that stops being one (ChooseLeaving)
-	};
-
-	constexpr Held WhileHeld(bool a_inCopy, bool a_down, Duration a_heldFor)
-	{
-		if (!a_inCopy) {
-			return Held::kLeave;
-		}
-		if (a_down) {
-			return Held::kRelease;
-		}
-		return a_heldFor < HOLD ? Held::kWait : Held::kLeave;
+		return a_inCopy && a_silentFor <= HOLD;
 	}
 
 	constexpr Do Choose(const Facts& a_facts)
@@ -204,16 +200,23 @@ namespace MirrorFrames
 	// a_items. Acted on by Update.
 	void Want(RE::Actor* a_actor, std::uint32_t a_frameBase, const std::vector<std::uint32_t>& a_items);
 
-	// We stop mirroring it (its owner's game no longer runs it here, it unloaded, a save or a load comes, the session ends):
-	// out of its copy at once, the copy gone (ChooseLeaving). A body (Down), or one the exit did not take out, stays in it, and
-	// the copy is left to the game with it, never orphaned. a_why names it in the log. Its form ID: the actor may be unloaded.
-	// a_hold (its owner's copy went silent): one in its copy is held in it for HOLD first (WhileHeld, Update).
-	void Leave(std::uint32_t a_actorId, std::string_view a_why, bool a_hold = false);
+	// We stop mirroring it (its owner's game no longer runs it here, it unloaded, a save or a load comes, the session ends),
+	// called while it is still a mirror: out of its copy at once, the copy gone (ChooseLeaving). A body (Down), or one the exit
+	// did not take out, stays in it, and the copy is left to the game with it, never orphaned. a_why names it in the log. Its
+	// form ID: the actor may be unloaded.
+	void Leave(std::uint32_t a_actorId, std::string_view a_why);
 
-	// Every mirror in a copy taken out (Leave), and what was wanted forgotten.
+	// Every mirror in a copy taken out (Leave), and what was wanted forgotten: before a save or a load, and as the session
+	// ends (NpcSync::Reset, before its mirrors are let go). The waits on the engine's preload share one budget.
 	void LeaveAll(std::string_view a_why);
 
-	// A load is done: what was noted names the old game's forms (Leave ran before it); forgotten without touching anything.
+	// Whether the mirror is in the copy placed for it (HoldWhileSilent).
+	bool InCopy(RE::Actor* a_actor);
+
+	// NpcSync holds it in its copy this frame (HoldWhileSilent): said once a hold, and its end (Leave, or mirrored on: Update).
+	void Held(RE::Actor* a_actor, Duration a_silentFor);
+
+	// A load is done: what was noted names the old game's forms (LeaveAll ran before it); forgotten without touching anything.
 	void Forget();
 
 	// Once a frame.

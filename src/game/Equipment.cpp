@@ -970,6 +970,11 @@ namespace Equipment
 		if (first < 2 || first > 5) {
 			return ExitResult::kRefused;  // getting in (an exit begins only from in), or not in one the engine has
 		}
+		// No process at all: nothing the engine's exit is ever run on (its cell unloaded leaves an actor a low one, the
+		// engine's own way out for an actor that is not high, run below as it runs it).
+		if (!a_actor->currentProcess) {
+			return ExitResult::kRefused;
+		}
 		MainThread::Assert("Equipment::SwitchOutOfPowerArmor");
 		// An anim graph preload of its (ExtraAnimGraphPreload) still loading on the background loader thread: nothing is begun
 		// or carried on over it. The transfer changes the race and the 3D that load reads, and the finish destroys the extra,

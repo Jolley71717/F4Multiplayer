@@ -199,16 +199,74 @@ TEST("mirror frames: as mirroring stops, a body or one the exit did not take out
 	CHECK(AfterExit(true) == Leaving::kRelease);  // refused, failed, or the preload still loading: never orphaned
 }
 
-TEST("mirror frames: a mirror whose owner's copy went silent is held in its copy, so a death said after leaves the body in its suit")
+namespace
 {
-	using MirrorFrames::Held;
+	using MirrorFrames::ChooseLeaving;
 	using MirrorFrames::HOLD;
-	using MirrorFrames::WhileHeld;
-	CHECK(WhileHeld(true, false, 0s) == Held::kWait);
-	CHECK(WhileHeld(true, false, HOLD - 1s) == Held::kWait);
-	CHECK(WhileHeld(true, true, 1s) == Held::kRelease);  // its death came: never taken out
-	CHECK(WhileHeld(true, true, HOLD + 5s) == Held::kRelease);
-	CHECK(WhileHeld(true, false, HOLD) == Held::kLeave);  // not mirrored again, not dead: as any mirror that stops
-	CHECK(WhileHeld(false, false, 1s) == Held::kLeave);   // out of its copy on its own AI: the copy goes
-	CHECK(WhileHeld(false, true, 1s) == Held::kLeave);
+	using MirrorFrames::HoldWhileSilent;
+	using MirrorFrames::Leaving;
+
+	// A mirror in its copy, on its feet, its owner's copy gone silent: held, still a mirror, at the start of each ending below.
+	constexpr bool HeldAt(MirrorFrames::Duration a_silentFor)
+	{
+		return HoldWhileSilent(true, a_silentFor);
+	}
+}
+
+TEST("mirror frames: a mirror in its copy is held there while its owner's copy is silent, and only then")
+{
+	CHECK(HeldAt(MirrorFrames::Duration{}));
+	CHECK(HeldAt(3s));  // NpcPlace's LOST_AFTER: where it was let go (and taken out) before
+	CHECK(HeldAt(HOLD));
+	CHECK(!HeldAt(HOLD + 1ms));
+	CHECK(!HoldWhileSilent(false, 1s));  // out of any copy: let go to its own AI as any silent mirror
+}
+
+TEST("mirror frames: a hold that runs out takes it out with the engine's exit, as a mirror, never leaves the copy to the game")
+{
+	// The common case: a companion that followed its player through a door, ran far, or whose owner's game hung. Let go when
+	// the hold runs out, it leaves while still a mirror (StopMirroring calls Leave first), so the exit takes it.
+	CHECK(!HeldAt(HOLD + 1s));
+	CHECK(ChooseLeaving(true, false, true) == Leaving::kExit);
+	CHECK(MirrorFrames::AfterExit(false) == Leaving::kDrop);  // out: the copy goes, nothing of it in the save
+	// The 0.21 hold let go to its own AI first: the exit refused an NPC our game ran, and the copy was left to the game with
+	// it alive in it (a frame for good in the friend's save). Not a mirror any more, that is still the only safe way.
+	CHECK(ChooseLeaving(true, false, false) == Leaving::kRelease);
+}
+
+TEST("mirror frames: its death within the hold leaves the body in its suit, the copy the game's")
+{
+	CHECK(HeldAt(3044ms));  // rig, 2026-11-21: the death came 44 ms past LOST_AFTER
+	CHECK(ChooseLeaving(true, true, true) == Leaving::kRelease);
+	// A body the exit is never run on, whatever its owner's copy does meanwhile.
+	auto f = InCopy();
+	f.down = true;
+	f.ownerFrame = 0;
+	CHECK(Choose(f) == Do::kNothing);
+}
+
+TEST("mirror frames: its owner's states back within the hold, it is mirrored on in its copy as before")
+{
+	// Never let go: the copy and what was wanted are kept, and it follows its owner's copy from there.
+	CHECK(HeldAt(5s));
+	CHECK(Choose(InCopy()) == Do::kNothing);  // its owner's copy still in the suit
+	auto f = InCopy();
+	f.ownerFrame = 0;  // got out meanwhile
+	CHECK(Choose(f) == Do::kGetOut);
+}
+
+TEST("mirror frames: the hold ended by its owner leaving, its cell unloading, a save or the session's end takes it out as a mirror")
+{
+	// Each is a stop as any (UpdateMirrors' owner-gone and unloaded stops, Session's LeaveAll before a save or a load,
+	// NpcSync::Reset's LeaveAll before its mirrors are let go): left while still a mirror, on its feet, taken out.
+	for (const auto silentFor : { 0s, 4s, 9s }) {
+		CHECK(HeldAt(silentFor));
+		CHECK(ChooseLeaving(true, false, true) == Leaving::kExit);
+	}
+	// Knocked down at that moment (alive, ragdolled): never exited under a ragdoll; the copy is left to the game with it
+	// (counted apart from the bodies: releasedKnocked).
+	CHECK(ChooseLeaving(true, true, true) == Leaving::kRelease);
+	// Out of its copy by then (its exit carried on): only the copy goes.
+	CHECK(ChooseLeaving(false, false, true) == Leaving::kDrop);
+	CHECK(ChooseLeaving(false, false, false) == Leaving::kDrop);
 }
