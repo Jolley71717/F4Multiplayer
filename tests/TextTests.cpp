@@ -858,3 +858,41 @@ TEST("text: every key the plugin asks for by name is in the English table")
 	}
 	CHECK(keys > 50);
 }
+
+// A player's own texts (a correction, or a language the mod doesn't ship) are kept beside the log, where no update
+// replaces them, and go over the mod's file for that language (Text::Load).
+TEST("text: a player's own file goes over the mod's texts for that language, key by key")
+{
+	CHECK(Text::OwnFileName("ru") == "F4Multiplayer_lang_ru.txt");
+	CHECK(Text::OwnFileName("es-mx") == "F4Multiplayer_lang_es-mx.txt");
+
+	auto table = Text::Parse("session.left = shipped left\nsession.kicked = shipped kicked\n");
+	Text::Overlay(table, Text::Parse("# mine\nsession.kicked = my kicked\nsession.banned = my banned\n"));
+	CHECK(table.size() == 3);
+	CHECK(table["session.left"] == "shipped left");  // the mod's own stays where the player's file says nothing
+	CHECK(table["session.kicked"] == "my kicked");
+	CHECK(table["session.banned"] == "my banned");
+
+	// A language the mod has no file for: the player's file alone.
+	Text::Table none;
+	Text::Overlay(none, Text::Parse("session.left = x\n"));
+	CHECK(none.size() == 1);
+	// An empty file of the player's changes nothing.
+	Text::Overlay(table, Text::Parse(""));
+	CHECK(table.size() == 3);
+}
+
+// The package holds no file a player is told to keep their own changes in: the settings file is written by the
+// plugin, and a player's texts are beside the log. A file the zip held would replace theirs on every update.
+TEST("text: the package script ships no settings file, and the install guide names the player's own files")
+{
+	const auto root = SourceTree::Root();
+	REQUIRE(root);
+	const auto package = SourceTree::Read(*root / "tools" / "package.ps1");
+	REQUIRE(!package.empty());
+	CHECK(package.find("dist\\F4Multiplayer.ini') (Join-Path $stage") == std::string::npos);
+	CHECK(package.find("F4Multiplayer.ini') (Join-Path $stage") == std::string::npos);
+	CHECK(package.find("-Filter 'F4Multiplayer.ini'") != std::string::npos);  // and it refuses a package that holds one
+	const auto guide = SourceTree::Read(*root / "dist" / "INSTALL.md");
+	CHECK(guide.find("F4Multiplayer_lang_") != std::string::npos);
+}

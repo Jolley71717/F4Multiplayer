@@ -1,5 +1,7 @@
 #include "net/Identity.h"
 
+#include "net/IdentityFile.h"
+
 #include <ShlObj.h>
 
 #include <random>
@@ -34,20 +36,22 @@ namespace Identity
 			if (!path) {
 				return 0;
 			}
-			std::uint64_t id = 0;
-			if (std::ifstream in{ *path }; in && (in >> std::hex >> id) && id != 0) {
-				return id;
-			}
+			// The file work is IdentityFile::LoadOrCreate (game-free, which the tests run): a file that can't be read now
+			// is never written over. Only the file's name goes in the log, not the folder: it holds the Windows user name.
 			std::random_device rd;
-			while (id == 0) {
-				id = (static_cast<std::uint64_t>(rd()) << 32) | rd();
+			const auto         loaded = IdentityFile::LoadOrCreate(*path, [&] { return (static_cast<std::uint64_t>(rd()) << 32) | rd(); });
+			switch (loaded.what) {
+			case IdentityFile::Kept::Unreadable:
+				REX::WARN("Identity: {} can't be read right now; it is left as it is, and this run of the game uses an identity of its own", path->filename().string());
+				break;
+			case IdentityFile::Kept::NotCreated:
+				REX::WARN("Identity: couldn't write {}", path->filename().string());
+				break;
+			case IdentityFile::Kept::Read:
+			case IdentityFile::Kept::Created:
+				break;
 			}
-			std::ofstream out{ *path, std::ios::trunc };
-			out << std::format("{:016x}", id);
-			if (!out) {
-				REX::WARN("Identity: couldn't write {}", path->filename().string());  // not the folder: it holds the Windows user name
-			}
-			return id;
+			return loaded.id;
 		}
 	}
 

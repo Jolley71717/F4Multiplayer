@@ -23,7 +23,7 @@ shortcut), Shift+Tab, *Invite to Game* and the F1 menu's invite do nothing, and 
 (then nobody can join you, and you can't join anyone).
 
 1. Install F4SE, the Address Library and this mod into the game folder as on Windows
-   (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, `F4Multiplayer.ini`, the
+   (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, the
    `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side), and
    `Data/Interface/F4Multiplayer/MPMenu.swf` (without it the F1 menu is a plain message box).
 2. Make Steam's Play button start F4SE. Either:
@@ -57,10 +57,27 @@ same folder.
 
 ## Settings
 
-Edit `Data\F4SE\Plugins\F4Multiplayer.ini` (in Vortex: the mod's staging folder, or use
-"Open in File Manager"). The file is read when the game starts: change it, then restart the game. The one
-exception is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file
-(for the host's rules, see below).
+Edit `Data\F4SE\Plugins\F4Multiplayer.ini`. The mod writes the file the first time the game starts with it, with
+every setting at its default and a note on each (so it is not in the zip, and updating the mod never replaces it:
+your settings stay, and settings a new version adds are appended at the end at their defaults). In Vortex or Mod
+Organizer 2 the file is where the game's `Data\F4SE\Plugins` folder is for them (Vortex: the game's own folder; MO2:
+its `overwrite` folder). The file is read when the game starts: change it, then restart the game. The one exception
+is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file (for the host's
+rules, see below).
+
+If the mod can't write in `Data\F4SE\Plugins` (the folder or the file is read-only, or Windows keeps the game's
+folder from being written to), it still runs: every setting the file lacks, or all of them when there is no file, is
+at its built-in default, nothing you change in the F1 menu is kept for the next start, and `F4Multiplayer.log` says
+why ("could not be written"). Make the folder writable, or create `F4Multiplayer.ini` there yourself (an empty file
+will do) and start the game again. Save the file as UTF-8 or plain text: one saved as UTF-16 (older Notepads call it
+"Unicode") is not read and is left as it is, and the log says so. The same goes for a file another program has open
+in a way that keeps the mod from reading it (some editors, a virus scan or a cloud sync in the middle of its work):
+the mod never writes to a settings file it could not read, so a switch changed in the F1 menu at that moment holds
+until you close the game and is not saved, and the log says so ("can't be read right now").
+
+Updating from 0.21.0 or earlier with a mod manager: those versions had the file in the zip, so the manager counts it
+as the old version's and removes it with that version. Copy your `F4Multiplayer.ini` somewhere first and put it back
+in `Data\F4SE\Plugins` after the update. From this version on there is nothing to do.
 
 One player hosts:
 
@@ -82,8 +99,13 @@ German, French, Italian, Polish, Brazilian Portuguese, Japanese, Simplified and 
 `F4Multiplayer.ini` to pick another (`en-gb` is English with UK spelling; `uk` or `ua` is Ukrainian, which the game
 itself doesn't have). The texts are in
 `Data\F4SE\Plugins\F4Multiplayer\lang`, one file per language; each file's first line says whether it is a first machine
-translation or has been reviewed against the game's own terminology. To correct one or add a language, edit the text
-after each `=` (keep the `{placeholders}`) and send the file to the mod's page. Russian and Ukrainian show on a game in any
+translation or has been reviewed against the game's own terminology. Those files are the mod's: every update brings
+its own, so a change made in them is gone after the next update. To correct a language or add one, put your texts in a
+file of your own beside the mod's log, `Documents\My Games\Fallout4\F4SE\F4Multiplayer_lang_<code>.txt` (for Russian,
+`F4Multiplayer_lang_ru.txt`; for a language the mod doesn't have, pick a short code and set `sLanguage` to it): the same
+`key = text` lines, only the ones you change (copy them from the mod's file and edit the text after each `=`, keeping the
+`{placeholders}`). Your texts go over the mod's, no update touches the file, and the mod's page is glad to have it.
+Russian and Ukrainian show on a game in any
 language: the game's fonts have Cyrillic letters, Ukrainian's і, ї, є and ґ included. Japanese and Chinese need the game itself in that language: an
 English game has no font for them and shows boxes instead (a friend's name written in them shows as boxes too). Arabic is not shipped: the game has no Arabic font and does not shape right-to-left text, so it waits for a font mod to be proven (a reviewed file is ready in the repository).
 

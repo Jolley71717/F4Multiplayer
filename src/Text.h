@@ -166,6 +166,23 @@ namespace Text
 		return table;
 	}
 
+	// The player's own file for a language, beside the log (Documents\My Games\Fallout4\F4SE): its texts go over the
+	// mod's file for that language (Overlay). It is the place for a player's corrections or a language the mod
+	// doesn't ship, because no update replaces it: the files in the lang folder are the mod's, and each version
+	// brings its own.
+	[[nodiscard]] inline std::string OwnFileName(std::string_view a_code)
+	{
+		return std::string{ "F4Multiplayer_lang_" }.append(a_code).append(".txt");
+	}
+
+	// a_base with a_own's texts over it: a key both have takes a_own's text, the rest of a_base stays.
+	inline void Overlay(Table& a_base, Table a_own)
+	{
+		for (auto& [key, text] : a_own) {
+			a_base.insert_or_assign(key, std::move(text));
+		}
+	}
+
 	// A text as a language file holds it (Parse's inverse), for the tests and for writing a file from the table.
 	[[nodiscard]] inline std::string Escape(std::string_view a_text)
 	{

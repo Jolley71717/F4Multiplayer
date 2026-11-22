@@ -4469,6 +4469,106 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 `UiPages.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
 menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
 
+## The settings file (src/Config.cpp, src/ConfigRead.h, common/IniFile.h, dist/F4Multiplayer.ini)
+
+`Data\F4SE\Plugins\F4Multiplayer.ini` is the player's file, and the zip does not hold it: shipped (0.21.0 and
+earlier), a mod manager or an extract over `Data` replaced the player's settings with the defaults on every update.
+`dist/F4Multiplayer.ini` is compiled into the plugin instead (xmake.lua, `utils.bin2c` makes `F4Multiplayer.ini.h`).
+`Config::Load` writes the file from it, byte for byte, when there is none (a new install; the F1 menu's *Host a
+session* writes `bHost` into it from then on), and when there is one appends the keys it lacks (`IniFile::AddMissing`:
+each at its default, with the comment lines above it in the defaults, the block above a run of keys serving every key
+of the run, under one note line, in the file's own line ending), leaving every value, comment and key the file has as
+it is, an older version's keys included. A key commented out in the file is a key it lacks, so it comes back at its
+default below.
+
+Who writes the file, and how. Start-up only appends: `IniFile::LoadOrCreate` opens the player's file for append and
+never rewrites a byte it has, so a write that stops half way can't cost a setting the file had. The in-game menu's
+save does rewrite it (`Config::Write`, a switch on the F1 menu's *Settings* page or *Host a session*;
+`IniFile::SaveValue`): it reads the whole file, changes the value on every line of the one key (`IniFile::SetValue`;
+the reader takes the last line of a key, so changing only the first would not hold in a file that has the key twice),
+adds the key at the end when the file lacks it, and writes the file back with every other line, comment and the order
+as the player had them.
+
+The save never writes what it did not read. `IniFile::ReadText` tells a file that is not there from one that is there
+and can't be read at that moment (an editor, an antivirus scan or a cloud sync holds it; something else has its name)
+or that could only be read in part (a locked range ends the read early, which looks like a shorter file: the size is
+checked against what was read). Taken for an empty file, either would be written back as the one changed line, or as
+the part, over every setting the player had. So a file that is there and was not read whole is not written to: one log
+line says so, the switch holds in memory until the game closes, and the file is as it was. Start-up goes by the same
+read (the defaults are the settings for that run and nothing is appended; appending after a read in part would add the
+keys past the part again, at their defaults, below the player's). Only a file that is truly not there is made by the
+save, as a new install's with the value.
+
+The file is written whole by way of a file beside it (`IniFile::WriteWhole`: `F4Multiplayer.ini.tmp`, then a rename
+over the settings file), so a game that crashes or a PC that loses power during the write leaves the old file or the
+new one, never half of one. **No path of a save leaves the file shorter than it was:**
+
+- The temporary file's write comes up short (a full disk, a failing one): the temporary file is removed, the settings
+  file is not touched, the save fails and the log says so. Writing in place after that would fail the same way, part
+  way through the player's file.
+- Nothing at all is written to a file that can't be opened for writing (read-only, or held by another program).
+- Three cases write in place: a file that is a hard or symbolic link (a mod manager that deploys by links: a new file
+  under the name would cut the link and the manager's copy would keep the old settings), a folder that takes no
+  temporary file, and a whole temporary file that can't be renamed over the settings file (another program has the
+  file open in a way that shares reading and writing but not replacing; the temporary file is removed). In place
+  never empties the file first (`IniFile::WriteOver`): the new bytes go over the old ones from the start, and the file
+  is cut to the new length only once they are all in, so a write that stops part way leaves the new text as far as it
+  got and the old from there on, every line still there.
+
+A temporary file an earlier save left is written over and is never read as settings.
+
+What start-up does with a file it can't simply extend:
+
+- A file or folder that can't be written (read-only, or a folder the game may not write to): nothing is changed, the
+  settings the file lacks stay at their built-in defaults in memory, and one log line names them. With no file and no
+  way to write one, every setting is at its default. A file that can't be read, or only in part, is left alone too
+  (above).
+- A key whose line in the defaults does not mean what leaving the key out means is appended in the form that does
+  (`Config::WHEN_ABSENT`). A file without `sPlayerName` uses the Steam name, so an update appends `sPlayerName =`
+  (empty: the Steam name too); only a new install gets `sPlayerName = character`. The test runs every key of the
+  defaults through the reader (`Config::Read`, src/ConfigRead.h, the game-free reading `Config::Load` runs) and fails
+  for a key that is appended in a form that reads unlike the missing key, or that is on the list without need.
+- A cut-off last line (an append that stopped half way: no line break ends it) whose value can't be a whole one, the
+  beginning of the yes/no value that would be appended (`tr`) or nothing at all for a key that is not text, counts
+  as a key the file lacks: the next start appends it again, whole, and the last line of a key is the one read. The
+  half line stays where it is. The beginning of a number or a name (`iPort = 77`) is not told from the player's own
+  value and is left; an empty `s...` key is the player's too. A yes/no key with nothing after its `=` may as well be
+  the player's own line, which reads as no: `key = false` is what is appended for it, whatever its default, so the
+  repair never turns on what read as off.
+- A file saved as UTF-16 (a byte order mark, or one of its first two bytes zero): UTF-8 lines appended to it would
+  make it neither, and the reader takes none of it. It is left as it is, by start-up and by the menu's save, the
+  defaults are the settings and the log says to save it as UTF-8.
+
+The tests (tests/IniFileTests.cpp, tests/ConfigReadTests.cpp) hold the merge to that, run the start-up step on real
+files in a temporary folder (none, an older one, a complete one, a read-only one, one that can't be read, a cut-off
+one, a UTF-16 one), run the menu's save on them too (one line changed and every other byte kept, no file by the name,
+a folder by the name, a hard link, a symbolic link, a write that comes up short through the temporary file and in
+place, and on Windows a file another program holds open against reading and one with a locked range, both left byte
+for byte, and one held so that the rename fails, written in place whole), and hold `dist/F4Multiplayer.ini` to one line per key, each of them read by
+`Config::Read`.
+
+The same holds for every file of the player's that is read and then written back: **what could not be read is not
+replaced.** The player id (src/net/IdentityFile.h: a file that is there and can't be read is tried once more a quarter
+of a second later, for a sync tool or a virus scan that holds it for a moment; if it still can't be read it keeps the
+identity it holds, and that run of the game goes by one of its own; written over, the new one would be the player's for good and every
+host's session would take them for a stranger) and the host's ban list (`BanList::Load` remembers a file it could not
+read, and `Save` then leaves it alone: a ban made in that run holds until the server stops, and the log says so) go
+by `IniFile::ReadText` too, each with tests on a file that can't be read. A session file was already kept this way
+(`SessionFile::Recover` waits a second for a program that holds it, sets a file it can't read aside as `.corrupt` and
+carries on from the backup). The player's own language file is only ever read.
+
+The rule this follows, for every file: **the package holds nothing a player changes, and a player's files are nowhere
+an update writes.** A zip is extracted over `Data` or swapped whole by a mod manager, so whatever it holds replaces
+what was there. What the zip holds (the DLL, `lang\*.txt`, `about.txt`, `release-notes.md`, the menu movie, INSTALL.md,
+the license, and on GitHub the server) is the mod's and is replaced on purpose; tools/package.ps1 refuses a package
+with an `F4Multiplayer.ini` in it. What is the player's: the settings file (above, written by the plugin, the only file
+of theirs under `Data`); their own texts for a language (`F4Multiplayer_lang_<code>.txt`, below); and the files the
+plugin keeps for them, all in `Documents\My Games\Fallout4\F4SE` (`Identity::DataFolder`): the player id, each
+character's session file, the ban list, the logs and the crash and hang reports. The dedicated server keeps a session
+or a ban list only where `--session-file` and `--ban-file` say. One case is out of reach: updating from 0.21.0 or
+earlier with a mod manager, the manager removes the ini that came in the old zip together with the old version
+(INSTALL.md says to copy it first).
+
 ## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
 
 Everything a player reads that the plugin wrote (HUD notices, the F1 menu's pages and buttons, the server's refusals
@@ -4481,7 +4581,10 @@ from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that ord
 `Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
 `Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
 `esmx` = Latin American Spanish, its own file `es-mx`) to the file codes; Ukrainian, which the game lacks, is `uk`, and
-the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1), so
+each update replaces them: a player's own texts for a language (a correction, or a language the mod lacks) are read
+from `F4Multiplayer_lang_<code>.txt` beside the log (`Text::OwnFileName`) and go over the mod's file key by key
+(`Text::Overlay`), where no update or mod manager writes. The
 tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
 mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
 `Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are
