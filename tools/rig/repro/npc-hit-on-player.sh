@@ -90,8 +90,8 @@ dc "$RUNNER" "console player.addtofaction $RAIDERS 1" >/dev/null
 # enabled again at the cleanup.
 QUIET=$(dc "$RUNNER" "actors 4000" | grep -oE "[0-9A-F]{8} '[^']*' dead=false" | cut -c1-8 | grep -vE "^(FF|00000014)")
 [ "$CELL" = SanctuaryExt ] && ! grep -q 0001CA7D <<<"$QUIET" && QUIET="$QUIET 0001CA7D"   # Codsworth, who roams the town (2026-11-22: he killed both raiders, from beyond the 4000 u)
-for r in $QUIET; do dc "$RUNNER" "console $r.disable" >/dev/null; done
-say "set-up: the other NPCs near $RUNNER's player disabled for the run (console disable): ${QUIET:-none}"
+for r in $QUIET; do for g in "$RUNNER" "$WHO"; do dc "$g" "console $r.disable" >/dev/null; done; done   # in both games: one disabled in the runner's alone changes hands and runs in the other (turn e: the VM's Codsworth killed the raider)
+say "set-up: the other NPCs near $RUNNER's player disabled for the run in both games (console disable): ${QUIET:-none}"
 # cleanup: what the set-up changed, put back (also on a gate's VOID)
 cleanup() {
 	dc "$WHO" 'console player.modav damageresist -'"${DR_ADDED:-0}" >/dev/null
@@ -100,7 +100,7 @@ cleanup() {
 	for l in PerceptionCondition EnduranceCondition LeftAttackCondition RightAttackCondition LeftMobilityCondition RightMobilityCondition; do dc "$WHO" "console player.restoreav $l 100" >/dev/null; done
 	dc "$WHO" 'god on' >/dev/null
 	dc "$RUNNER" "console player.removefromfaction $RAIDERS" >/dev/null
-	for r in ${QUIET:-}; do dc "$RUNNER" "console $r.enable" >/dev/null; done
+	for r in ${QUIET:-}; do for g in "$RUNNER" "$WHO"; do dc "$g" "console $r.enable" >/dev/null; done; done
 	say "cleanup: raiders removed, $WHO's health and resistance put back, god on, $RUNNER's player out of the raiders' faction (console removefromfaction)"
 }
 # why: what the raiders and the stand-in were doing, in the runner's game
