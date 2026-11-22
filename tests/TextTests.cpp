@@ -42,6 +42,54 @@ namespace
 		return files;
 	}
 
+	// Whether a_code calls a_call (its name with the '(') with a text that starts as a literal: "text", or
+	// std::format("text", ...).
+	bool HandsLiteral(std::string_view a_code, std::string_view a_call, std::size_t a_from = 0)
+	{
+		const auto at = a_code.find(a_call, a_from);
+		if (at == std::string_view::npos) {
+			return false;
+		}
+		auto rest = a_code.substr(at + a_call.size());
+		rest.remove_prefix(std::min(rest.size(), rest.find_first_not_of(" \t\r\n")));
+		if (rest.starts_with("std::format(")) {
+			rest.remove_prefix(12);
+			rest.remove_prefix(std::min(rest.size(), rest.find_first_not_of(" \t\r\n")));
+		}
+		return rest.starts_with('"');
+	}
+
+	// The calls in the plugin that show text and are handed a literal (each one is a test failure).
+	int ShownLiterals(const std::filesystem::path& a_root)
+	{
+		int found = 0;
+		for (const auto& entry : std::filesystem::recursive_directory_iterator{ a_root / "src" }) {
+			const auto ext = entry.path().extension();
+			if (!entry.is_regular_file() || (ext != ".cpp" && ext != ".h")) {
+				continue;
+			}
+			const auto text = SourceTree::Read(entry.path());
+			const auto name = std::filesystem::relative(entry.path(), a_root).generic_string();
+			for (const std::string_view call : { "ShowHUDMessage(", "SetOverrideName(", "DebugNotification(", "ShowMessageBox(" }) {
+				for (auto at = text.find(call); at != std::string::npos; at = text.find(call, at + 1)) {
+					if (HandsLiteral(text, call, at)) {
+						++found;
+						Test::Fail(__FILE__, __LINE__, std::format("{} hands {}..) a literal: use a Text key", name, call));
+					}
+				}
+			}
+			for (auto at = text.find("SetRichPresence("); at != std::string::npos; at = text.find("SetRichPresence(", at + 1)) {
+				const auto end = text.find(';', at);
+				const auto status = text.find("\"status\",", at);
+				if (status < end && HandsLiteral(text, "\"status\",", status)) {
+					++found;
+					Test::Fail(__FILE__, __LINE__, std::format("{} sets Steam's status line from a literal: use a Text key", name));
+				}
+			}
+		}
+		return found;
+	}
+
 	std::vector<std::string> CodesOf(const std::vector<std::filesystem::path>& a_files)
 	{
 		std::vector<std::string> codes;
@@ -299,6 +347,20 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.lent_item", { { "player", "Sam" }, { "item", "T-60 Helmet" } }, "Sam's T-60 Helmet" },
 		{ "party.tag_pipboy", { { "name", "Sam (60%)" } }, "Sam (60%) [Pip-Boy]" },
 		{ "party.tag_menu", { { "name", "Sam" } }, "Sam [in a menu]" },
+		{ "party.tag_down", { { "name", "Sam" } }, "Sam (down - help them up)" },
+		{ "party.tag_dead", { { "name", "Sam" } }, "Sam (dead)" },
+		{ "party.tag_hurt", { { "name", "Sam" }, { "hp", 60 } }, "Sam (60%)" },
+		{ "compass.blue_circle", {}, "blue circle" },
+		{ "compass.orange_square", {}, "orange square" },
+		{ "compass.pink_diamond", {}, "pink diamond" },
+		{ "compass.purple_triangle", {}, "purple triangle" },
+		{ "conversation.line", { { "speaker", "Preston" }, { "line", "Another settlement needs our help." } }, "Preston: Another settlement needs our help." },
+		{ "conversation.someone", {}, "Someone" },
+		{ "steam.status_hosting", {}, "Hosting Fallout 4 co-op" },
+		{ "steam.status_playing", {}, "Playing Fallout 4 co-op" },
+		{ "session.file_continued", {}, "Multiplayer: this character carries on its saved co-op session" },
+		{ "session.file_other_save", {}, "Multiplayer: the saved co-op session is another save's, so this character starts its own" },
+		{ "session.file_rename_failed", {}, "Multiplayer: the saved co-op session's file could not be renamed (the log says why)" },
 		{ "party.killed", { { "killer", "Sam" }, { "victim", "Raider" } }, "Sam killed Raider" },
 		{ "party.xp", { { "xp", "25" } }, "+25 XP from your party's kills" },
 		{ "party.catchup_xp", { { "xp", "40" } }, "+40 XP catching up with your party" },
@@ -509,6 +571,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "key.down", {}, "Down" },
 		{ "key.insert", {}, "Insert" },
 		{ "key.num", { { "n", 3 } }, "Num 3" },
+		{ "key.code", { { "code", "FE" } }, "Key FE" },
 		{ "menu.join_waiting", { { "address", "1.2.3.4" } }, "You'll join 1.2.3.4 once you've loaded a game." },
 		{ "menu.about", {}, "About" },
 		{ "menu.release_notes", {}, "Release notes" },
@@ -727,6 +790,28 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 				Test::Fail(__FILE__, __LINE__, std::format("{}: lacks the key '{}'", name, key));
 			}
 		}
+		// And it is translated: a text with words that is still the English was copied, not translated (the workshop's
+		// texts once shipped in English in eleven languages). The keys a language may well keep as they are: key names
+		// most keyboards print in English, the main menu's entry (as the game's own MULTIPLAYER-like entries), ping,
+		// Pip-Boy and the "Multiplayer:" of a server's notice.
+		if (file.stem() != "en" && file.stem() != "en-gb") {
+			for (const auto& [key, translated] : table) {
+				static const std::set<std::string_view> KEPT = { "mainmenu.entry", "menu.hc_password_button", "menu.kb_ping", "party.ping_info", "party.tag_pipboy", "session.notice" };
+				if (key.starts_with("key.") || KEPT.contains(key)) {
+					continue;
+				}
+				auto words = translated;
+				for (const auto& placeholder : Text::Placeholders(translated)) {
+					for (auto at = words.find("{" + placeholder + "}"); at != std::string::npos; at = words.find("{" + placeholder + "}")) {
+						words.erase(at, placeholder.size() + 2);
+					}
+				}
+				const auto letters = std::ranges::count_if(words, [](char a_c) { return std::isalpha(static_cast<unsigned char>(a_c)); });
+				if (translated == Text::GetEnglish(key) && letters > 3) {
+					Test::Fail(__FILE__, __LINE__, std::format("{}: '{}' is still the English text", name, key));
+				}
+			}
+		}
 		// A file that is not English says how it was made, for the players who correct it: a machine-translated first
 		// pass, or one reviewed against the game's own terminology (with the date of the review; either capitalisation).
 		if (file.stem() != "en" && file.stem() != "en-gb") {
@@ -804,7 +889,7 @@ TEST("text: no player-facing message is a bare English literal in the code")
 		}
 		const auto text = SourceTree::Read(entry.path());
 		const auto name = std::filesystem::relative(entry.path(), *root).generic_string();
-		// A HUD notice is a Text key's text, not a literal. (A friend's chat line, "{}: {}", is not the mod's text.)
+		// A HUD notice is a Text key's text, not a literal (a friend's conversation line too: conversation.line).
 		for (std::size_t at = text.find("Hud::Notify("); at != std::string::npos; at = text.find("Hud::Notify(", at + 1)) {
 			auto rest = std::string_view{ text }.substr(at + 12);
 			rest.remove_prefix(rest.find_first_not_of(" \t\r\n"));
@@ -812,25 +897,39 @@ TEST("text: no player-facing message is a bare English literal in the code")
 				rest.remove_prefix(12);
 				rest.remove_prefix(rest.find_first_not_of(" \t\r\n"));
 			}
-			if (rest.starts_with('"') && !rest.starts_with("\"{}: {}\"")) {
+			if (rest.starts_with('"')) {
 				++found;
 				Test::Fail(__FILE__, __LINE__, std::format("{} shows a literal on the HUD: {}", name, std::string{ rest.substr(0, 60) }));
 			}
 		}
 	}
-	// The menu's pages and buttons: a button label or a page's text starting from a letter is English in the code.
-	// (A line break or a lower-case key, as in { "page", n }, is not.)
-	const auto menu = SourceTree::Read(*root / "src" / "game" / "UiPages.cpp");
-	for (const std::string_view start : { "push_back({ \"", "{ { \"", "body = \"", "body += \"" }) {
-		for (auto at = menu.find(start); at != std::string::npos; at = menu.find(start, at + 1)) {
-			const char next = at + start.size() < menu.size() ? menu[at + start.size()] : '\0';
-			if (std::isupper(static_cast<unsigned char>(next)) || (start != "{ { \"" && std::isalpha(static_cast<unsigned char>(next)))) {
-				++found;
-				Test::Fail(__FILE__, __LINE__, std::format("src/game/UiPages.cpp builds text from a literal ({}{}...): use Text::Get", start, next));
+	// The menu's pages and buttons, in every Ui file: a button label or a page's text starting from a letter is English
+	// in the code. (A line break or a lower-case key, as in { "page", n }, is not.)
+	for (const auto& entry : std::filesystem::directory_iterator{ *root / "src" / "game" }) {
+		const auto file = entry.path().filename().string();
+		if (!file.starts_with("Ui") || (entry.path().extension() != ".cpp" && entry.path().extension() != ".h")) {
+			continue;
+		}
+		const auto menu = SourceTree::Read(entry.path());
+		for (const std::string_view start : { "push_back({ \"", "{ { \"", "body = \"", "body += \"" }) {
+			for (auto at = menu.find(start); at != std::string::npos; at = menu.find(start, at + 1)) {
+				const char next = at + start.size() < menu.size() ? menu[at + start.size()] : '\0';
+				if (std::isupper(static_cast<unsigned char>(next)) || (start != "{ { \"" && std::isalpha(static_cast<unsigned char>(next)))) {
+					++found;
+					Test::Fail(__FILE__, __LINE__, std::format("src/game/{} builds text from a literal ({}{}...): use Text::Get", file, start, next));
+				}
 			}
 		}
 	}
+	// The other calls that put text in front of a player: the HUD's own message, a name the game shows over an actor or
+	// an item, a message box, and Steam's status line (SetRichPresence's "status"; its "connect" is no text). What they
+	// are handed is a Text key's text, never a literal or a std::format of one.
 	CHECK(found == 0);
+	CHECK(ShownLiterals(*root) == 0);
+	// The guard finds what it looks for, so a renamed call does not leave it checking nothing.
+	CHECK(HandsLiteral("x->SetOverrideName(\"Sam (dead)\");", "SetOverrideName("));
+	CHECK(HandsLiteral("x->SetOverrideName( std::format(\"{} (dead)\", n).c_str());", "SetOverrideName("));
+	CHECK(!HandsLiteral("x->SetOverrideName(label.c_str());", "SetOverrideName("));
 }
 
 TEST("text: every key the plugin asks for by name is in the English table")
@@ -857,6 +956,36 @@ TEST("text: every key the plugin asks for by name is in the English table")
 		}
 	}
 	CHECK(keys > 50);
+
+	// A key handed on before it is looked up (a compass marker's, a session file's notice, Steam's status picked by a
+	// condition) is not in a Text:: call: any literal named like a key of the table ("compass.pink_diamond") must be one.
+	std::set<std::string> families;
+	for (const auto& entry : Text::English()) {
+		families.emplace(entry.key.substr(0, entry.key.find('.')));
+	}
+	const std::regex shaped{ R"re("([a-z]+)\.([a-z0-9_.]+)")re" };
+	std::size_t      named = 0;
+	for (const auto& file : std::filesystem::recursive_directory_iterator(*root / "src")) {
+		const auto extension = file.path().extension();
+		if (!file.is_regular_file() || (extension != ".cpp" && extension != ".h") || file.path().filename() == "TextEnglish.h") {
+			continue;
+		}
+		const auto text = FileOf(file.path());
+		for (auto it = std::sregex_iterator(text.begin(), text.end(), shaped); it != std::sregex_iterator(); ++it) {
+			if (!families.contains((*it)[1].str())) {
+				continue;
+			}
+			const auto key = (*it)[1].str() + "." + (*it)[2].str();
+			if (key == "player.kill" || key.ends_with(".")) {
+				continue;  // the game's console command (DevCommands), not a text; a prefix ("key.") a check looks for
+			}
+			++named;
+			if (std::ranges::none_of(Text::English(), [&](const auto& a_entry) { return a_entry.key == key; })) {
+				Test::Fail(__FILE__, __LINE__, std::format("{} names the text key '{}', which src/TextEnglish.h lacks", file.path().filename().string(), key));
+			}
+		}
+	}
+	CHECK(named > keys);
 }
 
 // A player's own texts (a correction, or a language the mod doesn't ship) are kept beside the log, where no update

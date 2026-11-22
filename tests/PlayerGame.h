@@ -9,6 +9,7 @@
 #include "ChestWorld.h"
 #include "ServerFixture.h"
 #include "SessionFile.h"
+#include "Text.h"
 #include "game/CharacterBinding.h"
 #include "game/Story.h"
 #include "net/Refusals.h"
@@ -232,7 +233,8 @@ namespace TestGame
 		{
 			Server::Options options;
 			options.hostIdentity = identity;
-			options.sessionFile = CharacterBinding::PrepareFile(machine.folder.path, character, devChannel, loot.Point().sessionId, [this](const std::string& a_line) {
+			options.sessionFile = CharacterBinding::PrepareFile(machine.folder.path, character, devChannel, loot.Point().sessionId, [this](std::string_view a_key, const std::string& a_line) {
+				CHECK(Text::GetEnglish(a_key) != a_key);  // a key the player is shown, not a typo
 				machine.said.push_back(a_line);
 			}).string();
 			HostOn(options);

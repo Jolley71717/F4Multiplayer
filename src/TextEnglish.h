@@ -28,6 +28,11 @@ namespace Text
 		{ "session.player_renamed", "{player} is now {name}" },
 		{ "session.someone_left", "A player left" },
 		{ "session.kicked", "Multiplayer: the host removed you from the session" },
+		// The host's saved session, the first time a character hosts with a file from an older version (CharacterBinding::
+		// PrepareFile; the log names the files).
+		{ "session.file_continued", "Multiplayer: this character carries on its saved co-op session" },
+		{ "session.file_other_save", "Multiplayer: the saved co-op session is another save's, so this character starts its own" },
+		{ "session.file_rename_failed", "Multiplayer: the saved co-op session's file could not be renamed (the log says why)" },
 		{ "session.banned", "Multiplayer: the host banned you from the session" },
 		{ "session.disconnected", "Multiplayer: disconnected" },
 		{ "session.hosting_cant_join", "Multiplayer: you're hosting. Set bHost = false to join friends." },
@@ -116,6 +121,22 @@ namespace Text
 		// A friend's name tag (their name, with their health when hurt) while they are in their Pip-Boy, or another menu.
 		{ "party.tag_pipboy", "{name} [Pip-Boy]" },
 		{ "party.tag_menu", "{name} [in a menu]" },
+		// A friend's name tag when they are down, dead, or hurt ({hp} is their health in tens of percent).
+		{ "party.tag_down", "{name} (down - help them up)" },
+		{ "party.tag_dead", "{name} (dead)" },
+		{ "party.tag_hurt", "{name} ({hp}%)" },
+		// The shape and color of each friend's compass marker, as the player list names it ("Sam [pink diamond]").
+		{ "compass.blue_circle", "blue circle" },
+		{ "compass.orange_square", "orange square" },
+		{ "compass.pink_diamond", "pink diamond" },
+		{ "compass.purple_triangle", "purple triangle" },
+		// A friend's conversation line as a HUD notice (with subtitles off, or when the game drops the subtitle), and the
+		// speaker when the game has no name for them.
+		{ "conversation.line", "{speaker}: {line}" },
+		{ "conversation.someone", "Someone" },
+		// Steam: the status line friends see beside our name in their friends list, in the language of the player who sets it.
+		{ "steam.status_hosting", "Hosting Fallout 4 co-op" },
+		{ "steam.status_playing", "Playing Fallout 4 co-op" },
 		{ "party.killed", "{killer} killed {victim}" },
 		{ "party.xp", "+{xp} XP from your party's kills" },
 		{ "party.catchup_xp", "+{xp} XP catching up with your party" },
@@ -347,6 +368,7 @@ namespace Text
 		{ "key.down", "Down" },
 		{ "key.insert", "Insert" },
 		{ "key.num", "Num {n}" },
+		{ "key.code", "Key {code}" },  // a key with no name of its own, by its code in hex
 		{ "menu.about", "About" },
 		{ "menu.release_notes", "Release notes" },
 		{ "menu.about_missing", "The about text is missing: about.txt isn't in Data/F4SE/Plugins/F4Multiplayer." },

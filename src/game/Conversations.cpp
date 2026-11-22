@@ -14,6 +14,7 @@
 #include "game/Spawns.h"
 #include "game/SubtitleTime.h"
 #include "game/VoicePath.h"
+#include "Text.h"
 
 #include <bit>
 
@@ -365,7 +366,7 @@ namespace Conversations
 				return { nullptr, {} };
 			}
 			const char* name = actor->GetDisplayFullName();
-			return { actor, name && *name ? name : "Someone" };
+			return { actor, name && *name ? std::string{ name } : Text::Get("conversation.someone") };
 		}
 
 		bool Throttled(std::uint64_t a_key, const std::string& a_text, Clock::time_point a_now)
@@ -896,7 +897,7 @@ namespace Conversations
 		if (blank) {  // nothing to read: the game would drop the subtitle, and a notice would be just a name
 			return;
 		}
-		auto notice = std::format("{}: {}", name, a_line.text);
+		auto notice = Text::Format("conversation.line", { { "speaker", name }, { "line", a_line.text } });
 		if (subtitleArea) {
 			if (ShowSubtitle(actor, a_line.text, key, notice, SubtitleTime::ShowFor(seconds, a_line.text))) {
 				++subtitled;

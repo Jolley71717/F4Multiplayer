@@ -15,7 +15,7 @@ TEST("key names: letters, digits, function keys and the mouse's side buttons rea
 	CHECK(UiKeyNames::Name(0x7B) == "F12");
 	CHECK(UiKeyNames::Name(0x05) == "key.mouse4");
 	CHECK(UiKeyNames::Name(0xDC) == "\\");
-	CHECK(UiKeyNames::Name(0xFE) == "Key FE");
+	CHECK(UiKeyNames::Name(0xFE) == "key.code");  // a key with no name: its code, in each language's words
 }
 
 TEST("key names: quicksave, quickload, the menu's own keys and chord keys can't be bound")
@@ -43,7 +43,7 @@ TEST("key names: worded names are language ids, everything else reads as it is")
 	CHECK(!UiKeyNames::IsId(UiKeyNames::Name('B')));
 	CHECK(!UiKeyNames::IsId(UiKeyNames::Name(0x7B)));
 	CHECK(!UiKeyNames::IsId(UiKeyNames::Name(0xBC)));
-	CHECK(!UiKeyNames::IsId(UiKeyNames::Name(0xFE)));
+	CHECK(UiKeyNames::IsId(UiKeyNames::Name(0xFE)));  // a key with no name: "Key FE" in each language's words (key.code)
 	CHECK(UiKeyNames::Name(0x62) == "key.num");
 	CHECK(UiKeyNames::Number(0x62) == 2);
 	CHECK(UiKeyNames::Number('B') == -1);
@@ -73,7 +73,7 @@ TEST("key names: every id a key can be named by has an English text")
 			ids.insert(name);
 		}
 	}
-	CHECK(ids.size() == 23);
+	CHECK(ids.size() == 24);
 	for (const auto& id : ids) {
 		const bool known = std::ranges::any_of(Text::English(), [&](const auto& a_entry) { return a_entry.key == id; });
 		if (!known) {

@@ -13,8 +13,8 @@ namespace Compass
 	// own update, which this hooks the first time the HUD is up. Every frame.
 	void Frame();
 
-	// What a player's marker looks like ("pink diamond"), for the player list.
-	[[nodiscard]] std::string_view MarkerName(std::uint32_t a_playerId);
+	// What a player's marker looks like ("pink diamond"), in the player's language, for the player list.
+	[[nodiscard]] std::string MarkerName(std::uint32_t a_playerId);
 
 	// The same marker's color (0xRRGGBB) and shape (0 circle, 1 square, 2 diamond, 3 triangle), for the multiplayer menu to draw it.
 	[[nodiscard]] std::uint32_t MarkerColor(std::uint32_t a_playerId);

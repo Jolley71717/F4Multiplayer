@@ -4638,8 +4638,11 @@ each update replaces them: a player's own texts for a language (a correction, or
 from `F4Multiplayer_lang_<code>.txt` beside the log (`Text::OwnFileName`) and go over the mod's file key by key
 (`Text::Overlay`), where no update or mod manager writes. The
 tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
-mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
-`Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are
+mod's keys and each text's placeholders and to no text left as the English (key names and a few words like "Ping"
+apart), `en.txt` to the built-in table, and the code to no bare English literal in a `Hud::Notify`, a page of any
+`Ui*` file, a name the game shows over an actor or item (`SetOverrideName`), the HUD's own message or Steam's status
+line; any literal named like a key of the table ("compass.pink_diamond", a key handed on before it is looked up) must
+be one. The log, the dev channel's replies and the dedicated server stay English: they are
 for people debugging, and a notice's log line is written from the English text (`Text::FormatEnglish`). The
 server sends its refusals in English on the wire (any server version, and a dedicated one, sends the same text);
 `Text::Reject` shows the ones this client knows in the player's language, sentence by sentence for the load order

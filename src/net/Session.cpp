@@ -1291,10 +1291,10 @@ namespace Session
 				// This character's own session (the old shared file is taken over if the loaded save played in it). Told
 				// once per character, not at every start (a port that can't be had is tried every few seconds).
 				const auto path = CharacterBinding::PrepareFile(*folder, character, settings.devChannel, WorldSync::Loot().Point().sessionId,
-					[character](const std::string& a_line) {
-						REX::INFO("Session: {}", a_line);
+					[character](std::string_view a_key, const std::string& a_logged) {
+						REX::INFO("Session: {}", a_logged);
 						if (legacyTold.insert(character).second) {
-							Notify("session.notice", { { "text", a_line } });
+							Hud::Notify(Text::Get(a_key));
 						}
 					});
 				options.sessionFile = path.string();

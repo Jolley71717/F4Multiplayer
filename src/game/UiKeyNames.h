@@ -77,7 +77,7 @@ namespace UiKeyNames
 		case 0xDC: return "\\";
 		case 0xDD: return "]";
 		case 0xDE: return "'";
-		default: return std::format("Key {:02X}", a_vk);
+		default: return "key.code";  // "Key 5A": a key with no name of its own, by its code (Display fills it in)
 		}
 	}
 
@@ -85,6 +85,9 @@ namespace UiKeyNames
 	[[nodiscard]] inline std::string Display(std::uint32_t a_vk)
 	{
 		auto name = Name(a_vk);
+		if (name == "key.code") {
+			return Text::Format(name, { { "code", std::format("{:02X}", a_vk) } });
+		}
 		return IsId(name) ? Text::Format(name, { { "n", Number(a_vk) } }) : name;
 	}
 
