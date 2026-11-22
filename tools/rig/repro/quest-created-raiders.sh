@@ -1,7 +1,8 @@
 #!/bin/bash
 # quest-created-raiders.sh: a friend's shots on the raiders a story quest creates as it runs (a Nexus report on 0.21.0: in Concord,
-# helping Preston, "my friend's shots just don't register"). When Freedom Calls (Min00, 001A001C) makes the raiders that come at
-# the players in Concord's street (its aliases WaveRaider01 to 03, RaiderLookout and RaiderBoss) with "create reference" aliases:
+# helping Preston, "my friend's shots just don't register"). When Freedom Calls (Min00, 001A001C) holds the raiders that come at
+# the players in Concord's street in its aliases WaveRaider01 to 03, RaiderLookout and RaiderBoss: external aliases of DN092's (The
+# Museum of Freedom), whose "create reference" aliases make them:
 # every game's run of the quest makes its own, under that game's own runtime ids, at the same markers, and the quest's script
 # enables them in each game as its player leaves the museum's roof. Each game shared its own as a spawn, so both games had two
 # raiders for each alias (its own and a copy of the friend's), and a friend who shot the raider in front of them hurt only their
@@ -14,7 +15,9 @@
 #   2. For each direction (the VM shoots, then the host shoots), the next alias of ALIASES (WaveRaider01 and 03 by default) is
 #      switched on in both games (console <ref>.enable in each: it stands for the quest's own script, which does it in each game
 #      as its player comes down from the roof). Both games' raiders of the alias must stand loaded and alive within 30 s.
-#   3. The shooter turns to its own game's raider of the alias (dev turnto, a look) and fires real shots (clicks), up to 10,
+#   3. The shooter walks (the pad) to within 350 u of its own game's raider of the alias and the other player 400 u away from it,
+#      out of the line of fire; the shooter turns to its own game's
+#      raider of the alias (dev turnto, a look) and fires real shots (clicks), up to 10,
 #      until one lands (the raider's health drops in the shooter's game). The other game's raider of the alias is read 5 s on.
 # REPRO: YES when a landed shot leaves the other game's raider of the alias at the health it had (its own raider, not the one
 # shot); NO when every direction's landed shot changes it there too (lower, or dead). VOID when the scene could not be made (a
@@ -71,7 +74,14 @@ for s in $DIRECTIONS; do
 	for w in host vm; do say "[$s shoots] $w: $(dc $w "mirror $([ $w = $s ] && echo $RS || echo $RO)" | cut -c1-90); raiders near: $(dc $w 'actors 4000' | tr ';' '\n' | grep -c "'Raider' dead=false")"; done
 	H0S=$(hp $s $RS); H0O=$(hp $o $RO)
 	say "[$s shoots] before: $s's raider at $H0S health, $o's at $H0O"
-	# 3. real fire at the shooter's own game's raider of the alias, until a shot lands
+	# 3. real fire at the shooter's own game's raider of the alias, until a shot lands. First the shooter walks (the pad) to
+	# within 350 u of it, and the other player 400 u further from it: the two stand side by side after the set-up, and the
+	# other's stand-in in the shooter's game could be in the line of fire (the host's 10 shots at WaveRaider03 all missed with
+	# the VM 50 u ahead of it), or a player left where the last turn's walk put them could have a wreck between them and the
+	# raider (the host's next 10 hit a static, 0001D563, 2026-11-22)
+	rwalk $s "$RS" 350 || true
+	step_aside $o "$RO" 400 || true
+	say "[$s shoots] $s walked to $(dist_xy "$(pos_of $s)" "$(field "$(info $s $RS)" x) $(field "$(info $s $RS)" y)") u of its raider, $o aside: $(dist_xy "$(pos_of $s)" "$(pos_of $o)") u from $s"
 	landed=""; n0=$(shots_of $s)
 	for i in $(seq 1 10); do
 		dc $s "turnto $RS 300 aim" >/dev/null; sleep 0.5; dc $s "click 80" >/dev/null; sleep 1.2

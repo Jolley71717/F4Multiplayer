@@ -607,6 +607,48 @@ namespace Spawns
 			return player && a_actor && !a_actor->IsDisabled() && !a_actor->IsDead(false) && a_actor->Get3D() && a_actor->GetHostileToActor(player);
 		}
 
+		// The game's quests, by address: an external alias's fillData names its quest by address, checked against these before
+		// it is read. Made once the game's data has its quests.
+		std::unordered_set<const void*> gameQuests;
+
+		bool IsGameQuest(const void* a_address)
+		{
+			if (gameQuests.empty()) {
+				if (const auto handler = RE::TESDataHandler::GetSingleton()) {
+					for (const auto quest : handler->GetFormArray<RE::TESQuest>()) {
+						if (quest) {
+							gameQuests.insert(quest);
+						}
+					}
+				}
+			}
+			return a_address && gameQuests.contains(a_address);
+		}
+
+		// The fill a reference alias is judged by (QuestActors::KeyFill): its own, or for an external alias that of the alias
+		// its chain ends at (another quest's: Min00's wave raiders are DN092's created ones), FILL_NONE when the chain breaks.
+		std::uint16_t FillOf(const RE::BGSBaseAlias* a_alias)
+		{
+			const RE::BGSBaseAlias* at = a_alias;
+			for (int hop = 0; at && hop <= QuestActors::EXTERNAL_HOPS; ++hop) {
+				if (at->fillType != QuestActors::FILL_EXTERNAL) {
+					return QuestActors::KeyFill(a_alias->fillType, at->fillType);
+				}
+				const char* type = at->QType().c_str();
+				if (!type || std::string_view{ type } != RE::BGSRefAlias::TYPE) {
+					break;
+				}
+				const auto& data = static_cast<const RE::BGSRefAlias*>(at)->fillData.data;
+				if (!IsGameQuest(reinterpret_cast<const void*>(data[0])) || data[1] > 0xFFFFFFFF) {
+					break;
+				}
+				const auto source = reinterpret_cast<RE::TESQuest*>(data[0]);
+				const auto found = std::ranges::find_if(source->aliases, [&](const RE::BGSBaseAlias* a_other) { return a_other && a_other->aliasID == data[1]; });
+				at = found != source->aliases.end() ? *found : nullptr;
+			}
+			return QuestActors::KeyFill(a_alias->fillType, QuestActors::FILL_NONE);
+		}
+
 		// The quest alias that created our NPC, when that quest's creatures are paired across games (QuestActors::Keyed).
 		AliasKey KeyOf(RE::Actor* a_actor)
 		{
@@ -620,7 +662,7 @@ namespace Spawns
 			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 			for (const auto& entry : aliases->aliasArray) {
 				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest &&
-					QuestActors::Keyed(QuestFactsOf(entry.quest), entry.alias->fillType, race, raceForm, entry.alias->aliasID, enemy)) {
+					QuestActors::Keyed(QuestFactsOf(entry.quest), FillOf(entry.alias), race, raceForm, entry.alias->aliasID, enemy)) {
 					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
 				}
 			}
@@ -1099,7 +1141,7 @@ namespace Spawns
 			out.oursThere = true;
 			facts.ours = actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
 			             !NpcSync::IsOurCompanion(actor) && !Leaving(local);
-			facts.creature = QuestActors::Keyed(questFacts, (*alias)->fillType, RaceFlags(actor), RaceForm(actor), (*alias)->aliasID, enemy);
+			facts.creature = QuestActors::Keyed(questFacts, FillOf(*alias), RaceFlags(actor), RaceForm(actor), (*alias)->aliasID, enemy);
 			// One our game reported and the server granted is ours (the server refuses a second game's report of the alias,
 			// so theirs could not be granted too); one reported and not answered yet will be refused, as this one's twin.
 			facts.shared = ours.IdOf(local) != 0 || theirs.IdOf(local) != 0;
