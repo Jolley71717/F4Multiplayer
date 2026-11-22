@@ -99,10 +99,11 @@ verdict NO "quiet on purpose"'
 
 # 7. the time cap (REPRO_CAP), and a script's own (run_cap)
 fresh_logs
-run cap-env 'sleep 120
+run cap-env 'run_cap 100
+sleep 120
 verdict NO "must not be reached"' REPRO_CAP=3
 [ "$RC" = 2 ] && grep -q 'REPRO: VOID - time cap: the run took [0-9]* s, past its cap of 3 s' <<<"$OUT" && [ "$DT" -lt 60 ] && [ "$ENDS" = 1 ] \
-	&& ok "time cap: REPRO_CAP=3 ends a 120 s sleep as VOID in ${DT} s" || no "time cap (REPRO_CAP)" "rc=$RC dt=$DT: $OUT"
+	&& ok "time cap: an exported REPRO_CAP=3 (over the script's run_cap 100) ends a 120 s sleep as VOID in ${DT} s" || no "time cap (REPRO_CAP)" "rc=$RC dt=$DT: $OUT"
 fresh_logs
 run cap-own 'run_cap 2
 sleep 120
@@ -111,7 +112,7 @@ verdict NO "must not be reached"'
 	&& ok "time cap: run_cap 2 ends the run in ${DT} s" || no "time cap (run_cap)" "rc=$RC dt=$DT: $OUT"
 fresh_logs
 run cap-default 'verdict NO "short"'
-grep -q 'REPRO: NO - short' <<<"$OUT" && [ "$(cat "$T/out-cap-default/.watch/cap")" = 2400 ] && ok "time cap: every run has one (2400 s by default)" \
+grep -q 'REPRO: NO - short' <<<"$OUT" && [ "$(cat "$T/out-cap-default/.watch/cap")" = 3600 ] && ok "time cap: every run has one (3600 s by default)" \
 	|| no "time cap default" "cap=$(cat "$T/out-cap-default/.watch/cap" 2>/dev/null): $OUT"
 
 # 8. stopped from outside (TERM): VOID, the end step run

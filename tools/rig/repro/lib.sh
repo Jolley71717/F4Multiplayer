@@ -15,7 +15,7 @@
 #                                             check has not succeeded in that time, with the last log lines of both games
 #   idle_watch <regex> <seconds>              opt-in: VOID (stalled) when neither game's plugin log has a line matching the regex
 #                                             for that long; `idle_watch off` before a quiet stretch that is meant to be quiet
-#   run_cap <seconds>                         the run's time cap (REPRO_CAP, 2400 s by default; every run has one): VOID past it
+#   run_cap <seconds>                         the run's time cap (REPRO_CAP, 3600 s by default; every run has one): VOID past it
 #   on_end <command...>                       an end step (god mode off, a log level back): run once however the run ends, a
 #                                             verdict, a watchdog, a time cap, Ctrl-C or an error. Use it, not a trap of your own
 # A run ended this way runs its end steps (and stops a walk it left going), and exits 2 like any VOID; rig.lock is never touched
@@ -220,14 +220,16 @@ need_session() {
 #                                             channel (a game's channel serves one client: the watch must not take it from the
 #                                             script): the host's file, the VM's over ssh, the last 400 lines every REPRO_POLL s.
 #   run_cap <seconds>                         the run's time cap, counted from its start: VOID "time cap" past it. Every run has
-#                                             one (REPRO_CAP, 2400 s by default): no script holds the rig for ever.
+#                                             one (3600 s by default; a script that runs longer sets its own, about twice its longest good run).
+#                                             An exported REPRO_CAP wins over both. No script holds the rig for ever.
 #   on_end <command...>                       an end step, run once however the run ends; the last one given runs first.
 # A watcher that fires leaves its reason in $REPRO_OUT/.watch, signals the script (USR1) and stops what the script is running (a
 # sleep, a dev command, a walk), so the script's trap gives the VOID at once: the end steps run (a walk left going is stopped and
 # its pad unplugged first), the tails are said, and the script exits 2. The watchers die with the script however it ends. rig.lock
 # is not touched: its holder frees it as after any run. Test: bash tools/rig/repro/watch-selftest.sh (no game, no VM).
 REPRO_PID=$$
-REPRO_CAP=${REPRO_CAP:-2400}                # the run's time cap, s (run_cap sets the script's own)
+_REPRO_CAP_SET=${REPRO_CAP:+1}              # a cap the caller exported wins over the script's own run_cap
+REPRO_CAP=${REPRO_CAP:-3600}                # the run's time cap, s (run_cap sets the script's own)
 REPRO_POLL=${REPRO_POLL:-10}                # how often the watchers look, s
 REPRO_TAIL=${REPRO_TAIL:-20}                # log lines of each game said with a VOID of these
 REPRO_TAIL_RE=${REPRO_TAIL_RE:-}            # scene_live's tail: only the lines matching this (empty: any) ...
@@ -269,6 +271,7 @@ scene_live() {
 
 run_cap() {
 	{ is_int "$1" && [ "$1" -gt 0 ]; } || { say "run_cap: '$1' is not a number of seconds; the cap stays $(cat "$_RW/cap") s"; return 1; }
+	[ -n "$_REPRO_CAP_SET" ] && { say "time cap: REPRO_CAP=$REPRO_CAP from the caller, not the script's $1 s"; return 0; }
 	echo "$1" > "$_RW/cap"; say "time cap: $1 s from the run's start"
 }
 

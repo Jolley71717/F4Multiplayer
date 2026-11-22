@@ -135,7 +135,8 @@ after a door), and when the check has not succeeded in time the run ends at once
 with the last 20 lines of both games' plugin logs. `idle_watch <regex> <seconds>` is an opt-in watchdog: when no line
 matching the regex comes into either game's plugin log for that long, the run ends as VOID (stalled), with the same
 tails (`idle_watch off` before a stretch that is meant to be quiet). Every run has a time cap (`run_cap <seconds>`,
-40 minutes by default, `REPRO_CAP`), VOID past it. `on_end <command...>` names an end step (god mode off, a log level
+an hour by default; a script that runs longer sets its own, about twice its longest good run; an exported
+`REPRO_CAP` wins over both), VOID past it. `on_end <command...>` names an end step (god mode off, a log level
 back, a spawned NPC removed); end steps run once however the run ends, a walk left going is stopped, and rig.lock is
 never touched, so its holder frees it as after any run. A script uses `on_end` rather than a trap of its own. Examples:
 `friend-map.sh` (the interior's cell change), `standin-settler-lines.sh` (the raider fighting the stand-in) and

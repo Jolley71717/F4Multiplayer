@@ -60,6 +60,7 @@ AWAY_GRID=${AWAY_GRID:-"-11 -12"}; AWAY_REFS=${AWAY_REFS:-"04053704 04053705 040
 AWAY_FROM=${AWAY_FROM:-"-43300 -46600"}; AWAY_CELL=${AWAY_CELL:-SanctuaryExt}
 # away-vm: NukaWorld cell (-8,-7) (01003360, one in 01003361 beside it), four placed swarms in mounds
 AWAY2_GRID=${AWAY2_GRID:-"-8 -7"}; AWAY2_REFS=${AWAY2_REFS:-"04043346 04043347 040560A5 040560A0"}; AWAY2_FROM=${AWAY2_FROM:-"-31800 -29400"}
+NPHASES=$(wc -w <<<"$PHASES"); run_cap $((5400 * (NPHASES > 10 ? NPHASES : 10) / 10))   # the ten default phases took up to 42 minutes: 90, more for more phases
 SWARMS=${SWARMS:-2}; RADIUS=${RADIUS:-350}; TIMEOUT=${TIMEOUT:-45}; LAND=${LAND:-40}
 GUN=${GUN:-0014831C}; AMMO=${AMMO:-0001F673}     # a combat shotgun and its shells: a spread reaches a flying swarm
 FATMAN=000BD56F; MININUKE=000E6B2E; NUKA_GRENADE=000E5750; VK_ALT=0x12
@@ -211,9 +212,10 @@ enter_both "$CELL" 16
 for w in host vm; do _answers "$w" || verdict VOID "$w is not in the game after the coc to $CELL"; dc "$w" 'god on' >/dev/null; kit "$w"; done
 say "arrived: host $(pos_of host) vm $(pos_of vm); in the hand: host [$(dc host equipped | cut -c1-90)] vm [$(dc vm equipped | cut -c1-90)]"
 check "set-up"
-# every phase makes, shoots, kills or walks to swarms, and each of those logs (spawns and their copies, deaths, hits on copies, the
-# pad's walk once a second): 5 minutes with none of it in either game is a run stuck somewhere, VOID (stalled), not a slow NO
-idle_watch 'Spawns: |WorldSync: |KillBlasts: |CopyWatch: |Pad: walkto' 300
+# every phase makes, shoots, kills or walks to swarms, and each of those logs (spawns and their copies, deaths, hits on copies, shots
+# fired, the pad's walk once a second): 7 minutes with none of it in either game is a run stuck somewhere, VOID (stalled), not a slow
+# NO (a good run once went 199 s with no line of the first five kinds)
+idle_watch 'Spawns: |WorldSync: |KillBlasts: |CopyWatch: |WeaponFire: |Pad: walkto' 420
 
 for phase in $PHASES; do
 	case $phase in

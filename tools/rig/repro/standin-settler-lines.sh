@@ -21,7 +21,7 @@ WATCHER=$(other_game "$OWNER")
 need_session
 PUPPET=$(dc "$WATCHER" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 [ -n "$PUPPET" ] || verdict VOID "the $WATCHER's game has no stand-in for the $OWNER's player (no puppet= in its net status)"
-run_cap 600   # three triggers of TRY s and a walk: a run still going after 10 minutes is stuck
+run_cap 1200   # three triggers of TRY s and a walk: the longest good run took 8 minutes; one still going after 20 is stuck
 log_back() { dc "$WATCHER" "log level info" >/dev/null; }
 dc "$WATCHER" "log level debug" >/dev/null; on_end log_back   # the log back at info however the run ends
 rmark "$WATCHER" all
@@ -70,6 +70,7 @@ e=$(dc "$WATCHER" "edid $RAIDER")
 case "$e" in "'"*) say "trigger 3: a raider ($RAIDER $e) placed 300 u from the $WATCHER's player (dev spawn, said so), left to attack $TRY s";;
 *) say "trigger 3 skipped: $RAIDER is no form in the $WATCHER's game ($e)"; e="";; esac
 if [ -n "$e" ]; then
+	rmark "$WATCHER" t   # before the spawn: lines said while the gate below waits are counted too (watch ... marked)
 	before=$(dc "$WATCHER" "spawn $RAIDER 300"); say "  spawn: $(cut -c1-120 <<<"$before")"
 	R=$(grep -oE '[0-9A-F]{8}' <<<"$before" | head -1)
 	raider_gone() { [ -n "$R" ] && dc "$WATCHER" "console $R.disable" >/dev/null; return 0; }
@@ -78,7 +79,7 @@ if [ -n "$e" ]; then
 	# With a line already said the verdict is YES either way, so the gate is only for a run still on its way to NO
 	raider_on_standin() { [ "$(field "$(dc "$WATCHER" "combat $R")" target)" = "$PUPPET" ]; }
 	[ "$SAID" -gt 0 ] || scene_live "the raider ${R:-?} is in combat with the $OWNER's stand-in $PUPPET" 20 raider_on_standin
-	watch raider
+	watch raider marked
 	raider_gone
 fi
 log_back
