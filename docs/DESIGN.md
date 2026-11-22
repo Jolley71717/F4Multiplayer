@@ -260,9 +260,12 @@
   many are held, how long ago the newest was taken, how far behind now it is stamped, how many came since and were refused); it stands in a cell the engine does not draw; its 3D never came; its 3D is culled, faded out (counted only within
   `FADE_NEAR`, 800 units: further off the engine fades actors by the player's own setting) or scaled to nothing; its 3D is a bare
   skeleton with no body or clothes on it; it is drawn more than `ELSEWHERE` (2000 units) from where they are. One in a power
-  armor frame is not looked at (ArmorFrames has its own watch). Unseen for `DRAW_WAIT` (5 s): the stand-in is asked to build its
-  3D again (`Actor::Reset3D`, as FaceWatch asks for a head), once; 5 s later it is placed again; that one, after its own 5 s and
-  rebuild, is placed again plain: our default settler of their sex, without the look they picked, the ini's base, the copy of
+  armor frame is not looked at (ArmorFrames has its own watch). Unseen for `DRAW_WAIT` (5 s), or `LOAD_WAIT` (15 s) while its 3D
+  or its cell is still on the way (the engine loads a fresh stand-in's 3D in the background: 1.0-6.6 s on the rig after fast
+  travels, so 5 s took loading ones for unseen ones), and the wait starts again whenever its 3D or its cell comes or goes (a
+  placement, a travel or a door, a cell coming drawn, a rebuild; a 3D that came is judged from when it came): the stand-in is
+  asked to build its 3D again (`Actor::Reset3D`, as FaceWatch asks for a head), once; still unseen that wait later it is placed
+  again; that one, after its own wait and rebuild, is placed again plain: our default settler of their sex, without the look they picked, the ini's base, the copy of
   the base that wears their face, or their LooksMenu data, which is everything a fresh stand-in takes over from the one before
   (a reconnect alone places a fresh one with all of those, and did not help the reporter); then it is left as it is. With no
   stand-in standing there is nothing to rebuild: it is logged once with the reason, and when placing one failed the next is

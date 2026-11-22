@@ -16,8 +16,10 @@
 //   - it is drawn somewhere else: far from where they are.
 // One in a power armor frame is not looked at (its 3D is the frame's: ArmorFrames has its own watch), nor anything while a load is
 // on, nor a friend whose states have stopped coming (their own loading screen, their game stopped): that one is only where they
-// were. A friend not seen for DRAW_WAIT is said once, with the way; then, when a stand-in stands, it is asked to build its 3D again
-// (Actor::Reset3D, what LooksMenu does after editing a face), once; still not seen DRAW_WAIT later it is placed again; then placed
+// were. A friend not seen for DRAW_WAIT (LOAD_WAIT while the stand-in's 3D or cell is still on the way: after it is placed, after
+// a travel or a door, as its cell comes drawn, after a rebuild; and each time its 3D or cell comes or goes, the wait starts again)
+// is said once, with the way; then, when a stand-in stands, it is asked to build its 3D again
+// (Actor::Reset3D, what LooksMenu does after editing a face), once; still not seen that wait later it is placed again; then placed
 // again plain: the default settler, without the copy of the base that wears their face and without their LooksMenu data, the two
 // things a fresh stand-in takes over from the one before; then it is left as it is and said so, once. When none stands and placing
 // one has failed, the next is placed plain at once. Seen again, it all starts over (a plain one stays plain for that friend until
@@ -26,8 +28,13 @@ namespace StandInDraw
 {
 	using Clock = std::chrono::steady_clock;
 
-	// How long a friend who should be seen gets before anything is done about it (a 3D loads and fades in within a second or two).
+	// How long a friend who should be seen gets before anything is done about it, once their stand-in's 3D is there (it fades in
+	// within a second or two).
 	constexpr auto DRAW_WAIT = std::chrono::seconds(5);
+	// ... and while its 3D or its cell is still on the way. The engine loads a fresh stand-in's 3D in the background: on the rig's
+	// two machines after fast travels it took 1.0-6.6 s (28 placements), so DRAW_WAIT alone took 4 of 6 stand-ins at one place for
+	// unseen ones while they were only loading. 15 s is the bound DeferredDelete gives a load stall.
+	constexpr auto LOAD_WAIT = std::chrono::seconds(15);
 	// Fresh stand-ins placed for one that stayed unseen, the last of them plain, before it is left alone.
 	constexpr int MAX_REPLACES = 2;
 	// Only a friend this near (by their newest state) is looked at: well inside the cells the engine draws and the distance it
@@ -124,6 +131,12 @@ namespace StandInDraw
 		return "?";
 	}
 
+	// How long one unseen this way is given: a 3D or a cell still on its way gets the time a load takes, the rest DRAW_WAIT.
+	constexpr Clock::duration WaitFor(Why a_why)
+	{
+		return a_why == Why::kNo3D || a_why == Why::kCell ? Clock::duration(LOAD_WAIT) : Clock::duration(DRAW_WAIT);
+	}
+
 	enum class Then
 	{
 		kNothing,
@@ -146,6 +159,8 @@ namespace StandInDraw
 		bool              plain = false;    // theirs are placed plain
 		bool              gaveUp = false;   // said once
 		bool              acted = false;    // something was said or done in this spell
+		bool              had3D = false;    // last frame, the stand-in standing had its 3D
+		bool              hadCell = false;  // ... and stood in a cell the engine draws
 	};
 
 	// A new stand-in was placed for them: watched afresh; the spell's replaces are kept until one is seen.
@@ -153,6 +168,8 @@ namespace StandInDraw
 	{
 		a_track.unseen = false;
 		a_track.rebuilt = false;
+		a_track.had3D = false;
+		a_track.hadCell = false;
 	}
 
 	// A load, or a new look from them: their own face and data get their chance again.
@@ -163,6 +180,12 @@ namespace StandInDraw
 
 	constexpr Then Frame(Track& a_track, const Facts& a_facts, Clock::time_point a_now)
 	{
+		// Its 3D came or went, or its cell came drawn or went: what it is now gets a wait of its own, from now. A 3D that came
+		// may still be fading in or getting its clothes and head; a cell that came drawn only now starts loading the 3D in it. (A 3D
+		// that kept coming and going would keep the wait from ending: shown half the time, it is not what this watch is for.)
+		const bool changed = a_facts.placed && (a_facts.has3D != a_track.had3D || a_facts.cellDrawn != a_track.hadCell);
+		a_track.had3D = a_facts.placed && a_facts.has3D;
+		a_track.hadCell = a_facts.placed && a_facts.cellDrawn;
 		if (!a_facts.wanted || (a_facts.placed && a_facts.busy)) {
 			a_track.unseen = false;  // not looked at: looked at afresh when they should be seen again
 			return Then::kNothing;
@@ -178,12 +201,12 @@ namespace StandInDraw
 			}
 			return Then::kNothing;
 		}
-		if (!a_track.unseen) {
+		if (!a_track.unseen || changed) {
 			a_track.unseen = true;
 			a_track.unseenSince = a_now;
 			return Then::kNothing;
 		}
-		if (a_now - a_track.unseenSince < DRAW_WAIT) {
+		if (a_now - a_track.unseenSince < WaitFor(WhyNot(a_facts))) {
 			return Then::kNothing;
 		}
 		if (!a_facts.placed) {
@@ -203,7 +226,7 @@ namespace StandInDraw
 		}
 		if (!a_track.rebuilt) {
 			a_track.rebuilt = true;
-			a_track.unseenSince = a_now;  // given DRAW_WAIT again for the rebuild
+			a_track.unseenSince = a_now;  // the rebuild gets its own wait (LOAD_WAIT while the new 3D loads)
 			a_track.acted = true;
 			return Then::kRebuild;
 		}

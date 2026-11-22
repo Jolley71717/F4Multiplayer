@@ -45,10 +45,11 @@ for w in $WATCHERS; do
 
 	# 2) culled every frame: a fresh one, a plain one, then left
 	rmark "$w" hold; dc "$w" 'standindraw hold' >/dev/null
-	wait_for 30 has "$w" hold 'still not shown: .*; placed again \(' || BAD="$BAD [$w] culled every frame: no fresh stand-in within 30 s;"
-	wait_for 30 has "$w" hold 'placed again plain' || BAD="$BAD [$w] culled every frame: no plain stand-in within 30 s more;"
+	# (each step: 5 s culled, a rebuild, its new 3D loading up to ~7 s on the VM, then 5 s culled again)
+	wait_for 45 has "$w" hold 'still not shown: .*; placed again \(' || BAD="$BAD [$w] culled every frame: no fresh stand-in within 45 s;"
+	wait_for 45 has "$w" hold 'placed again plain' || BAD="$BAD [$w] culled every frame: no plain stand-in within 45 s more;"
 	wait_for 15 has "$w" hold 'spawned .*\(plain' || BAD="$BAD [$w] culled every frame: the plain stand-in was not placed;"
-	wait_for 30 has "$w" hold 'left as it is' || BAD="$BAD [$w] culled every frame: never left alone (said) within 30 s more;"
+	wait_for 45 has "$w" hold 'left as it is' || BAD="$BAD [$w] culled every frame: never left alone (said) within 45 s more;"
 	rsince "$w" hold | grep -E 'near us and|shown again|spawned' | sed "s/^/  [$w] /" | tee -a "$REPRO_OUT/run.log"
 	n=$(rsince "$w" hold | grep -cE 'spawned .* for player'); say "[$w] culled every frame: $n stand-in(s) placed in all (2 expected: a fresh one, a plain one)"
 	[ "$n" -le 3 ] || BAD="$BAD [$w] culled every frame: $n stand-ins placed, more than the steps allow;"
