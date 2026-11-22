@@ -13,6 +13,9 @@
 #      leave:  the host's game stalls 8 s, and 5 s in (the hold begun) the friend leaves the session (net leave).
 #      door:   the host walks to the door nearest to them (the pad) and opens it (E): the host's Piper follows through it; the
 #              friend's stays (its owner's copy elsewhere, perhaps silent over the host's load first).
+#      unload: the friend walks to the door nearest to them (the pad) and opens it (E): Piper's cell unloads in the friend's game
+#              while she is in her copy there (her owner's copy still sending).
+#      save:   the host's game stalls 12 s, and once the hold has begun the friend saves (console save) during it.
 #   3. 10 s on: both games answer, no new crash log; the friend's log has her out of the copy ("out of frame copy <copy>") and
 #      never "stays in frame copy <copy>" (left to the game alive), and that copy is gone.
 #   4. The friend saves (console save, a throwaway save named below), leaves the session when still in it (net leave) and loads
@@ -46,6 +49,10 @@ friend_in_copy() { local p; p=$(npcpa vm); [ "$(field "$p" inPA)" = true ] && [ 
 copy_gone() { local ri; ri=$(dc vm "refinfo $1"); case "$ri" in error*|"") return 0;; esac; [ "$(field "$ri" deleted)" = true ] || [ "$(field "$ri" disabled)" = true ]; }
 frames_host() { dc host "refs 42 1500" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8; }
 held_vm() { rsince vm act | grep -q "MirrorFrames: $PIPER is held in frame copy"; }
+nearest_door() { # <who>: the door (refs 32) nearest to that player
+	local p; p=$(pos_of "$1")
+	dc "$1" "refs 32 4000" | tr ';' '\n' | awk -v p="$p" '{ split(p, q, " "); n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] == "at") { d = (w[i+1]-q[1])^2 + (w[i+2]-q[2])^2; id = $1; gsub(/[^0-9A-F]/, "", id); if (best == "" || d < bd) { best = id; bd = d } } } END { print best }'
+}
 LEFTOVER=""
 
 # 1. Piper with the host, in a frame there and in a copy here
@@ -87,10 +94,7 @@ leave)
 	sleep 6 ;;
 door)
 	# DOOR, else the door nearest to the host's player (rig.sh join's coc puts the player at an interior's way in)
-	if [ -z "$DOOR" ]; then
-		HP=$(pos_of host)
-		DOOR=$(dc host "refs 32 4000" | tr ';' '\n' | awk -v p="$HP" '{ split(p, q, " "); n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] == "at") { d = (w[i+1]-q[1])^2 + (w[i+2]-q[2])^2; id = $1; gsub(/[^0-9A-F]/, "", id); if (best == "" || d < bd) { best = id; bd = d } } } END { print best }')
-	fi
+	[ -n "$DOOR" ] || DOOR=$(nearest_door host)
 	[ -n "$DOOR" ] || verdict VOID "door: no door within 4000 units of the host's player (refs 32 4000: $(dc host 'refs 32 4000' | cut -c1-200))"
 	say "door: the host walks to door $DOOR (the pad) and opens it (E); Piper follows the host there"
 	rwalk host "$DOOR" 150 || say "door: the walk ended short ($WALKED)"
@@ -99,7 +103,25 @@ door)
 	sleep 8; wait_ingame host 60
 	say "door: the host: $(dc host status | grep -oE "location=[0-9A-F]+ '[^']*'"); its Piper: $(dc host "mirror $PIPER" | cut -c1-100)"
 	sleep 4 ;;
-*) verdict VOID "MODE is runout, leave or door, not '$MODE'" ;;
+unload)
+	[ -n "$DOOR" ] || DOOR=$(nearest_door vm)
+	[ -n "$DOOR" ] || verdict VOID "unload: no door within 4000 units of the friend's player"
+	say "unload: the friend walks to door $DOOR (the pad) and opens it (E), leaving Piper (in her copy) behind with the host"
+	rwalk vm "$DOOR" 150 || say "unload: the walk ended short ($WALKED)"
+	rpress_e vm "$DOOR"
+	say "unload: the friend pressed E on '$ROLLOVER'"
+	sleep 8; wait_ingame vm 60
+	say "unload: the friend: $(dc vm status | grep -oE "location=[0-9A-F]+ '[^']*'"); its Piper: $(dc vm "mirror $PIPER" | cut -c1-100)"
+	sleep 4 ;;
+save)
+	say "save: the host's game stalls 12 s (dev stall); the friend saves (console save $PA_SAVE) once the hold has begun"
+	( dc host "stall 12" >/dev/null 2>&1 & )
+	wait_for 8 held_vm || say "save: no hold seen in the friend's log 8 s in"
+	held_vm || { sleep 6; verdict VOID "save: the friend's Piper was never held (the stall did not silence her)"; }
+	say "save: held; the friend saves now, during the hold"
+	dc vm "console save $PA_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	sleep 4 ;;
+*) verdict VOID "MODE is runout, leave, door, unload or save, not '$MODE'" ;;
 esac
 alive_or_yes "$MODE"
 L=$(rsince vm act | grep -E "MirrorFrames: $PIPER|MirrorFrames: [0-9A-F]{8}'s hold|NpcSync: $PIPER" | cut -c1-260)
@@ -111,9 +133,13 @@ wait_for 10 copy_gone "$COPY" || LEFTOVER="$LEFTOVER the frame copy $COPY stayed
 say "$MODE: the friend's Piper now: $(npcpa vm | cut -c1-160)"
 
 # 4. a save, the leave, the save loaded alone
-say "save: the friend saves (console save $PA_SAVE), leaves (net leave, when still joined) and loads it alone (console load)"
-dc vm "console save $PA_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
-alive_or_yes "save"
+if [ "$MODE" = save ]; then
+	say "save: (saved during the hold) the friend leaves (net leave) and loads it alone (console load)"
+else
+	say "save: the friend saves (console save $PA_SAVE), leaves (net leave, when still joined) and loads it alone (console load)"
+	dc vm "console save $PA_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	alive_or_yes "save"
+fi
 joined && { dc vm "net leave" >/dev/null; sleep 6; }
 alive_or_yes "leave"
 rmark vm load
@@ -125,6 +151,7 @@ say "load: the friend's Piper: $(cut -c1-160 <<<"$P")"
 say "load: frames near the friend's player: $(cut -c1-300 <<<"$F")"
 [ "$(field "$P" inPA)" = true ] && LEFTOVER="$LEFTOVER the save loaded alone has Piper in power armor (frame $(field "$P" frame));"
 grep -qE "[0-9A-F]{8} base=" <<<"$F" && LEFTOVER="$LEFTOVER the save loaded alone has a frame near the friend's player;"
+copy_gone "$COPY" || LEFTOVER="$LEFTOVER the save loaded alone has the copy $COPY ($(dc vm "refinfo $COPY" | cut -c1-120));"
 say "load: the friend's log: $(rsince vm load | grep -iE 'stray|power armor|frame' | tail -4 | cut -c1-200 | paste -sd'|' -)"
 alive_or_yes "the end"
 # The host's Piper out of her frame for whatever comes next

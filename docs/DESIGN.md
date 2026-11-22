@@ -496,7 +496,8 @@
   owner's game, its pieces looted off it there, and when we stop mirroring it the copy is left to the game with it
   (saved as the game's frame). An NPC killed in its owner's game goes silent there about 3 s before its death reaches
   us, so a mirror in a copy whose owner's copy goes silent is held there, still mirrored and still at its owner's last
-  state, for up to 10 s of silence: its death then leaves the body in the suit; its states back, it is mirrored on;
+  state, for up to 10 s of silence, and so is one the server lets go of meanwhile (it does that just before the death
+  of an NPC that died in its runner's game reaches us): its death then leaves the body in the suit; its states back, it is mirrored on;
   anything else (the 10 s over, its owner gone, its cell unloaded, a save, a load, the session's end) stops mirroring it
   as any stop does. Only silence holds: an owner's copy that went through a door or ran far is alive, and ours gets out
   at once. Every stop leaves the copy while the NPC is still a mirror (before Puppets lets it go, and at a save, a load

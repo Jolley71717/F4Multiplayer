@@ -237,6 +237,7 @@ TEST("mirror frames: a hold that runs out takes it out with the engine's exit, a
 TEST("mirror frames: its death within the hold leaves the body in its suit, the copy the game's")
 {
 	CHECK(HeldAt(3044ms));  // rig, 2026-11-21: the death came 44 ms past LOST_AFTER
+	CHECK(HeldAt(3080ms));  // ...and the server's let-go of it 3 ms before it: held as well (NpcSync's owner-0 hold)
 	CHECK(ChooseLeaving(true, true, true) == Leaving::kRelease);
 	// A body the exit is never run on, whatever its owner's copy does meanwhile.
 	auto f = InCopy();

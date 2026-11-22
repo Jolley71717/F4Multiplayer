@@ -115,7 +115,9 @@ namespace MirrorFrames
 	// out of its suit here and in it there (rig, 2026-11-21: out 44 ms before the death came, 3 s into the silence). Its death
 	// within the hold leaves the body in its suit (Down: kRelease); its states back, it is mirrored on; anything else that
 	// ends it (HOLD over, its owner gone, a save, the session's end) is a stop as any, the mirror taken out as it stops. Only
-	// silence holds: an owner's copy that went through a door or ran far is alive there, and ours gets out at once.
+	// silence holds: an owner's copy that went through a door or ran far is alive there, and ours gets out at once. One the
+	// server lets go of (owner 0) is held the same: the server lets go of an NPC that died in its runner's game just before its
+	// death reaches us (rig, 2026-11-21: 3 ms apart, one batch), and stopped then it was taken out alive.
 	constexpr auto HOLD = std::chrono::seconds(10);
 
 	// a_silentFor: since its owner's last state.

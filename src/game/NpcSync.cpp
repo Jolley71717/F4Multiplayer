@@ -2017,6 +2017,18 @@ namespace NpcSync
 				auto&      mirror = it->second;
 				const auto owner = OwnerOf(id);
 				const auto actor = LoadedActor(id);
+				// Let go by the server (owner 0) while in its frame copy: held there as a silent one is (below), since the server
+				// lets go of one that died in its runner's game just before its death comes (ApplyOwners). Its death then leaves the
+				// body in the suit; else the hold runs out (its owner left, or it unloaded there) and it is taken out.
+				if (owner == 0 && actor && !actor->IsDead(false) && mirror.registered == actor && !mirror.snapshots.empty() &&
+					MirrorFrames::HoldWhileSilent(MirrorFrames::InCopy(actor), a_now - mirror.snapshots.back().received)) {
+					MirrorFrames::Held(actor, a_now - mirror.snapshots.back().received);
+					if (auto motion = Sample(mirror, a_now)) {
+						Puppets::SetTarget(actor, *motion);
+					}
+					++it;
+					continue;
+				}
 				if (owner == 0 || owner == localId || !actor || actor->IsDead(false)) {
 					StopMirroring(id, mirror,
 						!actor                ? "unloaded here"
@@ -2198,6 +2210,13 @@ namespace NpcSync
 				sentRolls.Forget(entry.refId);  // and its roll
 				if (Protocol::IsSpawnRef(entry.refId)) {
 					rolls.Forget(entry.refId);  // a spawn's goes with it; a plugin's NPC's is the session's for good (protocol 57)
+				}
+				// One in its frame copy stays mirrored, held there (UpdateMirrors, MirrorFrames::HoldWhileSilent): the server lets
+				// go of an NPC that died in its runner's game just before its death reaches us (the same batch, rig 2026-11-21: 3 ms
+				// apart), and stopped here it was taken out of the suit alive, its body out of it here and in it there.
+				if (const auto it = mirrors.find(entry.refId); it != mirrors.end() && it->second.registered && LoadedActor(entry.refId) == it->second.registered &&
+					MirrorFrames::InCopy(it->second.registered)) {
+					continue;
 				}
 				StopMirroring(entry.refId);
 				continue;
