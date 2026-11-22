@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T01:05:45+00:00",
+ "updated": "2026-11-22T03:58:56+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1443,8 +1443,8 @@
    "title": "A player's stand-in speaks generic settler lines (not the player's voice) at random times",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Being worked"
+   "stage": 5,
+   "note": "Merged: stand-ins say no settler lines"
   },
   {
    "id": "clgv",
@@ -2109,9 +2109,9 @@
    "id": "hv4u",
    "title": "A hit an NPC lands on a friend's stand-in ignores the victim's own perks, legendary armor effects, limb damage, radiation and stagger",
    "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
+   "priority": 1,
+   "stage": 1,
+   "note": "Opus agent on it: real engine hit on the victim's side"
   },
   {
    "id": "hwbu",
@@ -3063,8 +3063,8 @@
    "title": "A player's stand-in goes invisible to the other in long sessions (compass marker and interactions still work)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked"
+   "stage": 5,
+   "note": "Merged (watch rebuilds an unseen stand-in; safety net, not reproduced on 0.21.0)"
   },
   {
    "id": "qe0d",
