@@ -18,7 +18,7 @@ pass() { say "ok: $*"; }
 # dstate <who> <ref>: that game's open state of the door (1..4), or empty when it is not within 3000 u with its 3D
 dstate() { dc "$1" "doors 3000" | tr ';' '\n' | grep -o "$2 '[^']*' open=[0-9]" | grep -o '[0-9]$'; }
 is_open() { case "$(dstate "$1" "$2")" in 1|2) return 0;; esac; return 1; }
-doorcount() { dc "$1" wsdamage | grep -oE 'doors: known=[0-9]+ sent=[0-9]+ heard=[0-9]+ set=[0-9]+'; }
+doorcount() { dc "$1" wsdamage | grep -oE 'doors: known=[0-9]+ (own=[0-9]+ )?sent=[0-9]+ heard=[0-9]+ set=[0-9]+'; }
 is_shut() { case "$(dstate "$1" "$2")" in 3|4) return 0;; esac; return 1; }
 coc_both() { local who; for who in host vm; do dc $who "god on" >/dev/null; dc $who "console coc $1" >/dev/null; done; say "both players coc'd into $1 (console placement)"; sleep 15; wait_ingame host 60; wait_ingame vm 60; sleep 8; }
 # press_door <who> <ref> <open|shut>: E on the door until that game has it that way (up to 3 presses, each only with the door

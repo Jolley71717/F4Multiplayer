@@ -89,3 +89,76 @@ TEST("WorkshopDoors: words on more doors than a session builds are dropped, and 
 	CHECK(book.Pending({ 7, 0xFF000000 }));
 	CHECK(!book.Pending({ 7, 0xFF000000 + Book::MAX_DOORS + 1 }));
 }
+
+TEST("WorkshopDoors: a word set on a door that hasn't taken it yet is set again, not sent back, for a few looks")
+{
+	Book book;
+	CHECK(book.Look(HOSTS, false, true) == Do::kSend);
+	book.Heard(HOSTS, true);  // a friend opened their copy
+	CHECK(book.Look(HOSTS, false, true) == Do::kApply);
+	book.Applied(HOSTS);
+	for (std::uint8_t i = 0; i < WorkshopDoors::SETTLE_LOOKS; ++i) {
+		CHECK(book.Look(HOSTS, false, true) == Do::kApply);  // still shut: set again, the friend's open stands
+		book.Applied(HOSTS);                                  // no new window: it was not pending
+		CHECK(book.Open(HOSTS));
+	}
+	CHECK(book.Look(HOSTS, false, true) == Do::kSend);  // never took it: shut is the word now, said to the others
+	CHECK(!book.Open(HOSTS));
+}
+
+TEST("WorkshopDoors: once the door has the word, our player's next change is said at once")
+{
+	Book book;
+	CHECK(book.Look(FRIENDS, false, false) == Do::kNothing);
+	book.Heard(FRIENDS, true);
+	CHECK(book.Look(FRIENDS, false, false) == Do::kApply);
+	book.Applied(FRIENDS);
+	CHECK(book.Look(FRIENDS, true, false) == Do::kNothing);  // took it: the window ends
+	CHECK(book.Look(FRIENDS, false, false) == Do::kSend);    // our player shuts it
+}
+
+TEST("WorkshopDoors: our own doors' words, loaded or not, go to a player who joins; friends' doors don't")
+{
+	Book book;
+	CHECK(book.Look({ 1, 0xFF000010 }, true, true) == Do::kSend);
+	CHECK(book.Look({ 1, 0xFF000011 }, false, true) == Do::kSend);
+	book.Heard({ 1, 0xFF000012 }, true);  // a friend opened their copy of a door of ours not loaded here
+	book.Heard(FRIENDS, true);
+	auto own = book.OwnWords(1);
+	CHECK(own.size() == 3);
+	CHECK((own[0] == std::pair<std::uint32_t, bool>{ 0xFF000010, true }));
+	CHECK((own[1] == std::pair<std::uint32_t, bool>{ 0xFF000011, false }));
+	CHECK((own[2] == std::pair<std::uint32_t, bool>{ 0xFF000012, true }));
+	CHECK(book.OwnWords(0).empty());  // no player id yet: nothing is ours
+}
+
+TEST("WorkshopDoors: our built doors are found once each, only runtime ones, and dropped when gone here")
+{
+	WorkshopDoors::Found found;
+	CHECK(found.Note(0xFF000100));
+	CHECK(!found.Note(0xFF000100));  // the cell walk and the placed event both find it: one door
+	CHECK(!found.Note(0x0001F2A3));  // a plugin's door is DoorShare's
+	CHECK(found.Note(0xFF000101));
+	CHECK(found.Size() == 2);
+	std::uint32_t looked = 0;
+	found.Each([&](std::uint32_t a_id) {
+		++looked;
+		return a_id != 0xFF000100;  // its cell unloaded
+	});
+	CHECK(looked == 2);
+	CHECK(!found.Has(0xFF000100));
+	CHECK(found.Has(0xFF000101));
+	CHECK(found.Note(0xFF000100));  // its cell attached again
+	found.Clear();
+	CHECK(found.Size() == 0);
+}
+
+TEST("WorkshopDoors: no more built doors are watched than a session builds")
+{
+	WorkshopDoors::Found found;
+	for (std::uint32_t i = 0; i < WorkshopDoors::Found::MAX + 10; ++i) {
+		found.Note(0xFF000000 + i);
+	}
+	CHECK(found.Size() == WorkshopDoors::Found::MAX);
+	CHECK(found.Has(0xFF000000));
+}

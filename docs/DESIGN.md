@@ -2102,7 +2102,7 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
   other game's copy of it (a workshop piece) has a runtime id of its own, so none of them was ever a RefState (a Nexus
   report, 0.20.4: "door open/close states are not syncing"). Every game keeps the session's last word on each built
   door by the key all of them know it by, the builder and the builder's reference id (`WorkshopDoors::Book`). Every
-  500 ms it reads its own built doors (the workshop items each workbench lists) and its copies of friends' whose open
+  500 ms it reads its own built doors and its copies of friends' whose open
   state is a player's to share (`WorldSync::SharesOpenState`: the DoorShare rule, a door that is not automatic with no
   script on it but the quiet ones; a Vault-Tec Workshop door with a script of its own stays each game's): a door of
   ours seen first is reported as it stands (friends' copies are placed shut), a copy seen first is taken as it stands;
@@ -2112,8 +2112,17 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
   friend's door under the builder its copy was told by, and to the builder's own game as its player's door, only when
   the door is one of the character it plays now (`WorkshopStore::BuilderOf`). A word heard is set with the engine's
   `SetOpenState` on our door or copy as soon as it is loaded, so the builder's door and every copy follow whoever
-  opens it. A join or a load clears the book: our doors are said again, friends' words come again. `net status`:
-  `doors: known= sent= heard= set=` in the workshop damage line; the log says each door set from a friend's word;
+  opens it; a door that hasn't taken a word yet is set again for 2 s rather than its old state being sent back. Our
+  own built doors are found as each cell attaches (its references made at runtime whose base is a door), as each piece
+  is placed (the workshop's placed event: workshop mode's, and the host's build for a friend), and in each workbench's
+  list of its pieces (`WorkshopDoors::Found`), and each is ours if it is one of a workbench's pieces and no copy: not
+  from the workbenches with workshop data alone, as the power and damage reports go, since a workbench has that data
+  only once workshop mode has been used there in this save and the rig found a builder's door never looked at that way.
+  So every built door is followed, built before the session or in it, wherever its cell loads before or after the
+  join. A join or a load clears the book: our doors are said again, friends' words come again; a player who joins is
+  told our doors' words, loaded or not, since the server keeps none and their copies are placed shut. `net status`:
+  `doors: known= own= sent= heard= set=` in the workshop damage line; the log says each built door's first look and
+  each door set from a friend's word;
 - a door only a quest stage opens (Vault 114's gear door): the stage is shared (ScriptDoors).
 Not shared: elevators and their cars, load elevators, automatic doors, doors whose script answers OnOpen (an ambush,
 a stage), blocks activation or opens the door itself, the Mechanist's lair doors (their controls' state is each

@@ -195,6 +195,8 @@ namespace WorkshopSync
 		// whether a piece of ours waits for the host's answer (its moves and scraps are not reported meanwhile).
 		bool HandOver(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench);
 		bool IsPendingPiece(std::uint32_t a_id);
+		// A door just placed (the placed event): one of our built doors' candidates (ownDoors, SendDoorStates).
+		void NoteOwnDoor(const RE::TESObjectREFR* a_ref);
 		const char* PendingNoticeOf(std::uint32_t a_id);  // the notice for a key on a copy something is asked of already (a scrap or a store)
 		// A move (SharedMove, defined with the shared workshop): a report of the host's piece whose copy our player holds in
 		// workshop mode is kept until the copy is let go (true: kept, not applied now).
@@ -761,6 +763,7 @@ namespace WorkshopSync
 		void OnPlaced(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench)
 		{
 			LogEvent("placed", a_item, a_bench);
+			NoteOwnDoor(a_item);
 			NoteGrabPlaced(a_item);  // (SharedMove) the drop of the copy our player holds: undone when it is let go
 			if (HandOver(a_item, a_bench)) {
 				return;  // asked of the host (or taken off): not ours to report
@@ -1080,6 +1083,7 @@ namespace WorkshopSync
 		std::unordered_set<std::uint32_t> keptTied;  // copies an audit could not take off: the session's audit tries them no more
 		std::uint32_t            auditSkips = 0;     // ... skipped by it since
 		std::set<std::uint32_t>  powerBenches;       // workbenches seen in loaded cells, and ones a copy was linked to
+		WorkshopDoors::Found     ownDoors;           // doors made at runtime seen in loaded cells or placed: our built doors to look at (SendDoorStates)
 		std::uint64_t            frameNumber = 0;
 		std::uint64_t            gridNamedFrame = ~0ull;
 		std::unordered_set<std::uint32_t> gridNamed;  // what the benches' grids name, as of gridNamedFrame
@@ -2578,23 +2582,46 @@ namespace WorkshopSync
 		std::int64_t            pollUsMax = 0;
 		std::uint32_t           benchWorld = 0;     // the worldspace whose persistent cell was looked over for workbenches
 
+		// Whether a reference is a door made at runtime: one a player built, ours or a copy (SendDoorStates sorts them).
+		bool RuntimeDoor(const RE::TESObjectREFR& a_ref)
+		{
+			const auto base = a_ref.GetObjectReference();
+			return WorkshopDoors::Found::Runtime(a_ref.GetFormID()) && base && base->Is(RE::ENUM_FORM_ID::kDOOR);
+		}
+
+		void NoteOwnDoor(const RE::TESObjectREFR* a_ref)
+		{
+			if (a_ref && RuntimeDoor(*a_ref)) {
+				ownDoors.Note(a_ref->GetFormID());
+			}
+		}
+
 		// The workbenches among the cell's references, with their workshop data or not yet: a settlement's workbench gets its data
-		// the first time workshop mode is used there (PowerBenches looks again each time).
+		// the first time workshop mode is used there (PowerBenches looks again each time). And the doors made at runtime among
+		// them, our built doors' candidates (ownDoors): whatever a workbench holds or lists, and whenever they were built.
 		void NoteBenchesIn(RE::TESObjectCELL* a_cell)
 		{
 			if (!a_cell) {
 				return;
 			}
-			std::vector<std::uint32_t> found;
+			std::vector<std::uint32_t> found, doors;
 			{
 				const RE::BSAutoLock l{ a_cell->spinLock };
 				for (const auto& ref : a_cell->references) {
-					if (ref && IsWorkbenchAnchor(ref.get())) {
+					if (!ref) {
+						continue;
+					}
+					if (RuntimeDoor(*ref)) {
+						doors.push_back(ref->GetFormID());
+					} else if (IsWorkbenchAnchor(ref.get())) {
 						found.push_back(ref->GetFormID());
 					}
 				}
 			}
 			powerBenches.insert(found.begin(), found.end());
+			for (const auto id : doors) {
+				ownDoors.Note(id);
+			}
 		}
 
 		void NoteBenches(const std::vector<AttachedCell>& a_fresh)
@@ -3198,8 +3225,27 @@ namespace WorkshopSync
 			}
 		}
 
-		// Every DOOR_POLL: our own built doors (from the workshop items each workbench lists) and our copies of friends' are
-		// looked at (LookAtDoor), and what changed goes out as kReportWorkshopStates.
+		// The doors among the workshop items each workbench in memory lists, with its workshop data or not (a door built where
+		// the cells were walked already, by a script rather than workshop mode): into ownDoors.
+		void NoteBenchDoors()
+		{
+			for (const auto benchId : powerBenches) {
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(benchId);
+				const auto children = bench && bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+				if (!children) {
+					continue;
+				}
+				for (const auto& child : children->linkedChildren) {
+					const auto ref = child.REFR.get();
+					if (ref && child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && RuntimeDoor(*ref)) {
+						ownDoors.Note(ref->GetFormID());
+					}
+				}
+			}
+		}
+
+		// Every DOOR_POLL: our own built doors (ownDoors: found as the cells attach, as they are placed, and in the workbenches'
+		// lists) and our copies of friends' are looked at (LookAtDoor), and what changed goes out as kReportWorkshopStates.
 		void SendDoorStates(Clock::time_point a_now)
 		{
 			if (a_now < nextDoorPoll) {
@@ -3207,25 +3253,19 @@ namespace WorkshopSync
 			}
 			nextDoorPoll = a_now + DOOR_POLL;
 			std::vector<Protocol::PieceState> out;
-			for (const auto bench : PowerBenches()) {
-				const auto children = bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
-				if (!children) {
-					continue;
+			NoteBenchDoors();
+			ownDoors.Each([&](std::uint32_t a_id) {
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) };
+				if (!ref || ref->IsDeleted() || !RuntimeDoor(*ref) || IsCopy(ref.get())) {
+					return false;  // gone here, or a copy of a friend's (looked at below): found again if it comes back as ours
 				}
-				std::vector<std::uint32_t> ids;
-				for (const auto& child : children->linkedChildren) {
-					const auto ref = child.REFR.get();
-					if (ref && child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && Protocol::IsRuntimeRef(ref->GetFormID())) {
-						ids.push_back(ref->GetFormID());
-					}
+				// Ours and one of a workbench's pieces (not one waiting for the host's answer: the host's piece is the one that
+				// counts); one not linked to a workbench yet is kept and looked at again.
+				if (OwnPiece(*ref) && !IsPendingPiece(a_id) && LookableDoor(ref.get(), 0, a_id)) {
+					LookAtDoor(ref.get(), 0, a_id, out);
 				}
-				for (const auto id : ids) {
-					const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
-					if (ref && OwnPiece(*ref) && LookableDoor(ref.get(), 0, id)) {
-						LookAtDoor(ref.get(), 0, id, out);
-					}
-				}
-			}
+				return true;
+			});
 			for (const auto& [key, copy] : copies) {
 				const auto ref = Live(copy);
 				if (ref && LookableDoor(ref.get(), key.first, key.second)) {
@@ -9879,6 +9919,7 @@ namespace WorkshopSync
 		theirResources.Clear();
 		keptTied.clear();
 		powerBenches.clear();
+		ownDoors.Clear();  // found again as the cells are walked again
 		benchWorld = 0;
 		ResetShared();
 		std::scoped_lock l{ outLock };
@@ -9978,6 +10019,7 @@ namespace WorkshopSync
 		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
+		ownDoors.Clear();  // found again as the cells are walked again
 		benchWorld = 0;
 		// The workbenches are the save's (or the new game's) now, which hold none of friends' pieces (BeforeSave took them
 		// off): what we had put on the old world's is forgotten, and theirs go on again as their copies are found. One clear
@@ -10024,6 +10066,7 @@ namespace WorkshopSync
 		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
+		ownDoors.Clear();  // found again as the cells are walked again
 		benchWorld = 0;
 		ForgetAllCopies();
 		resources.Clear();  // the world loaded is no session's (its workbenches hold none of ours: OnGameLoaded forgot them)
@@ -10121,7 +10164,7 @@ namespace WorkshopSync
 		return std::format("workshop damage: mirror={} tracked={} sent={} received={} mirrored={} wrecked={} mended={} failed={} capped={} deferred={} back={} lost={} dropped={} repairs={} repairsAsked={} repairsNotAsked={} repairsServed={} repairsUnpaid={}",
 			damageMirrorOn ? "on" : "off", damageReporter.Size(), damageSent, damageReceived, damageMirror.Size(), damageMirror.Lowered(), damageMirror.Mended(), damageMirror.Failed(),
 			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked.load(), repairsServed, repairsUnpaid) +
-		       std::format(" doors: known={} sent={} heard={} set={}", doorBook.Size(), doorStatesSent, doorStatesHeard, doorStatesSet);
+		       std::format(" doors: known={} own={} sent={} heard={} set={}", doorBook.Size(), ownDoors.Size(), doorStatesSent, doorStatesHeard, doorStatesSet);
 	}
 
 	std::string DescribeDamageOf(RE::TESObjectREFR* a_ref)
@@ -10167,6 +10210,20 @@ namespace WorkshopSync
 		reporter.SendAll();
 		damageReporter.SendAll();
 		resources.SendAll();
+		// Our built doors as the session has them, loaded here or not: the joiner's copies are placed shut, and the server
+		// keeps no door's state (WorkshopDoors::Book::OwnWords).
+		const auto own = doorBook.OwnWords(NpcSync::LocalPlayer());
+		for (std::size_t at = 0; at < own.size(); at += Protocol::MAX_STATE_ENTRIES) {
+			Protocol::PieceStates states;
+			for (std::size_t i = at; i < (std::min)(own.size(), at + Protocol::MAX_STATE_ENTRIES); ++i) {
+				states.entries.push_back({ 0, own[i].first, own[i].second });
+			}
+			const auto           count = states.entries.size();
+			std::scoped_lock     l{ outLock };
+			if (outgoing.Push({ Protocol::Encode(states, Protocol::MessageType::kReportWorkshopStates), 0 })) {
+				doorStatesSent += static_cast<std::uint32_t>(count);
+			}
+		}
 	}
 
 	void OnPlayerLeft(std::uint32_t a_playerId)
