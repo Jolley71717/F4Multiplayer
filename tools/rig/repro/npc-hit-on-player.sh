@@ -88,8 +88,8 @@ dc "$RUNNER" "console player.addtofaction $RAIDERS 1" >/dev/null
 # Sanctuary has its own NPCs (Codsworth) who kill fresh raiders before they reach the stand-in (a 2026-11-22 run: both dead in
 # 15 s, no hit): every other living plugin NPC within 4000 units in the runner's game is disabled for the run (console disable) and
 # enabled again at the cleanup.
-QUIET=$(dc "$RUNNER" "actors 4000" | tr ";" "
-" | grep "dead=false" | grep -oE "^ *[0-9A-F]{8}" | tr -d " " | grep -vE "^(FF|00000014)")
+QUIET=$(dc "$RUNNER" "actors 4000" | grep -oE "[0-9A-F]{8} '[^']*' dead=false" | cut -c1-8 | grep -vE "^(FF|00000014)")
+[ "$CELL" = SanctuaryExt ] && ! grep -q 0001CA7D <<<"$QUIET" && QUIET="$QUIET 0001CA7D"   # Codsworth, who roams the town (2026-11-22: he killed both raiders, from beyond the 4000 u)
 for r in $QUIET; do dc "$RUNNER" "console $r.disable" >/dev/null; done
 say "set-up: the other NPCs near $RUNNER's player disabled for the run (console disable): ${QUIET:-none}"
 # cleanup: what the set-up changed, put back (also on a gate's VOID)
