@@ -6,6 +6,8 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
 
 ## Playing together
 
+- [What is shared](docs/SYNCED.md): a list, system by system, of what is the same in every player's game, what
+  each player keeps for themselves, and what isn't shared yet.
 - [How friends appear](dist/INSTALL.md#how-friends-appear): each friend is a stand-in in your game, with their own
   face and the gear from their own save. You can't loot, trade with or talk to a stand-in.
 - [How your stories can differ](dist/INSTALL.md#how-your-stories-can-differ): what every game shares, what stays
