@@ -85,6 +85,13 @@ rmark "$WHO"; rmark "$RUNNER"
 RAIDERS=0001CBED   # RaiderFaction
 say "set-up: $RUNNER's player put in the raiders' faction (console addtofaction), so they leave it for the stand-in"
 dc "$RUNNER" "console player.addtofaction $RAIDERS 1" >/dev/null
+# Sanctuary has its own NPCs (Codsworth) who kill fresh raiders before they reach the stand-in (a 2026-11-22 run: both dead in
+# 15 s, no hit): every other living plugin NPC within 4000 units in the runner's game is disabled for the run (console disable) and
+# enabled again at the cleanup.
+QUIET=$(dc "$RUNNER" "actors 4000" | tr ";" "
+" | grep "dead=false" | grep -oE "^ *[0-9A-F]{8}" | tr -d " " | grep -vE "^(FF|00000014)")
+for r in $QUIET; do dc "$RUNNER" "console $r.disable" >/dev/null; done
+say "set-up: the other NPCs near $RUNNER's player disabled for the run (console disable): ${QUIET:-none}"
 # cleanup: what the set-up changed, put back (also on a gate's VOID)
 cleanup() {
 	dc "$WHO" 'console player.modav damageresist -'"${DR_ADDED:-0}" >/dev/null
@@ -93,6 +100,7 @@ cleanup() {
 	for l in PerceptionCondition EnduranceCondition LeftAttackCondition RightAttackCondition LeftMobilityCondition RightMobilityCondition; do dc "$WHO" "console player.restoreav $l 100" >/dev/null; done
 	dc "$WHO" 'god on' >/dev/null
 	dc "$RUNNER" "console player.removefromfaction $RAIDERS" >/dev/null
+	for r in ${QUIET:-}; do dc "$RUNNER" "console $r.enable" >/dev/null; done
 	say "cleanup: raiders removed, $WHO's health and resistance put back, god on, $RUNNER's player out of the raiders' faction (console removefromfaction)"
 }
 # why: what the raiders and the stand-in were doing, in the runner's game
