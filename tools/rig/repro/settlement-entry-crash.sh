@@ -45,6 +45,7 @@
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 . ../crashlib.sh
+run_cap 10800   # its longest good run took 94 minutes: 3 h
 SANCT_BENCH=000250FE; RR_BENCH=00054BAE
 SANCT_MARKER=${SANCT_MARKER:-}; RR_MARKER=${RR_MARKER:-}     # map marker references (found by name with dev `markers` when empty)
 GEN=${GEN:-00030386}; LIGHTS=${LIGHTS:-"000D38D4 001F59AC 000560DF"}

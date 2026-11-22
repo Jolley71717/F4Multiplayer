@@ -8,7 +8,9 @@
 # before it (a hello); the watcher shoots it (its pain lines: dev turnto + real clicks, a 10mm and rounds given by console, said so);
 # a raider placed beside it (dev spawn, said so) attacks it (pain and combat lines) and is removed after (console disable).
 # REPRO: YES when the engine had the stand-in saying any line, NO when it said nothing through all three, VOID when the scene could
-# not be set up (no stand-in, no raider base here). On a build that keeps stand-ins quiet (it has dev `puppetvoice`) a line the
+# not be set up (no stand-in, no raider base here) or, with nothing said yet, the raider was not in combat with the stand-in within
+# 20 s (it went for the watcher's player, or stood idle: a NO then would test nothing). Its end steps (lib.sh on_end) put the
+# watcher's log back at info and disable the raider however the run ends. On a build that keeps stand-ins quiet (it has dev `puppetvoice`) a line the
 # engine starts is ended the frame it is seen, so there the verdict goes by what could be heard: the stand-in found talking by a
 # 1 s read (YES), and the plugin's own count is reported (net status ownLines=seen/ended; each seen one must be ended).
 cd "$(dirname "$0")" || exit 2
@@ -19,7 +21,9 @@ WATCHER=$(other_game "$OWNER")
 need_session
 PUPPET=$(dc "$WATCHER" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 [ -n "$PUPPET" ] || verdict VOID "the $WATCHER's game has no stand-in for the $OWNER's player (no puppet= in its net status)"
-dc "$WATCHER" "log level debug" >/dev/null
+run_cap 1200   # three triggers of TRY s and a walk: the longest good run took 8 minutes; one still going after 20 is stuck
+log_back() { dc "$WATCHER" "log level info" >/dev/null; }
+dc "$WATCHER" "log level debug" >/dev/null; on_end log_back   # the log back at info however the run ends
 rmark "$WATCHER" all
 QUIET=0; case "$(dc "$WATCHER" puppetvoice)" in voiceMode=*) QUIET=1;; esac
 # ownlines: the watcher's net status ownLines=seen/ended (a count for the game's life: this run's are the difference from here)
@@ -66,12 +70,19 @@ e=$(dc "$WATCHER" "edid $RAIDER")
 case "$e" in "'"*) say "trigger 3: a raider ($RAIDER $e) placed 300 u from the $WATCHER's player (dev spawn, said so), left to attack $TRY s";;
 *) say "trigger 3 skipped: $RAIDER is no form in the $WATCHER's game ($e)"; e="";; esac
 if [ -n "$e" ]; then
+	rmark "$WATCHER" t   # before the spawn: lines said while the gate below waits are counted too (watch ... marked)
 	before=$(dc "$WATCHER" "spawn $RAIDER 300"); say "  spawn: $(cut -c1-120 <<<"$before")"
 	R=$(grep -oE '[0-9A-F]{8}' <<<"$before" | head -1)
-	watch raider
-	[ -n "$R" ] && dc "$WATCHER" "console $R.disable" >/dev/null
+	raider_gone() { [ -n "$R" ] && dc "$WATCHER" "console $R.disable" >/dev/null; return 0; }
+	on_end raider_gone
+	# a NO needs the raider to have fought the stand-in: one that fights the watcher's player, or stands idle, tests nothing.
+	# With a line already said the verdict is YES either way, so the gate is only for a run still on its way to NO
+	raider_on_standin() { [ "$(field "$(dc "$WATCHER" "combat $R")" target)" = "$PUPPET" ]; }
+	[ "$SAID" -gt 0 ] || scene_live "the raider ${R:-?} is in combat with the $OWNER's stand-in $PUPPET" 20 raider_on_standin
+	watch raider marked
+	raider_gone
 fi
-dc "$WATCHER" "log level info" >/dev/null
+log_back
 rkeep "$WATCHER" standin-settler-lines; rkeep "$OWNER" standin-settler-lines
 say "lines said: $SAID${LINES:+ ($LINES)}; the stand-in's own lines in the log over the whole run: $(rsince "$WATCHER" all | grep -c "Conversations: $PUPPET says")"
 if [ "$QUIET" = 1 ]; then
