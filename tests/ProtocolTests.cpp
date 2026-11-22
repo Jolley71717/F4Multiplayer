@@ -186,7 +186,7 @@ namespace
 	{
 		return a.sequence == b.sequence && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
 		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.sentMs == b.sentMs &&
-		       a.direction == b.direction && a.pitch == b.pitch;
+		       a.direction == b.direction && a.pitch == b.pitch && a.platform == b.platform && a.platformNode == b.platformNode && a.px == b.px && a.py == b.py && a.pz == b.pz;
 	}
 
 	bool SameActorState(const ActorState& a, const ActorState& b)
@@ -203,6 +203,24 @@ TEST("protocol: PlayerState round trips")
 	const auto out = DecodePlayerState(Encode(in));
 	REQUIRE(out);
 	CHECK(SameState(*out, in));
+}
+
+TEST("protocol: PlayerState with nothing ridden, and a node name cut to the wire's length (protocol 85)")
+{
+	auto in = MakeState(3);
+	in.platform = 0;
+	in.platformNode.clear();
+	in.px = in.py = in.pz = 0.0f;
+	const auto out = DecodePlayerState(Encode(in));
+	REQUIRE(out);
+	CHECK(SameState(*out, in));
+	auto longName = MakeState(4);
+	longName.platformNode = std::string(MAX_PLATFORM_NODE + 20, 'n');
+	const auto cut = DecodePlayerState(Encode(longName));
+	REQUIRE(cut);
+	CHECK(cut->platformNode.size() == MAX_PLATFORM_NODE);
+	CHECK(cut->platform == longName.platform);
+	CHECK(cut->pz == longName.pz);
 }
 
 TEST("protocol: Welcome round trips, including sharedStory")

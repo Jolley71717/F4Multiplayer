@@ -76,6 +76,7 @@
 #include "net/NameChoice.h"
 #include "net/NetClient.h"
 #include "net/PlayerHitRules.h"
+#include "game/PlatformRide.h"
 #include "net/Refusals.h"
 #include "net/SessionSteps.h"
 #include "steam/Steam.h"
@@ -145,6 +146,61 @@ namespace Session
 
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
+		// What can move under our player's feet (a lift's car): named in our state (PlatformRide).
+		PlatformRide::Sender platformRide;
+		std::uint32_t        platformReports = 0;  // states that named one
+		std::uint32_t        platformLast = 0;     // the last reference named, for the log
+
+		// What supports our player now: the collision body under the character controller, its node, and the node's
+		// reference, when that is one a friend's game has (a plugin's; nothing made at runtime).
+		// The last one is held for PlatformRide::HOLD while nothing supports them (a car that drops from under their feet, a
+		// hop): they are still its rider.
+		struct HeldSupport
+		{
+			RE::NiPointer<RE::NiAVObject> node;
+			std::uint32_t                 ref = 0;
+			bool                          animated = false;
+			Clock::time_point             at{};
+		};
+		HeldSupport heldSupport;
+
+		PlatformRide::Support SupportOf(RE::PlayerCharacter* a_player, Clock::time_point a_now)
+		{
+			PlatformRide::Support support;
+			const auto process = a_player->currentProcess;
+			const auto controller = process && process->middleHigh ? process->middleHigh->charController.get() : nullptr;
+			const auto body = controller ? controller->supportBody.get() : nullptr;
+			const auto node = body ? body->GetSceneGraphObject() : nullptr;
+			const auto ref = node ? RE::TESObjectREFR::FindReferenceFor3D(node) : nullptr;
+			const auto fill = [&](RE::NiAVObject* a_node, std::uint32_t a_ref, bool a_animated) {
+				support.ref = a_ref;
+				support.node = a_node->name.c_str() ? a_node->name.c_str() : "";
+				support.x = a_node->world.translate.x;
+				support.y = a_node->world.translate.y;
+				support.z = a_node->world.translate.z;
+				support.animated = a_animated;
+			};
+			if (!body) {
+				// In the air: over the thing they stood on a moment ago, if that still has its 3D.
+				const auto held = RE::TESForm::GetFormByID<RE::TESObjectREFR>(heldSupport.ref);
+				if (heldSupport.node && held && !held->IsDeleted() && held->Get3D() && a_now - heldSupport.at <= PlatformRide::HOLD) {
+					fill(heldSupport.node.get(), heldSupport.ref, heldSupport.animated);
+				} else {
+					heldSupport = {};
+				}
+				return support;
+			}
+			if (!ref || !Protocol::IsShareableRef(ref->GetFormID()) || ref->IsPlayerRef()) {
+				heldSupport = {};
+				return support;
+			}
+			// An animated static's body (a lift's car, a drawbridge): the game's animation moves it, never physics.
+			const auto havok = body->GetBody();
+			const bool animated = havok && static_cast<std::int32_t>(havok->m_collisionFilterInfo & 0x7F) == std::to_underlying(RE::COL_LAYER::kAnimStatic);
+			fill(node, ref->GetFormID(), animated);
+			heldSupport = { RE::NiPointer<RE::NiAVObject>{ node }, support.ref, animated, a_now };
+			return support;
+		}
 
 		// The session's own messages (connected, refused and why, disconnected) name nobody, so they go to
 		// the log at INFO too; players joining and leaving go to the HUD by name and to the log by ID. A
@@ -1059,6 +1115,25 @@ namespace Session
 				float      direction = 0.0f;
 				state.direction = graph->GetGraphVariableImplFloat(directionVar, direction) ? Protocol::PackDirection(direction) : std::uint8_t{ 0 };
 				state.pitch = Protocol::PackPitch(AimPoint::PitchFromLooking(player->data.angle.x));
+			}
+			// What can move under their feet (a lift's car: an animated static always, anything else while it moves; PlatformRide), so a friend's stand-in rides
+			// the friend's own car instead of sinking into it or hanging above it by the lag between the two cars.
+			{
+				const auto ride = platformRide.Sample(SupportOf(player, at), pos.x, pos.y, pos.z, at);
+				state.platform = ride.ref;
+				state.platformNode = ride.node;
+				state.px = ride.dx;
+				state.py = ride.dy;
+				state.pz = ride.dz;
+				if (ride.ref != 0) {
+					++platformReports;
+					if (ride.ref != platformLast) {
+						platformLast = ride.ref;
+						REX::INFO("Session: our player stands on {:08X} (node '{}'), named in our state", ride.ref, ride.node);
+					}
+				} else {
+					platformLast = 0;
+				}
 			}
 			// Not while on the ground: a downed player's stand-in lies down by their status (DownRules::StandInDown), and the
 			// sneak stance the down leaves is stood out of as they get up (DownRules::Self). Sent for being down, as it once
@@ -2020,7 +2095,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + RackDisplays::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FriendMap::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={} ridesNamed={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields, platformReports) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	std::optional<ModDiff::Difference> HostMods()

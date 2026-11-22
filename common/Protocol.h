@@ -174,7 +174,11 @@ namespace Protocol
 	// 84: each rack weapon says which rack holds it in its owner's game (RackWeapon::rackBase and rackX, rackY, rackZ, new
 	// fields at the end of each entry): its base and its place, so a game shows it only where a rack of that base stands at
 	// that spot, not wherever any rack stands near. No new message ids, no welcome bytes. 83 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 84;
+	// 85: a player's state says what they stand on while it moves (PlayerState::platform, platformNode and px, py, pz, new
+	// fields at its end: the reference, the node of its 3D under their feet and where they are from it), so a friend's game
+	// places the stand-in from its own copy of that node and the two ride the same lift car (src/game/PlatformRide.h).
+	// No new message ids, no welcome bytes. 84 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 85;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -451,13 +455,22 @@ namespace Protocol
 		// (0 forward, 64 right, 128 back, 192 left), and the pitch they aim at, up (+) or down (-) in degrees.
 		std::uint8_t direction = 0;
 		std::int8_t  pitch = 0;
+		// What they stand on while it moves (a lift's car; protocol 85, src/game/PlatformRide.h): the reference, the node of
+		// its 3D under their feet (its collision's, by name), and where they are from that node. A friend's game places the
+		// stand-in from its own copy of the node, so it rides the friend's car. 0 and empty: on the ground, or on something
+		// that holds still.
+		std::uint32_t platform = 0;
+		std::string   platformNode;
+		float         px = 0, py = 0, pz = 0;
 
 		[[nodiscard]] bool IsFinite() const
 		{
 			return InWorld(x) && InWorld(y) && InWorld(z) &&
-			       std::isfinite(heading) && std::isfinite(speed);
+			       std::isfinite(heading) && std::isfinite(speed) && std::isfinite(px) && std::isfinite(py) && std::isfinite(pz);
 		}
 	};
+
+	inline constexpr std::size_t MAX_PLATFORM_NODE = 64;  // PlayerState::platformNode on the wire
 
 	// PlayerState::direction from the graph's Direction (a fraction of a turn), and back.
 	inline std::uint8_t PackDirection(float a_turns)
@@ -2770,6 +2783,11 @@ namespace Protocol
 		a_writer.U32(a_state.sentMs);
 		a_writer.U8(a_state.direction);
 		a_writer.U8(static_cast<std::uint8_t>(a_state.pitch));
+		a_writer.U32(a_state.platform);  // protocol 85
+		a_writer.Str(a_state.platformNode, MAX_PLATFORM_NODE);
+		a_writer.F32(a_state.px);
+		a_writer.F32(a_state.py);
+		a_writer.F32(a_state.pz);
 	}
 
 	inline PlayerState ReadState(Reader& a_reader)
@@ -2788,6 +2806,11 @@ namespace Protocol
 		state.sentMs = a_reader.U32();
 		state.direction = a_reader.U8();
 		state.pitch = static_cast<std::int8_t>(a_reader.U8());
+		state.platform = a_reader.U32();  // protocol 85
+		state.platformNode = a_reader.Str(MAX_PLATFORM_NODE);
+		state.px = a_reader.F32();
+		state.py = a_reader.F32();
+		state.pz = a_reader.F32();
 		return state;
 	}
 

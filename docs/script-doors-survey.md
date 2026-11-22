@@ -74,8 +74,9 @@ These are the gaps worth closing, most noticed first. None of them is a quest st
    was in their game, for good: nothing is replayed later. Same fix as 1 covers the gates and doors among them;
    toggles (a lift's car, a breaker) would need their state, not a replayed press.
 4. **Lifts and moving platforms.** A lift's car is moved by its script in each game separately; the press is
-   replayed (3), so both cars move when the friend has the lift loaded. Each player rides their own game's car; the
-   stand-in doesn't ride, it is moved to where its player reports being. Load elevators (`LoadElevatorPanelScript`,
+   replayed (3), so both cars move when the friend has the lift loaded. Each player rides their own game's car, and
+   since protocol 85 a friend's stand-in rides ours while it moves: it is placed from the car's node in our game, not
+   where its player reports being (`src/game/PlatformRide.h`; DESIGN.md, "A lift's car"). Load elevators (`LoadElevatorPanelScript`,
    `loadelevatordoorscript`) teleport whoever uses them: each player rides their own and there is nothing to share.
 
 Since then (`SharedGates`, src/game/SharedGates.h): 1 and 2 are closed for gates that run `Default2StateActivator` and
@@ -255,7 +256,7 @@ Not quest stages, so not the list's; how each kind reaches a friend today:
 | Terminals linking gates | LinkTerminalSwitchDoor (96 gates), LinkTerminalDoor to an activator (3), Med-Tek's terminals | not shared: gap 1 |
 | Triggers that unlock or open as the player walks in | DefaultUnlockDoorOnTriggerEnter, BunkerHil_UnlockGateScript, DNFinancial21_TriggerScript, ccBGSFO4115 DoorUnlockTriggerScript | each player's own: the friend walking in sets off their own |
 | Load elevators | LoadElevatorPanelScript (160 refs), loadelevatordoorscript (87), ElevatorDoorForwardActivationScript | nothing to share: each player rides their own |
-| Lifts and platforms | SimpleElevatorMasterScript (20), PowerLiftMiniCartScript (16), DN084_GlassElevatorScript (story), DLC03 boats | the press is replayed while loaded (gap 4) |
+| Lifts and platforms | SimpleElevatorMasterScript (20), PowerLiftMiniCartScript (16), DN084_GlassElevatorScript (story), DLC03 boats | the press is replayed while loaded; the rider's stand-in rides our car (gap 4) |
 
 ## Notes
 

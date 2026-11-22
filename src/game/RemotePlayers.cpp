@@ -26,6 +26,7 @@
 #include "game/StandInRange.h"
 #include "game/StandInPipboy.h"
 #include "game/StandInSeat.h"
+#include "game/PlatformRide.h"
 #include "game/StandInSpace.h"
 #include "game/StandInYield.h"
 #include "game/StateBuffer.h"
@@ -84,9 +85,25 @@ namespace RemotePlayers
 			[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> get() const { return handle.get(); }
 		};
 
+		// Our node of the thing a friend rides (PlatformRide): looked up by name under our copy's 3D once, and again when the
+		// state names another thing or node, or our copy's 3D is another (loaded again).
+		struct PlatformAnchor
+		{
+			std::uint32_t              ref = 0;
+			std::string                node;
+			RE::NiAVObject*            root = nullptr;  // the 3D the node was found under (compared, never followed)
+			RE::NiPointer<RE::NiAVObject> found;
+			bool                       riding = false;  // the stand-in was placed from it last frame (for the log)
+			bool                       missed = false;  // ... or the state named a thing and the stand-in was not (logged once a spell)
+			float                      apartMost = 0.0f;  // this ride: the furthest our node's place was from where they reported being
+			std::uint32_t              frames = 0;        // this ride: frames placed from it
+			PlatformRide::Placer       placer;            // the report again when our node stays apart (PlatformRide::APART_FOR)
+		};
+
 		struct RemotePlayer
 		{
 			std::uint32_t        id = 0;  // their player ID: what the log calls them (never by name)
+			PlatformAnchor       platform;
 			std::string          name;
 			std::uint32_t        appearance = 0;
 			bool                 appearanceWarned = false;  // told the log once that their look is not one we place
@@ -394,6 +411,9 @@ namespace RemotePlayers
 		// Times a stand-in stepped aside for our player pressed against it, and the frames one was drawn off its friend's spot for it (StandInYield).
 		std::uint32_t                         steppedAside = 0;
 		std::uint32_t                         asideFrames = 0;
+		std::uint32_t                         rideFrames = 0;   // frames a stand-in was placed from our node of what its player rides (PlatformRide)
+		std::uint32_t                         rideMisses = 0;   // frames the state named a thing and the stand-in went where they report being (no node of ours, too far, apart too long)
+		float                                 rideApartMost = 0.0f;  // the furthest our node's place for a rider was from where they reported being, while placed from it
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
 		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand,
@@ -1411,6 +1431,77 @@ namespace RemotePlayers
 		// pressed against it, until we are clear of their spot (StandInYield; a_follows: it follows their spot and both of us
 		// are on our feet); or a body's room out from us when that is ours
 		// (StandInSpace), wider when either of us is in power armor. Counted for net status while it is moved.
+		// Where the thing a friend rides is drawn in our game (PlatformRide): our copy's node of that name, or nothing when
+		// our game has no such reference, no 3D of it, or no node of that name under it.
+		std::optional<RE::NiPoint3> PlatformNodeAt(PlatformAnchor& a_anchor, const Protocol::PlayerState& a_state)
+		{
+			if (a_state.platform == 0 || a_state.platformNode.empty()) {
+				return std::nullopt;
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.platform);
+			const auto root = ref && !ref->IsDeleted() ? ref->Get3D() : nullptr;
+			if (!root) {
+				return std::nullopt;
+			}
+			if (a_anchor.ref != a_state.platform || a_anchor.node != a_state.platformNode || a_anchor.root != root) {
+				a_anchor.ref = a_state.platform;
+				a_anchor.node = a_state.platformNode;
+				a_anchor.root = root;
+				a_anchor.found.reset(root->GetObjectByName(RE::BSFixedString{ a_state.platformNode.c_str() }));
+			}
+			if (!a_anchor.found) {
+				return std::nullopt;
+			}
+			return a_anchor.found->world.translate;
+		}
+
+		// Their state's place, or, while they ride something that moves (a lift's car), that place from our own node of it:
+		// the stand-in rides our car wherever that is in its travel (PlatformRide::Place).
+		Protocol::PlayerState Ridden(RemotePlayer& a_player, const Protocol::PlayerState& a_state, Clock::time_point a_now)
+		{
+			auto  placed = a_state;
+			auto& ride = a_player.platform;
+			// The ride's end, said once: how long the stand-in went with our copy, and the most the two were apart.
+			const auto ended = [&](const char* a_why) {
+				if (std::exchange(ride.riding, false)) {
+					REX::INFO("RemotePlayers: player {}'s stand-in no longer goes with our copy of {:08X} ({}): {} frames with it, at most {:.0f} from where they reported being", a_player.id,
+						ride.ref, a_why, ride.frames, ride.apartMost);
+				}
+			};
+			if (a_state.platform == 0) {
+				ended("they stand on it no more");
+				ride.missed = false;
+				return placed;
+			}
+			const auto node = PlatformNodeAt(ride, a_state);
+			const auto spot = ride.placer.Place(a_state, node.has_value(), node ? node->x : 0.0f, node ? node->y : 0.0f, node ? node->z : 0.0f, a_now);
+			if (spot.rode) {
+				++rideFrames;
+				placed.x = spot.x;
+				placed.y = spot.y;
+				placed.z = spot.z;
+				if (!std::exchange(ride.riding, true)) {
+					ride.missed = false;
+					ride.frames = 0;
+					ride.apartMost = 0.0f;
+					REX::INFO("RemotePlayers: player {} stands on {:08X} (node '{}'): their stand-in goes with our copy of it ({:.0f} from where they report being)", a_player.id,
+						a_state.platform, a_state.platformNode, spot.apart);
+				}
+				++ride.frames;
+				ride.apartMost = (std::max)(ride.apartMost, spot.apart);
+				rideApartMost = (std::max)(rideApartMost, spot.apart);
+			} else {
+				++rideMisses;
+				const char* why = !node ? "our game has no 3D of it, or no such node" : "our copy stands too far from there, or has stayed apart too long";
+				ended(why);
+				if (!std::exchange(ride.missed, true)) {
+					REX::INFO("RemotePlayers: player {} stands on {:08X} (node '{}'), and {} ({:.0f} apart): their stand-in goes where they report being", a_player.id, a_state.platform,
+						a_state.platformNode, why, spot.apart);
+				}
+			}
+			return placed;
+		}
+
 		RE::NiPoint3 SpotOf(RemotePlayer& a_player, const Protocol::PlayerState& a_state, const RE::Actor* a_us, bool a_follows, Clock::time_point a_now)
 		{
 			const RE::NiPoint3 at{ a_state.x, a_state.y, a_state.z };
@@ -3408,7 +3499,7 @@ namespace RemotePlayers
 			// It steps aside for us only while it follows their spot and both of us are on our feet (StandInYield).
 			const bool follows = actor && player && !loading && !remote.downed && !remote.seat && !remote.seatHeld && !Downed::IsDown() &&
 			                     !StandInSeat::InFurniture(static_cast<std::int32_t>(player->DoGetSitSleepState()));
-			const auto spot = SpotOf(remote, *state, player, follows, now);
+			const auto spot = SpotOf(remote, Ridden(remote, *state, now), player, follows, now);  // from our car while they ride one (PlatformRide)
 
 			if (actor && look.left != StandInRange::Left::kKeep) {
 				++leftBehind;
@@ -3796,6 +3887,9 @@ namespace RemotePlayers
 		}
 		if (steppedAside) {
 			out += std::format(" steppedAside={} asideFrames={}", steppedAside, asideFrames);
+		}
+		if (rideFrames || rideMisses) {
+			out += std::format(" rideFrames={} rideMisses={} rideApartMost={:.0f}", rideFrames, rideMisses, rideApartMost);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);

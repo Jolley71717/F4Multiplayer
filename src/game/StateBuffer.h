@@ -373,6 +373,12 @@ namespace StateBuffer
 				out.y = std::lerp(a.state.y, b.state.y, t);
 				out.z = std::lerp(a.state.z, b.state.z, t);
 				out.heading = LerpAngle(a.state.heading, b.state.heading, t);
+				// On the same moving thing in both states (PlatformRide): their place from it blends too; else the newer's.
+				if (a.state.platform != 0 && a.state.platform == b.state.platform && a.state.platformNode == b.state.platformNode) {
+					out.px = std::lerp(a.state.px, b.state.px, t);
+					out.py = std::lerp(a.state.py, b.state.py, t);
+					out.pz = std::lerp(a.state.pz, b.state.pz, t);
+				}
 
 				const float dx = b.state.x - a.state.x;
 				const float dy = b.state.y - a.state.y;
