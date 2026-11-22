@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T11:05:18+00:00",
+ "updated": "2026-11-22T11:21:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1592,8 +1592,9 @@
    "title": "Door open/closed states don't sync between players",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being fixed: the builder's own doors were never looked at"
+   "stage": 4,
+   "note": "Fixed and rig-tested; waits for the next minor release (protocol change)",
+   "pr": 540
   },
   {
    "id": "dmxn",
