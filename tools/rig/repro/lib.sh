@@ -8,6 +8,18 @@
 # Console steps used to reach a scene (coc, setpos, a settlement's owner, a quest stage) are named in the output where they happen.
 # Movement is real (tools/rig/walkto.sh: the virtual pad's stick); keys are real key presses into the game's window (dev `key`);
 # turning is the dev channel's `turnto` (a look, as the rig's other steps aim) or a real mouse move.
+#
+# A run that tests nothing ends early, as VOID (never a pass), so it gives the rig back (see "runs that test nothing" at the end):
+#   scene_live <label> <seconds> <check...>   what must happen early for the run to mean anything (an NPC in combat with the
+#                                             stand-in, the friend hit, the cell changed after a door): VOID at once when the
+#                                             check has not succeeded in that time, with the last log lines of both games
+#   idle_watch <regex> <seconds>              opt-in: VOID (stalled) when neither game's plugin log has a line matching the regex
+#                                             for that long; `idle_watch off` before a quiet stretch that is meant to be quiet
+#   run_cap <seconds>                         the run's time cap (REPRO_CAP, 3600 s by default; every run has one): VOID past it
+#   on_end <command...>                       an end step (god mode off, a log level back): run once however the run ends, a
+#                                             verdict, a watchdog, a time cap, Ctrl-C or an error. Use it, not a trap of your own
+# A run ended this way runs its end steps (and stops a walk it left going), and exits 2 like any VOID; rig.lock is never touched
+# here, so its holder frees it as after any run.
 RIG=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 . "$RIG/env.sh"
 REPRO_NAME=${REPRO_NAME:-$(basename "$0" .sh)}
@@ -67,8 +79,9 @@ rkey() { dc "$1" focus >/dev/null; sleep 0.3; dc "$1" "key $2 ${3:-80}" >/dev/nu
 # A ref is 8 hex digits (one of only decimal digits, 00057280, is a ref, never a coordinate)
 rwalk() {
 	local who=$1 r s; shift
+	_REPRO_WALKING="$_REPRO_WALKING $who"   # a run ended mid-walk stops this walk (_repro_end_steps)
 	if [ $# -ge 2 ] && ! [[ $1 =~ ^[0-9A-Fa-f]{8}$ ]] && is_int "${1%.*}" && is_int "${2%.*}"; then WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "$2" "${4:-0.8}" "${3:-120}" 40 2>&1 | tail -1); else WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "${3:-0.8}" "${2:-120}" 40 2>&1 | tail -1); fi
-	dc "$who" "pad unplug" >/dev/null
+	dc "$who" "pad unplug" >/dev/null; _REPRO_WALKING=${_REPRO_WALKING/ $who/}
 	grep -qE ': (arrived|stuck) ' <<<"$WALKED"
 }
 # rpress_e <who> <ref>: that player looks at the reference (from the eye to the middle of its 3D) and presses E. ROLLOVER: what the
@@ -211,10 +224,193 @@ _ws_in_not() { ! _ws_in "$1"; }
 ws_copy_of() { dc "$1" "wspower copies" | grep -oE "[0-9A-F]{8}(\s\(not loaded\))?=[0-9]+:$2" | grep -oE '^[0-9A-F]{8}' | head -1; }
 
 # ---- the verdict -----------------------------------------------------------------------------------------------------------------
-# verdict YES|NO|VOID <why>: the last line of every repro script
-verdict() { say "REPRO: $1 - $2"; say "logs and notes: $REPRO_OUT"; [ "$1" = VOID ] && exit 2; exit 0; }
+# verdict YES|NO|VOID <why>: the last line of every repro script. The run's end steps (on_end) run first and its watchers stop
+verdict() { _repro_finish; say "REPRO: $1 - $2"; say "logs and notes: $REPRO_OUT"; [ "$1" = VOID ] && exit 2; exit 0; }
 # need_session: both games answer and are joined; VOID otherwise
 need_session() {
 	local h v; h=$(dc host 'net status'); v=$(dc vm 'net status')
 	grep -q 'status=joined' <<<"$v" && grep -q 'status=' <<<"$h" || verdict VOID "both games in one session first (rig.sh join): host '$(grep -oE 'status=[a-z]+' <<<"$h")' vm '$(grep -oE 'status=[a-z]+' <<<"$v")'"
 }
+
+# ---- runs that test nothing end early: the scene gate, the idle watch, the time cap --------------------------------------------
+# On 2026-11-21 a hits repro ran three times, minutes each, and tested nothing: the raiders fought the host's player instead of
+# the friend's stand-in; a `tdetect` had switched every NPC's AI off; the players and a raider stood idle. A door case "passed"
+# through a door that was no load door. So a run says what must happen for it to mean anything, and ends as VOID the moment it
+# can't: VOID is the rig's, never a pass, and the rig goes back to the queue minutes earlier.
+#   scene_live <label> <seconds> <check...>   the check (any command; 0 = yes) tried every 0.5 s (wait_for) for that long. When it
+#                                             succeeds: "scene live: <label>" and the run goes on. When it never does: VOID
+#                                             "scene not live: <label>", with the last log lines of both games (repro_tails).
+#                                             Put it right after what should start the scene, before the run measures anything:
+#                                               _fights() { [ "$(field "$(dc vm "combat $RAIDER")" target)" = "$PUPPET" ]; }
+#                                               scene_live "the raider is in combat with the friend's stand-in" 20 _fights
+#                                               scene_live "the player's cell changed after the door" 30 _cell_changed
+#   idle_watch <regex> <seconds>              opt-in, in the background: VOID "stalled" when no line matching the extended
+#                                             regex came into either game's plugin log for that long, e.g.
+#                                               idle_watch 'CopyWatch: hit on|took .* damage|PlayerHit' 120
+#                                             Calling it again replaces it; `idle_watch off` stops it (a load or a long walk that
+#                                             is meant to log nothing). The logs are read as they are, never through the dev
+#                                             channel (a game's channel serves one client: the watch must not take it from the
+#                                             script): the host's file, the VM's over ssh, the last 400 lines every REPRO_POLL s.
+#   run_cap <seconds>                         the run's time cap, counted from its start: VOID "time cap" past it. Every run has
+#                                             one (3600 s by default; a script that runs longer sets its own, about twice its longest good run).
+#                                             An exported REPRO_CAP wins over both. No script holds the rig for ever.
+#   on_end <command...>                       an end step, run once however the run ends; the last one given runs first.
+# A watcher that fires leaves its reason in $REPRO_OUT/.watch, signals the script (USR1) and stops what the script is running (a
+# sleep, a dev command, a walk), so the script's trap gives the VOID at once: the end steps run (a walk left going is stopped and
+# its pad unplugged first), the tails are said, and the script exits 2. The watchers die with the script however it ends. rig.lock
+# is not touched: its holder frees it as after any run. Test: bash tools/rig/repro/watch-selftest.sh (no game, no VM).
+REPRO_PID=$$
+_REPRO_CAP_SET=${REPRO_CAP:+1}              # a cap the caller exported wins over the script's own run_cap
+REPRO_CAP=${REPRO_CAP:-3600}                # the run's time cap, s (run_cap sets the script's own)
+REPRO_POLL=${REPRO_POLL:-10}                # how often the watchers look, s
+REPRO_TAIL=${REPRO_TAIL:-20}                # log lines of each game said with a VOID of these
+REPRO_TAIL_RE=${REPRO_TAIL_RE:-}            # scene_live's tail: only the lines matching this (empty: any) ...
+REPRO_TAIL_SKIP=${REPRO_TAIL_SKIP:-'gfx: '} # ... and never these (rgfx_text's display-object dumps)
+_RW=$REPRO_OUT/.watch; mkdir -p "$_RW"; rm -rf "${_RW:?}/fired" "${_RW:?}/ending" "${_RW:?}"/*.pid
+printf '%(%s)T\n' -1 > "$_RW/start"; echo "$REPRO_CAP" > "$_RW/cap"
+
+# _rtail <who> <lines>: the last lines of that game's plugin log, read as they are (no dev command). REPRO_LOG_HOST / REPRO_LOG_VM:
+# other files to read instead (the self-test's)
+_rtail() {
+	if [ "$1" = host ]; then tail -n "$2" "${REPRO_LOG_HOST:-$HOST_F4SE/F4Multiplayer.log}" 2>/dev/null
+	elif [ -n "${REPRO_LOG_VM:-}" ]; then tail -n "$2" "$REPRO_LOG_VM" 2>/dev/null
+	else vmssh "Get-Content \"\$env:USERPROFILE\\Documents\\My Games\\Fallout4\\F4SE\\F4Multiplayer.log\" -Tail $2"; fi | tr -d '\r'
+}
+# repro_tails [regex]: the last REPRO_TAIL lines of both games' plugin logs (those matching the regex, else REPRO_TAIL_RE; never
+# REPRO_TAIL_SKIP's), said and kept as $REPRO_OUT/void-<who>.log
+repro_tails() {
+	local w f l re=${1:-$REPRO_TAIL_RE}
+	for w in host vm; do
+		f=$REPRO_OUT/void-$w.log
+		_rtail "$w" 1000 | SKIP=$REPRO_TAIL_SKIP RE=$re N=$REPRO_TAIL awk '
+			(ENVIRON["SKIP"] == "" || $0 !~ ENVIRON["SKIP"]) && (ENVIRON["RE"] == "" || $0 ~ ENVIRON["RE"]) { l[++n] = $0 }
+			END { for (i = (n > ENVIRON["N"] + 0 ? n - ENVIRON["N"] + 1 : 1); i <= n; i++) print l[i] }' > "$f"
+		mapfile -t l < "$f"
+		say "the last ${#l[@]} line(s) of the $w's plugin log${re:+ matching '$re'}:"
+		[ ${#l[@]} -gt 0 ] && printf "    $w| %s\n" "${l[@]}" | tee -a "$REPRO_OUT/run.log"
+	done
+	return 0
+}
+
+scene_live() {
+	local label=$1 secs=$2 t0=$SECONDS; shift 2
+	{ is_int "$secs" && [ $# -gt 0 ]; } || verdict VOID "usage: scene_live <label> <seconds> <check command...> (got '$label' '$secs')"
+	if wait_for "$secs" "$@"; then say "scene live: $label (after $((SECONDS - t0)) s)"; return 0; fi
+	say "scene not live: $label: the check ($*) did not succeed in $secs s"
+	repro_tails
+	verdict VOID "scene not live: $label (not within $secs s), so the run tested nothing"
+}
+
+run_cap() {
+	{ is_int "$1" && [ "$1" -gt 0 ]; } || { say "run_cap: '$1' is not a number of seconds; the cap stays $(cat "$_RW/cap") s"; return 1; }
+	[ -n "$_REPRO_CAP_SET" ] && { say "time cap: REPRO_CAP=$REPRO_CAP from the caller, not the script's $1 s"; return 0; }
+	echo "$1" > "$_RW/cap"; say "time cap: $1 s from the run's start"
+}
+
+idle_watch() {
+	if [ "$1" = off ]; then _watch_stop idle; say "idle watch off"; return 0; fi
+	{ [ -n "$1" ] && is_int "$2" && [ "$2" -gt 0 ]; } || { say "usage: idle_watch <regex> <seconds> | idle_watch off"; return 1; }
+	say "idle watch: VOID (stalled) when neither game's plugin log has a line matching '$1' for $2 s"
+	_watch_start idle _idle_watch "$1" "$2"
+}
+
+# on_end <command...>: an end step; _repro_end_steps runs them once (a walk left going first, then the last given first)
+_REPRO_END=(); _REPRO_WALKING=""
+on_end() { local q; printf -v q '%q ' "$@"; _REPRO_END+=("$q"); }
+_repro_end_steps() {
+	local w i
+	for w in $(tr ' ' '\n' <<<"$_REPRO_WALKING" | sort -u); do
+		dc "$w" "walkto stop" >/dev/null; dc "$w" "pad unplug" >/dev/null; say "end: $w's walk stopped and its pad unplugged (the run ended mid-walk)"
+	done
+	for ((i = ${#_REPRO_END[@]} - 1; i >= 0; i--)); do
+		say "end step: ${_REPRO_END[i]}"; eval "${_REPRO_END[i]}" || say "end step failed: ${_REPRO_END[i]}"
+	done
+}
+# _repro_finish: once, in the script's own shell (a verdict in a subshell only ends that subshell, as it always did)
+_repro_finish() {
+	{ [ "$BASHPID" = "$REPRO_PID" ] && [ -z "$_REPRO_ENDING" ]; } || return 0
+	_REPRO_ENDING=1; : > "$_RW/ending"
+	_watch_stop_all
+	_repro_end_steps
+}
+
+# ---- the watchers (background subshells; their pids in $_RW/<name>.pid) ----
+_watch_start() { local n=$1; shift; _watch_stop "$n"; "$@" & echo $! > "$_RW/$n.pid"; }
+_watch_stop() { local p; p=$(cat "$_RW/$1.pid" 2>/dev/null) || return 0; rm -f "${_RW:?}/$1.pid"; _kill_tree "$p"; }
+_watch_stop_all() { local f; for f in "$_RW"/*.pid; do [ -e "$f" ] && _watch_stop "$(basename "$f" .pid)"; done; return 0; }
+# _ps_pairs: "pid ppid" of every process (procps' ps, or Git Bash's, whose first column can be a state letter)
+_ps_pairs() { ps -e -o pid= -o ppid= 2>/dev/null || ps -e 2>/dev/null | awk 'NR > 1 { i = ($1 ~ /^[0-9]+$/) ? 1 : 2; print $i, $(i + 1) }'; }
+# _descendants <pid> [pid...]: the processes under that one, one a line; the other pids given (and what is under them) left out
+_descendants() {
+	local root=$1; shift
+	_ps_pairs | awk -v root="$root" -v skip=" $* " '
+		{ kids[$2] = kids[$2] " " $1 }
+		END { q[1] = root; n = 1
+			for (i = 1; i <= n; i++) { c = split(kids[q[i]], k, " ")
+				for (j = 1; j <= c; j++) if (index(skip, " " k[j] " ") == 0 && !(k[j] in seen) && k[j] != root) { seen[k[j]] = 1; q[++n] = k[j]; print k[j] } } }'
+}
+_kill_tree() { local p; for p in $(_descendants "$1") "$1"; do kill "$p" 2>/dev/null; done; return 0; }
+# _watch_fire <why> [tail regex]: (in a watcher) the run ends: the reason left for the script, the script signalled, what it runs
+# now stopped (the watchers left out) so its trap runs at once. The first watcher to fire wins; none fires once the script ends
+_watch_fire() {
+	[ -e "$_RW/ending" ] && exit 0
+	mkdir "$_RW/fired" 2>/dev/null || exit 0
+	printf '%s\n' "$1" > "$_RW/fired/why"; printf '%s\n' "${2:-}" > "$_RW/fired/re"
+	local f skip="" kids
+	for f in "$_RW"/*.pid; do [ -e "$f" ] && skip="$skip $(cat "$f")"; done
+	kids=$(_descendants "$REPRO_PID" $skip)
+	# the walk above can take tens of seconds on Git Bash: a script that reached its own verdict meanwhile is running its end steps
+	# now, and those must not be killed
+	[ -e "$_RW/ending" ] && exit 0
+	kill -USR1 "$REPRO_PID" 2>/dev/null
+	for f in $kids; do kill "$f" 2>/dev/null; done
+	exit 0
+}
+_cap_watch() {
+	trap - EXIT INT TERM USR1
+	local t0 cap now; read -r t0 < "$_RW/start"
+	while kill -0 "$REPRO_PID" 2>/dev/null; do
+		cap=""; read -r cap < "$_RW/cap"; printf -v now '%(%s)T' -1
+		is_int "$cap" && [ $((now - t0)) -ge "$cap" ] && _watch_fire "time cap: the run took $((now - t0)) s, past its cap of $cap s (run_cap, REPRO_CAP)"
+		sleep "$REPRO_POLL"
+	done
+}
+# _idle_watch <regex> <seconds>: each look, the lines each log got since the last look (those after the last look's last line; all
+# 400 when it is gone: a new log, or more than 400 lines) are searched for the regex (awk's extended regex, as grep -E's). Few forks a
+# look: the rig's host is the maintainer's PC, often busy with builds
+_idle_watch() {
+	trap - EXIT INT TERM USR1
+	local re=$1 secs=$2 w t m now last seen="" miss=0 looks=0 quiet
+	local -A prev
+	printf -v last '%(%s)T' -1; for w in host vm; do prev[$w]=$(_rtail "$w" 1); done
+	while kill -0 "$REPRO_PID" 2>/dev/null; do
+		sleep "$REPRO_POLL"; looks=$((looks + 1))
+		for w in host vm; do
+			t=$(_rtail "$w" 400)
+			[ -n "$t" ] || { miss=$((miss + 1)); continue; }
+			# the last new line that matches, or nothing
+			m=$(P=${prev[$w]} RE=$re awk '{ l[NR] = $0; if ($0 == ENVIRON["P"]) at = NR } END { for (i = NR; i > at; i--) if (l[i] ~ ENVIRON["RE"]) { print l[i]; exit } }' <<<"$t")
+			prev[$w]=${t##*$'\n'}
+			[ -n "$m" ] && { printf -v last '%(%s)T' -1; seen="$w: $m"; }
+		done
+		printf -v now '%(%s)T' -1; quiet=$((now - last))
+		if [ "$quiet" -ge "$secs" ]; then
+			[ "$miss" -gt 0 ] && miss="; a log could not be read $miss time(s) in $looks looks" || miss=""
+			_watch_fire "stalled: no line matching '$re' in either game's plugin log for $quiet s (the limit: $secs s)$miss; the last: ${seen:-none since the watch began}"
+		fi
+	done
+}
+
+_repro_fired() {
+	[ -n "$_REPRO_ENDING" ] && return 0
+	local why re; why=$(cat "$_RW/fired/why" 2>/dev/null); re=$(cat "$_RW/fired/re" 2>/dev/null); why=${why:-a watcher ended the run}
+	say "watchdog: $why"
+	repro_tails "$re"
+	verdict VOID "$why"
+}
+_repro_sig() { [ -n "$_REPRO_ENDING" ] && exit 2; verdict VOID "the run was stopped (SIG$1) before its verdict"; }
+trap _repro_fired USR1
+trap '_repro_sig INT' INT
+trap '_repro_sig TERM' TERM
+trap _repro_finish EXIT
+_watch_start cap _cap_watch

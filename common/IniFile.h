@@ -2,14 +2,23 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 // Rewriting one "key = value" line of an ini file (the plugin's settings file) without touching
 // anything else: comments, blank lines, the other keys and the line endings all stay as they
-// were, so a file the player edited by hand reads the same afterwards. Pure text in, text out:
-// the game plugin reads and writes the file, the tests check the text.
+// were, so a file the player edited by hand reads the same afterwards; and adding the keys a
+// newer version brings (AddMissing) the same way. Those are pure text in, text out, which the tests
+// check; LoadOrCreate does the start-up step on the file itself (written when missing, extended when
+// it lacks keys), for the game plugin and, on a temporary folder, the tests.
 namespace IniFile
 {
 	namespace detail
@@ -60,9 +69,11 @@ namespace IniFile
 		return std::nullopt;
 	}
 
-	// Returns a_text with the first "a_key = ..." line replaced by "a_key = a_value" (keys match
-	// exactly, as the plugin reads them). A key the file doesn't have is appended at the end. The
-	// file's own line ending (CRLF or LF) is kept.
+	// Returns a_text with every "a_key = ..." line replaced by "a_key = a_value" (keys match
+	// exactly, as the plugin reads them; it reads the last line of a key, so a file that has a key
+	// twice, by hand or after a cut-off line was repaired, must not keep the old value on the later
+	// one). A key the file doesn't have is appended at the end. The file's own line ending (CRLF or
+	// LF) is kept.
 	[[nodiscard]] inline std::string SetValue(std::string_view a_text, std::string_view a_key, std::string_view a_value)
 	{
 		const std::string_view eol = a_text.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
@@ -75,7 +86,7 @@ namespace IniFile
 			const auto newline = a_text.find('\n', start);
 			const auto end = newline == std::string_view::npos ? a_text.size() : newline + 1;
 			const auto current = a_text.substr(start, end - start);
-			if (!replaced && detail::KeyOf(current) == a_key) {
+			if (detail::KeyOf(current) == a_key) {
 				out += line;
 				if (newline != std::string_view::npos) {
 					out += current.ends_with("\r\n") ? "\r\n" : "\n";
@@ -94,5 +105,389 @@ namespace IniFile
 			out += eol;
 		}
 		return out;
+	}
+
+	// What AddMissing made of a player's file: the text, and the keys it added (none: the text is a_text as it was).
+	struct Merged
+	{
+		std::string              text;
+		std::vector<std::string> added;
+	};
+
+	// Returns a_text with every key a_defaults has and a_text lacks appended at its end, at the default's value and
+	// with the comment lines a_defaults puts above it (the block above a run of keys serves every key of the run), in
+	// a_defaults' order and with a_text's own line ending; nothing else of a_text changes: the keys it has keep their
+	// value, their place and their comments, and a key a_defaults no longer has (an older version's setting) stays.
+	// a_note, if given, heads what is added (one comment line). A key commented out in a_text is a key a_text lacks.
+	// A leading UTF-8 byte order mark is ignored in both. The plugin's settings file after an update: the player's
+	// values survive, and the new version's settings show up with their explanations (src/Config.cpp).
+	//
+	// a_whenAbsent names the keys whose line in a_defaults does not mean what leaving the key out means, each with
+	// the value that does: such a key is appended as "key = that value" (the comments still a_defaults'), so adding
+	// it changes nothing for the player (Config::WHEN_ABSENT).
+	//
+	// A cut-off last line: a_text's last line, when no line break ends it and its value can't be a whole one, is what
+	// a write that stopped half way leaves, so its key counts as lacking and is appended again, whole; the plugin
+	// reads the last line of a key. Not whole: the beginning of the yes/no value that would be appended ("tr" of
+	// true), or nothing at all for a key that is not text (an s... key may be empty, and for some that is a choice).
+	// The beginning of a number or a name is left: "1" of "10" may be the player's own.
+	[[nodiscard]] inline Merged AddMissing(std::string_view a_text, std::string_view a_defaults, std::string_view a_note = {}, std::span<const std::pair<std::string_view, std::string_view>> a_whenAbsent = {})
+	{
+		static constexpr std::string_view BOM = "\xEF\xBB\xBF";
+		const auto                        lines = [](std::string_view a_src, auto&& a_each) {
+			if (a_src.starts_with(BOM)) {
+				a_src.remove_prefix(BOM.size());
+			}
+			for (std::size_t start = 0; start < a_src.size();) {
+				const auto newline = a_src.find('\n', start);
+				const auto end = newline == std::string_view::npos ? a_src.size() : newline;
+				auto       line = a_src.substr(start, end - start);
+				if (line.ends_with('\r')) {
+					line.remove_suffix(1);
+				}
+				a_each(line);
+				start = newline == std::string_view::npos ? a_src.size() : newline + 1;
+			}
+		};
+
+		std::vector<std::string_view> present;
+		lines(a_text, [&](std::string_view a_line) {
+			if (const auto key = detail::KeyOf(a_line); !key.empty()) {
+				present.push_back(key);
+			}
+		});
+
+		const auto whenAbsent = [&](std::string_view a_key) -> std::optional<std::string_view> {
+			for (const auto& [key, value] : a_whenAbsent) {
+				if (key == a_key) {
+					return value;
+				}
+			}
+			return std::nullopt;
+		};
+
+		// The cut-off last line (above): its key is the last of present. A yes/no key with nothing after the '=' may
+		// as well be the player's own line, which reads as no (Config::Read): no is what is appended for it.
+		std::string_view emptyYesNo;
+		if (!a_text.empty() && !a_text.ends_with('\n')) {
+			auto last = a_text.substr(a_text.rfind('\n') + 1);
+			if (last.starts_with(BOM)) {
+				last.remove_prefix(BOM.size());
+			}
+			if (const auto key = detail::KeyOf(last); !key.empty()) {
+				const auto value = detail::Trim(last.substr(last.find('=') + 1));
+				if (auto whole = GetValue(a_defaults, key)) {
+					if (const auto other = whenAbsent(key)) {
+						*whole = *other;
+					}
+					const bool yesNo = *whole == "true" || *whole == "false";
+					const bool text = key.starts_with('s');
+					if (value.size() < whole->size() && whole->starts_with(value) && (yesNo || (value.empty() && !text))) {
+						present.pop_back();
+						if (yesNo && value.empty()) {
+							emptyYesNo = key;
+						}
+					}
+				}
+			}
+		}
+
+		const std::string_view eol = a_text.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
+		Merged                 merged;
+		std::string            appended;
+		std::vector<std::string_view> block;  // the comment lines above the run of keys being read
+		bool                          blockWritten = false;
+		bool                          lastWasKey = false;
+		lines(a_defaults, [&](std::string_view a_line) {
+			const auto trimmed = detail::Trim(a_line);
+			const auto key = detail::KeyOf(a_line);
+			if (!key.empty()) {
+				const auto is = [&](std::string_view a_name) { return a_name == key; };
+				if (!std::ranges::any_of(present, is) && !std::ranges::any_of(merged.added, is)) {
+					if (!blockWritten) {
+						if (!appended.empty()) {
+							appended += eol;  // a blank line between groups, as the defaults have
+						}
+						for (const auto& comment : block) {
+							appended += comment;
+							appended += eol;
+						}
+						blockWritten = true;
+					}
+					if (const auto value = key == emptyYesNo ? std::optional<std::string_view>{ "false" } : whenAbsent(key)) {
+						appended += key;
+						appended += value->empty() ? " =" : " = ";
+						appended += *value;
+					} else {
+						appended += trimmed;
+					}
+					appended += eol;
+					merged.added.emplace_back(key);
+				}
+				lastWasKey = true;
+			} else if (!trimmed.empty() && (trimmed.front() == '#' || trimmed.front() == ';')) {
+				if (lastWasKey) {
+					block.clear();  // a comment after a key opens the next key's block
+					blockWritten = false;
+				}
+				block.push_back(trimmed);
+				lastWasKey = false;
+			} else {
+				block.clear();
+				blockWritten = false;
+				lastWasKey = false;
+			}
+		});
+
+		merged.text = a_text;
+		if (appended.empty()) {
+			return merged;
+		}
+		if (!merged.text.empty() && !merged.text.ends_with('\n')) {
+			merged.text += eol;
+		}
+		if (!merged.text.empty()) {
+			merged.text += eol;
+		}
+		if (!a_note.empty()) {
+			merged.text += a_note;
+			merged.text += eol;
+			merged.text += eol;
+		}
+		merged.text += appended;
+		return merged;
+	}
+
+	// What LoadOrCreate found and did with the settings file.
+	enum class Kept
+	{
+		Created,      // there was none: written from the defaults
+		NotCreated,   // there was none and it could not be written
+		Unreadable,   // there is one, but it can't be read: left alone
+		Complete,     // it lacks nothing: left alone
+		Extended,     // the keys it lacked were appended to it
+		NotExtended,  // it lacks keys and could not be written to
+		Utf16,        // it is saved as UTF-16, which the plugin doesn't read: left alone
+	};
+
+	// Whether a file's bytes are UTF-16 text: its byte order mark, or, without one, a zero byte as one of the first
+	// two (a letter of the settings file is one byte and a zero in UTF-16). UTF-8 and plain text have neither.
+	[[nodiscard]] inline bool IsUtf16(std::string_view a_bytes)
+	{
+		return a_bytes.size() >= 2 && (a_bytes.starts_with("\xFF\xFE") || a_bytes.starts_with("\xFE\xFF") || (a_bytes[0] == '\0') != (a_bytes[1] == '\0'));
+	}
+
+	struct Loaded
+	{
+		std::string              text;  // the settings to read: the file's, or the defaults when it can't be read
+		Kept                     what = Kept::Complete;
+		std::vector<std::string> added;  // the keys the file lacked
+	};
+
+	// Writes a_text as the whole file, emptying the file first: for a new file, or one with nothing to lose (the
+	// temporary file of WriteWhole). A player's file is written with WriteWhole.
+	[[nodiscard]] inline bool WriteText(const std::filesystem::path& a_path, std::string_view a_text)
+	{
+		std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
+		return out && out.write(a_text.data(), static_cast<std::streamsize>(a_text.size())) && out.flush();
+	}
+
+	// How WriteWhole and WriteOver put the bytes into a file they opened: false when not all of them went in (a full
+	// disk, a failing one). The tests pass one that stops part way.
+	using Put = bool (*)(std::ostream& a_out, std::string_view a_text);
+
+	inline bool PutAll(std::ostream& a_out, std::string_view a_text)
+	{
+		return a_out.write(a_text.data(), static_cast<std::streamsize>(a_text.size())) && a_out.flush();
+	}
+
+	// Writes a_text as the whole file in place without emptying it first: the new bytes go over the old ones from the
+	// start, and the file is cut to the new length only once they are all in. A write that stops part way (a full
+	// disk, a failing one) so leaves a file that is never shorter than it was, the new text as far as it got and the
+	// old from there on, where emptying it first would leave none of the player's lines. With no file there, one is
+	// made.
+	[[nodiscard]] inline bool WriteOver(const std::filesystem::path& a_path, std::string_view a_text, Put a_put = PutAll)
+	{
+		std::error_code error;
+		if (!std::filesystem::exists(a_path, error)) {
+			std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
+			return out && a_put(out, a_text);
+		}
+		{
+			std::fstream out{ a_path, std::ios::binary | std::ios::in | std::ios::out };
+			if (!out || !a_put(out, a_text)) {
+				return false;
+			}
+			out.close();
+			if (out.fail()) {
+				return false;
+			}
+		}
+		const auto size = std::filesystem::file_size(a_path, error);
+		if (error) {
+			return false;
+		}
+		if (size > a_text.size()) {
+			std::filesystem::resize_file(a_path, a_text.size(), error);
+		}
+		return !error;
+	}
+
+	// What reading a file gave.
+	enum class Found
+	{
+		Read,        // its bytes
+		Absent,      // there is no file by that name
+		Unreadable,  // there is one (or something else by that name) and it can't be read now
+	};
+
+	struct FileText
+	{
+		Found       what = Found::Absent;
+		std::string text;
+	};
+
+	// The bytes of the file at a_path, telling a file that is not there from one that can't be read now (another
+	// program holds it open, it is a folder, the disk fails) or that could only be read in part (a locked range): code
+	// that reads a file, changes it and writes it back must not take either for an empty file, or what it writes
+	// replaces everything the file held.
+	[[nodiscard]] inline FileText ReadText(const std::filesystem::path& a_path)
+	{
+		std::error_code error;
+		const bool      there = std::filesystem::exists(a_path, error);
+		if (error) {
+			return { Found::Unreadable, {} };
+		}
+		if (!there) {
+			return { Found::Absent, {} };
+		}
+		// Something else by that name (a folder) is not a file to read: some systems open one and fail on the read.
+		if (!std::filesystem::is_regular_file(a_path, error) || error) {
+			return { Found::Unreadable, {} };
+		}
+		std::string text;
+		try {
+			std::ifstream in{ a_path, std::ios::binary };
+			if (!in) {
+				return { Found::Unreadable, {} };
+			}
+			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
+		} catch (const std::ios_base::failure&) {
+			return { Found::Unreadable, {} };
+		}
+		// A read that stops early looks like the end of the file: the size says whether it was.
+		if (const auto size = std::filesystem::file_size(a_path, error); error || size != text.size()) {
+			return { Found::Unreadable, {} };
+		}
+		return { Found::Read, std::move(text) };
+	}
+
+	// Writes a_text as the whole file by way of a file beside it (its name with ".tmp" added), which takes the file's
+	// name once it is whole: a game that crashes during the write leaves the old file or the new one, never half of
+	// one. No path through here leaves the file shorter than it was:
+	// - The temporary file's write comes up short (a full disk, a failing one): the temporary file is removed and the
+	//   file is left as it is. Writing in place then would fail the same way, part way through the player's file.
+	// - A file that can't be written to (read-only, or held by another program) is not replaced either.
+	// - Written in place, without emptying it first (WriteOver): a file that is a link (some mod managers put a mod's
+	//   files in the game's folder as hard or symbolic links; a new file under the name would cut the link), a folder
+	//   that takes no temporary file, and a file the whole temporary file could not be renamed over (another program
+	//   has it open).
+	// False when the file does not hold a_text afterwards; the caller says so in the log.
+	[[nodiscard]] inline bool WriteWhole(const std::filesystem::path& a_path, std::string_view a_text, Put a_put = PutAll)
+	{
+		std::error_code error;
+		const bool      there = std::filesystem::exists(a_path, error);
+		if (there && !std::ofstream{ a_path, std::ios::binary | std::ios::app }) {
+			return false;
+		}
+		const bool link = std::filesystem::is_symlink(a_path, error) || (there && std::filesystem::hard_link_count(a_path, error) != 1);
+		if (!link) {
+			auto temp = a_path;
+			temp += ".tmp";
+			bool made = false;
+			bool whole = false;
+			if (std::ofstream out{ temp, std::ios::binary | std::ios::trunc }) {
+				made = true;
+				whole = a_put(out, a_text);
+				out.close();  // the last bytes are written here: a full disk shows now
+				whole = whole && !out.fail();
+			}
+			if (made) {
+				error.clear();
+				whole = whole && std::filesystem::file_size(temp, error) == a_text.size() && !error;
+				if (!whole) {
+					std::filesystem::remove(temp, error);
+					return false;
+				}
+				std::filesystem::rename(temp, a_path, error);
+				if (!error) {
+					return true;
+				}
+				std::filesystem::remove(temp, error);
+			}
+		}
+		return WriteOver(a_path, a_text, a_put);
+	}
+
+	// What SaveValue did.
+	enum class Saved
+	{
+		Written,     // the file holds the value now
+		Unreadable,  // the file is there and can't be read now: not written to
+		Utf16,       // the file is saved as UTF-16: not written to
+		NotWritten,  // it could not be written
+	};
+
+	// The in-game menu's save: "a_key = a_value" put in the settings file at a_path, every other byte of the file kept
+	// (SetValue, WriteWhole). A file that is there but can't be read at this moment (an editor, an antivirus or a
+	// cloud sync holds it) is not written to: all there would be to write back is this one line, over every setting
+	// the player had. Only a file that is truly not there is made, as a new install's (a_defaults) with this value.
+	[[nodiscard]] inline Saved SaveValue(const std::filesystem::path& a_path, std::string_view a_key, std::string_view a_value, std::string_view a_defaults = {}, Put a_put = PutAll)
+	{
+		auto file = ReadText(a_path);
+		if (file.what == Found::Unreadable) {
+			return Saved::Unreadable;
+		}
+		if (file.what == Found::Absent) {
+			file.text = a_defaults;
+		} else if (IsUtf16(file.text)) {
+			return Saved::Utf16;  // a UTF-8 line in it would make it neither
+		}
+		return WriteWhole(a_path, SetValue(file.text, a_key, a_value), a_put) ? Saved::Written : Saved::NotWritten;
+	}
+
+	// The settings file at a_path brought up to a_defaults, and its text: with no file there, a_defaults is written
+	// as the file; a file that lacks keys of a_defaults gets them appended (AddMissing, with a_note and
+	// a_whenAbsent). This step never rewrites the player's own bytes: what is added is appended to the file, so a
+	// write that stops half way can't cost a setting the file had (the next start repairs a cut-off last line,
+	// AddMissing), and a file that lacks nothing, or one that can't be read (ReadText: read in part counts, or the
+	// keys past the part would be appended again, at their defaults, below the player's), is not opened for writing
+	// at all. A file saved as UTF-16 is left alone too: UTF-8 lines appended to it would make it neither, and the
+	// plugin reads none of it, so the defaults are the settings. (The in-game menu's save is the one that rewrites
+	// the file, with the player's values: SaveValue.)
+	[[nodiscard]] inline Loaded LoadOrCreate(const std::filesystem::path& a_path, std::string_view a_defaults, std::string_view a_note = {}, std::span<const std::pair<std::string_view, std::string_view>> a_whenAbsent = {})
+	{
+		const auto file = ReadText(a_path);
+		if (file.what == Found::Unreadable) {
+			return { std::string{ a_defaults }, Kept::Unreadable, {} };
+		}
+		if (file.what == Found::Absent) {
+			return { std::string{ a_defaults }, WriteWhole(a_path, a_defaults) ? Kept::Created : Kept::NotCreated, {} };
+		}
+		const std::string& text = file.text;
+		if (IsUtf16(text)) {
+			return { std::string{ a_defaults }, Kept::Utf16, {} };
+		}
+		auto merged = AddMissing(text, a_defaults, a_note, a_whenAbsent);
+		if (merged.added.empty()) {
+			return { std::move(merged.text), Kept::Complete, {} };
+		}
+		// AddMissing only appends, so the file's own bytes stay where they are.
+		const std::string_view tail = std::string_view{ merged.text }.substr(text.size());
+		bool                   written = false;
+		if (std::ofstream out{ a_path, std::ios::binary | std::ios::app }) {
+			written = static_cast<bool>(out.write(tail.data(), static_cast<std::streamsize>(tail.size())) && out.flush());
+		}
+		return { std::move(merged.text), written ? Kept::Extended : Kept::NotExtended, std::move(merged.added) };
 	}
 }

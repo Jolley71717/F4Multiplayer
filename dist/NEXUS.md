@@ -57,7 +57,7 @@ Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. 
 [size=4][b]How to play[/b][/size]
 [list=1]
 [*]Everyone starts the game with F4SE and loads a save.
-[*]The host presses F1 and picks [b]Host a session[/b] (or sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini before starting). Friends change nothing.
+[*]The host presses F1 and picks [b]Host a session[/b] (or sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini, which the mod writes the first time the game starts with it and keeps across updates). Friends change nothing.
 [*]The host invites: Shift+Tab, Friends, right-click a friend, Invite to Game. Or the friend right-clicks the host in Steam's friends list and picks Join Game.
 [*]To share the most quests, the host turns on [b]More quests[/b] in the F1 menu.
 [/list]
@@ -77,8 +77,9 @@ Back up your saves first, or keep a separate save for co-op.
 
 [b]Known gaps[/b]
 [list]
+[*]The full list of what is shared and what isn't yet: [url=https://github.com/Jolley71717/F4Multiplayer/blob/main/docs/SYNCED.md]What is shared[/url].
 [*]Building is shared only at settlements the host owns. At a friend's own settlement, each player's pieces stay their own.
-[*]Radiant jobs whose enemies are made on the spot (the Castle's defense, a courser, a patrol) stay each player's own.
+[*]Radiant jobs whose enemies are made on the spot (the Castle's defense, the refugees, High Ground) stay each player's own. Escort, rescue and kill jobs are shared.
 [*]To give a friend an item, drop it near them: keys, notes, holotapes, bobbleheads, magazines and quest items can't be given.
 [*]Some doors a quest script opens may still open only for the player who opened them.
 [/list]

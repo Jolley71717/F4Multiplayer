@@ -1,5 +1,7 @@
 #pragma once
 
+#include "IniFile.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -7,6 +9,7 @@
 #include <format>
 #include <fstream>
 #include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -46,18 +49,21 @@ public:
 	[[nodiscard]] static std::string AliasOf(std::uint64_t a_id) { return std::format("~{:06x}", a_id >> 40); }
 
 	// The list in a_path, replacing this one. A missing file is an empty list (with a new salt, kept by the first
-	// Save). Returns what went wrong, "" when nothing did; lines it can't read are skipped (and counted in it).
+	// Save). Returns what went wrong, "" when nothing did; lines it can't read are skipped (and counted in it). A file
+	// that is there but can't be read now (another program holds it) still holds the host's bans: this list is empty,
+	// and Save won't put it in that file's place.
 	std::string Load(const std::filesystem::path& a_path)
 	{
 		entries.clear();
-		std::error_code error;
-		if (!std::filesystem::exists(a_path, error)) {
+		const auto file = IniFile::ReadText(a_path);
+		unread = file.what == IniFile::Found::Unreadable;
+		if (file.what == IniFile::Found::Absent) {
 			return {};
 		}
-		std::ifstream in{ a_path, std::ios::binary };
-		if (!in) {
-			return std::format("could not read {}", a_path.filename().string());
+		if (unread) {
+			return std::format("could not read {}; it is left as it is, and a ban made now holds until the server stops", a_path.filename().string());
 		}
+		std::istringstream in{ file.text };
 		std::size_t skipped = 0;
 		bool        salted = false;
 		for (std::string line; std::getline(in, line);) {
@@ -100,6 +106,9 @@ public:
 	// Writes the list (to a temporary file first, then over the old one). False when it couldn't.
 	[[nodiscard]] bool Save(const std::filesystem::path& a_path) const
 	{
+		if (unread) {
+			return false;  // the file Load could not read holds bans this list doesn't
+		}
 		std::error_code error;
 		if (a_path.has_parent_path()) {
 			std::filesystem::create_directories(a_path.parent_path(), error);
@@ -220,4 +229,5 @@ private:
 
 	std::uint64_t      salt;
 	std::vector<Entry> entries;
+	bool               unread = false;  // Load found a file it could not read: Save leaves that file alone
 };

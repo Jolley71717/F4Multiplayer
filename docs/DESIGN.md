@@ -247,11 +247,54 @@
   the stand-in is in furniture or held (`src/game/StandInYield.h`, game-free, tested; `net status`
   `steppedAside=` and `asideFrames=`; the log says each step aside and each return). Before every save
   and load, all puppets are deleted so they never end up in a save file.
+  A friend who is near us and not shown (`src/game/StandInDraw.h`, game-free, tested). A player's report (0.20.1): a friend on
+  the compass and acting on the world, not drawn, three times in 25-30 h; a disconnect and a reload did not bring them back, a
+  restart did. The cause was not found in the code, so the whole class is watched instead of one way
+  into it. The compass goes by a friend's newest state, so the watch does too, in a pass of its own after the stand-ins' pass
+  (none of that pass's ways out can keep a friend from being looked at): whenever the newest state has them in our space within
+  `NEAR` (2500 units) of us, no load on, and their states still come (one taken, or one that came and was refused as no newer
+  than the newest held, within the 5 s after which a stand-in is taken away; a friend whose states have stopped, on their own
+  loading screen after travelling away or with their game stopped, is only where they were, and is not looked at), they should
+  be seen, and each way they can fail to be is named: no stand-in stands for them (with why: no state to draw from, the drawn
+  state in another space or out of sight, the last one never drawn, placing failed; and with what their states were doing: how
+  many are held, how long ago the newest was taken, how far behind now it is stamped, how many came since and were refused); it stands in a cell the engine does not draw; its 3D never came; its 3D is culled, faded out (counted only within
+  `FADE_NEAR`, 800 units: further off the engine fades actors by the player's own setting) or scaled to nothing; its 3D is a bare
+  skeleton with no body or clothes on it; it is drawn more than `ELSEWHERE` (2000 units) from where they are. One in a power
+  armor frame is not looked at (ArmorFrames has its own watch). Unseen for `DRAW_WAIT` (5 s), or `LOAD_WAIT` (15 s) while its 3D
+  or its cell is still on the way (the engine loads a fresh stand-in's 3D in the background: 1.0-6.6 s on the rig after fast
+  travels, so 5 s took loading ones for unseen ones), and the wait starts again whenever its 3D or its cell comes or goes (a
+  placement, a travel or a door, a cell coming drawn, a rebuild; a 3D that came is judged from when it came): the stand-in is
+  asked to build its 3D again (`Actor::Reset3D`, as FaceWatch asks for a head), once; still unseen that wait later it is placed
+  again; that one, after its own wait and rebuild, is placed again plain: our default settler of their sex, without the look they picked, the ini's base, the copy of
+  the base that wears their face, or their LooksMenu data, which is everything a fresh stand-in takes over from the one before
+  (a reconnect alone places a fresh one with all of those, and did not help the reporter); then it is left as it is. With no
+  stand-in standing there is nothing to rebuild: it is logged once with the reason, and when placing one failed the next is
+  tried plain. Every step is a WARN line naming the way and what the engine shows (cell, 3D, cull, fade, scale, parts, distance,
+  face copy), and so is "shown again", with the step that did it: the next report's log names the member. A plain stand-in
+  stays plain for that friend until a load, a new look from them, or a reconnect. An invisibility effect on the friend (a
+  Stealth Boy, chameleon gear) is not copied to the stand-in and not part of this. `net status`
+  `unseen=said/rebuilt/placed again/plain/left/seen again`; dev `standin <actor>` shows how any actor is drawn, and
+  `standindraw once|hold|off` culls the stand-ins' 3D on purpose to see the steps (`tools/rig/repro/standin-unseen-net.sh`).
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
   re-applies the do-nothing package every 2 s. Puppets are keyed by pointer but checked against their
   form ID before use, so a freed actor's address is never treated as a puppet.
+- **A stand-in says nothing of its own** (`src/game/StandInVoice.h`, game-free, tested). It is a settler's duplicate, and the
+  engine had it speak as it has any NPC speak: its hit and pain lines as enemies hit it, hellos and idle chatter in the moments
+  its own AI runs (a climb into power armor, a seat), in the settler's voice (a player's report, 0.20.1). A friend's own lines
+  reach their stand-in as plain 3D sounds (Conversations::Play), which the engine's speaking state never shows, so the two are
+  told apart. The mute goes by that state, not by the line: it looks at neither topic nor voice type, so it holds for every line
+  the engine can start on one (attack, hit, death and bleed-out lines, detection lines, hellos and goodbyes, idle chatter,
+  reactions to a bump or a theft, a scene's or a script's line) and for every base a stand-in can have (the two default
+  settlers, a settler look the friend picked, the ini's `puppetBaseForm`, the copy of any of these that wears their face, the
+  plain one of StandInDraw), whatever voice type the base carries; one kept a moment for our conversation or on its way out is
+  still a puppet and still muted. Mirrored NPCs (the other kind of puppet) keep their voices.
+  Every update of a stand-in (its own AI's too) clears its "can speak" flag (`Actor::BOOL_FLAGS::kCanSpeak`), and a
+  line the engine has it saying all the same (`IsTalking`, or a voice state on its way in its high process) is ended that
+  frame: its dialogue sounds stopped, its voice timers, state and subtitle cleared, so at most a frame of it is heard. The
+  first 20 are logged ("has a line of its own"); `net status` `ownLines=found/ended`; dev `puppetvoice [0-3]` picks which of
+  the two are on, for a rig experiment.
 - **A puppet's animation runs on real time** (src/game/StandInTime.h, tested; no protocol). A puppet is placed on
   real time (its friend's path at the wall clock's pace), but the engine steps every actor's behaviour graph by the
   world's frame time: `ProcessLists::QueueActorProcesses` (ID 2234076) queues each actor with `BSTimer.delta *
@@ -303,6 +346,15 @@
   hands the victim's to `AIProcess::EnterCombat` unchecked, and `TESObjectREFR::Disable` deletes an actor's process at once:
   a stand-in replaced in a fight crashed the game there. `CombatReactions` (src/game/CombatReaction.h) hooks the task's call
   and skips a victim that is disabled, deleted or has no process (`reactionsSkipped=` in `net status`).
+- The console's `kill` (2204420, +5C03D0) kills the actor and then, when its torso part is Explodable with an absolute
+  chance (BPND flags 0x08 and 0x40), reads that part's limb actor value and blasts the torso with a hit. It never checks that
+  the part names a value: with none it reads through null, vanilla too. Nuka-World's flying ant swarm
+  (DLC04_SwarmBodyPartData) is the game's one such body, and a death in another game lands here with that command, so a
+  swarm that died in one game crashed the others. `KillBlasts` (src/game/KillBlast.h) hooks the command's test before the
+  blast (the call at +0x160) and leaves the blast out for a torso with no limb value (`killBlastsSkipped=` in `net status`);
+  without the hook the session's kill of such an actor is not run (`killsRefused=`). Papyrus's `Actor.Kill` and
+  `KillSilent` (2251955, +1108D30) are the same code with the same unchecked read; their call of the test (+0xE4) goes
+  through the same hook (`killBlastGuard=on+script`). The engine's other readers of a part's limb value test it first.
 - Quitting from workshop mode crashed at the end of `Main::Shutdown`, vanilla too (once past the music check `ExitMusic`
   mends): `HandleManager::KillSDM` destroys the references still alive, among them the workshop menu's cell-less display
   copy of the workbench (CONT 000C1AEB), and `~BGSInventoryList` (2194154, at +0x87) calls
@@ -315,6 +367,22 @@
   looking or shooting, while menus work. A coc or new game keeps it, and a save made then keeps it too.
   `SyncAnimMark` (src/game/SyncAnimMark.cpp, StuckSyncAnim.h) clears it once at each game's start, only with
   no synced animation running at all and the player in no scene, furniture or dialogue, alive and not down.
+- Kellogg's memory lounger takes the controls before it seats the player: a press on it (MQ202's alias
+  PlayerMemoryLounger, `DefaultAliasOnActivate`, which fires with the lounger's activation blocked at 155) sets MQ202
+  160, whose fragment makes an input layer (`MQ202EnableLayer`: movement, fighting, menus and the Pip-Boy, activation
+  off), then seats the player with `lounger.Activate(player, True)`; only `MQ202PlayerScript.OnSit` goes on (170), and
+  the memory's way out gives everything back. A seat that fails (the lounger taken: a friend's stand-in, before
+  `StandInSeat::NEVER_SEATS`) left the player with no controls and no Pip-Boy; a save made then loads with the
+  controls back (the layer does not live through a load, rig 2026-11-21) but 160 still done and 170 not, so a press
+  sets nothing and that player's own way in stays shut. `MemoryLounger` (src/game/MemoryLounger.cpp, LoungerRescue.h), from
+  each game's start, in a session or not: once the player has been in the world with 160 done, 170 not, the layer
+  held and in no furniture for 5 s, it asks the same seat again (up to 3 times, 4 s apart; the memory then goes on
+  as the press meant), and if none takes, undoes the press: the layer deleted, 160's done bit cleared and the quest's
+  current stage back to the highest done below it, the lounger blocked as 155 left it with its prompt shown, Amari and
+  Nick mortal again, so the next press runs 160 afresh (a later current stage the shared story set is kept). The
+  same 160 with no layer (such a save loaded) is undone after 10 s in the world in no furniture, with no seat asked,
+  while MQ202 runs, nothing past 170 is done and MQ203 1000 (the way out) is not done here: a 160 marked done without
+  its script when a friend's memory closes here (`ShutsDoor`, with the way out) is never touched. Dev: `lounger`.
 
 ## Remote player look
 
@@ -396,7 +464,7 @@
   is not moved there; it runs its own AI meanwhile. The same goes outdoors when the owner's copy is more than
   a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
-  our own current companion (two players can both have Dogmeat). In an interior a copy follows the owner's however far
+  our own current companion (Dogmeat has one owner like any companion: a second player's recruit of him is dismissed with a notice). In an interior a copy follows the owner's however far
   across the cell it stands (`NpcPlace::LostWhy`): the whole cell is loaded. Held to 4096 units there, copies the host's
   game had across Corvega's assembly plant after it restarted from a save (its raiders where the save had them, the
   joiner's where the fight had left them) were never mirrored and stood still for minutes. A copy let go to its own AI walks its own way, and
@@ -3966,7 +4034,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   is counted (`sendOutsHeld`, `sendOutsDropped`, `sendOutsAfterLoad`). A plugin's frame (each game has its own
   reference), our player's own (a copy they are in or got out of last stays usable) and a quest's are never kept from
   them. Counted as `framesKeptOut`, `othersSentOut` and `sendOutsFailed` (`net status`) and `keptOut`,
-  `transfersKeptOut` and `transfersClosedAtShow` (`paframes`). Borrowing a friend's suit comes later.
+  `transfersKeptOut` and `transfersClosedAtShow` (`paframes`). Borrowing a friend's suit ships (see the frame loans above).
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The
@@ -4039,7 +4107,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   while its friend already sat (after a load or a join) used to be sent in the frame it was spawned, with no 3D, and
   spent both ways before its head was built: it never got in (a quarter of the misses in a 5-player game's logs). Once
   in, the furniture's graph and marker place it. When none takes, or no such furniture is found, it stays held where
-  it stood as they sat down instead of following them onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
+  it stood as they sat down instead of following them onto the seat. A memory's lounger (`StandInSeat::NEVER_SEATS`:
+  Fallout4.esm's base 0016BD68, the Memory Den's loungers) is never tried, whatever a friend's game names: the stand-in
+  is held where it stood, and one in it is stood up at once. A friend's own press on that lounger runs their own way
+  into Kellogg's memory (MQ202 160: the controls taken, then the seat), and with the stand-in in it the seat failed and
+  left them without controls (see the memory lounger below). When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
   their states again. Dev: `seat <puppet> <furniture> [snap|activate] [ai]` (`ai`: the engine's own update, AI and
   all, runs on the puppet for 2 s after the ask), `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
@@ -4487,6 +4559,106 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 `UiPages.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
 menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
 
+## The settings file (src/Config.cpp, src/ConfigRead.h, common/IniFile.h, dist/F4Multiplayer.ini)
+
+`Data\F4SE\Plugins\F4Multiplayer.ini` is the player's file, and the zip does not hold it: shipped (0.21.0 and
+earlier), a mod manager or an extract over `Data` replaced the player's settings with the defaults on every update.
+`dist/F4Multiplayer.ini` is compiled into the plugin instead (xmake.lua, `utils.bin2c` makes `F4Multiplayer.ini.h`).
+`Config::Load` writes the file from it, byte for byte, when there is none (a new install; the F1 menu's *Host a
+session* writes `bHost` into it from then on), and when there is one appends the keys it lacks (`IniFile::AddMissing`:
+each at its default, with the comment lines above it in the defaults, the block above a run of keys serving every key
+of the run, under one note line, in the file's own line ending), leaving every value, comment and key the file has as
+it is, an older version's keys included. A key commented out in the file is a key it lacks, so it comes back at its
+default below.
+
+Who writes the file, and how. Start-up only appends: `IniFile::LoadOrCreate` opens the player's file for append and
+never rewrites a byte it has, so a write that stops half way can't cost a setting the file had. The in-game menu's
+save does rewrite it (`Config::Write`, a switch on the F1 menu's *Settings* page or *Host a session*;
+`IniFile::SaveValue`): it reads the whole file, changes the value on every line of the one key (`IniFile::SetValue`;
+the reader takes the last line of a key, so changing only the first would not hold in a file that has the key twice),
+adds the key at the end when the file lacks it, and writes the file back with every other line, comment and the order
+as the player had them.
+
+The save never writes what it did not read. `IniFile::ReadText` tells a file that is not there from one that is there
+and can't be read at that moment (an editor, an antivirus scan or a cloud sync holds it; something else has its name)
+or that could only be read in part (a locked range ends the read early, which looks like a shorter file: the size is
+checked against what was read). Taken for an empty file, either would be written back as the one changed line, or as
+the part, over every setting the player had. So a file that is there and was not read whole is not written to: one log
+line says so, the switch holds in memory until the game closes, and the file is as it was. Start-up goes by the same
+read (the defaults are the settings for that run and nothing is appended; appending after a read in part would add the
+keys past the part again, at their defaults, below the player's). Only a file that is truly not there is made by the
+save, as a new install's with the value.
+
+The file is written whole by way of a file beside it (`IniFile::WriteWhole`: `F4Multiplayer.ini.tmp`, then a rename
+over the settings file), so a game that crashes or a PC that loses power during the write leaves the old file or the
+new one, never half of one. **No path of a save leaves the file shorter than it was:**
+
+- The temporary file's write comes up short (a full disk, a failing one): the temporary file is removed, the settings
+  file is not touched, the save fails and the log says so. Writing in place after that would fail the same way, part
+  way through the player's file.
+- Nothing at all is written to a file that can't be opened for writing (read-only, or held by another program).
+- Three cases write in place: a file that is a hard or symbolic link (a mod manager that deploys by links: a new file
+  under the name would cut the link and the manager's copy would keep the old settings), a folder that takes no
+  temporary file, and a whole temporary file that can't be renamed over the settings file (another program has the
+  file open in a way that shares reading and writing but not replacing; the temporary file is removed). In place
+  never empties the file first (`IniFile::WriteOver`): the new bytes go over the old ones from the start, and the file
+  is cut to the new length only once they are all in, so a write that stops part way leaves the new text as far as it
+  got and the old from there on, every line still there.
+
+A temporary file an earlier save left is written over and is never read as settings.
+
+What start-up does with a file it can't simply extend:
+
+- A file or folder that can't be written (read-only, or a folder the game may not write to): nothing is changed, the
+  settings the file lacks stay at their built-in defaults in memory, and one log line names them. With no file and no
+  way to write one, every setting is at its default. A file that can't be read, or only in part, is left alone too
+  (above).
+- A key whose line in the defaults does not mean what leaving the key out means is appended in the form that does
+  (`Config::WHEN_ABSENT`). A file without `sPlayerName` uses the Steam name, so an update appends `sPlayerName =`
+  (empty: the Steam name too); only a new install gets `sPlayerName = character`. The test runs every key of the
+  defaults through the reader (`Config::Read`, src/ConfigRead.h, the game-free reading `Config::Load` runs) and fails
+  for a key that is appended in a form that reads unlike the missing key, or that is on the list without need.
+- A cut-off last line (an append that stopped half way: no line break ends it) whose value can't be a whole one, the
+  beginning of the yes/no value that would be appended (`tr`) or nothing at all for a key that is not text, counts
+  as a key the file lacks: the next start appends it again, whole, and the last line of a key is the one read. The
+  half line stays where it is. The beginning of a number or a name (`iPort = 77`) is not told from the player's own
+  value and is left; an empty `s...` key is the player's too. A yes/no key with nothing after its `=` may as well be
+  the player's own line, which reads as no: `key = false` is what is appended for it, whatever its default, so the
+  repair never turns on what read as off.
+- A file saved as UTF-16 (a byte order mark, or one of its first two bytes zero): UTF-8 lines appended to it would
+  make it neither, and the reader takes none of it. It is left as it is, by start-up and by the menu's save, the
+  defaults are the settings and the log says to save it as UTF-8.
+
+The tests (tests/IniFileTests.cpp, tests/ConfigReadTests.cpp) hold the merge to that, run the start-up step on real
+files in a temporary folder (none, an older one, a complete one, a read-only one, one that can't be read, a cut-off
+one, a UTF-16 one), run the menu's save on them too (one line changed and every other byte kept, no file by the name,
+a folder by the name, a hard link, a symbolic link, a write that comes up short through the temporary file and in
+place, and on Windows a file another program holds open against reading and one with a locked range, both left byte
+for byte, and one held so that the rename fails, written in place whole), and hold `dist/F4Multiplayer.ini` to one line per key, each of them read by
+`Config::Read`.
+
+The same holds for every file of the player's that is read and then written back: **what could not be read is not
+replaced.** The player id (src/net/IdentityFile.h: a file that is there and can't be read is tried once more a quarter
+of a second later, for a sync tool or a virus scan that holds it for a moment; if it still can't be read it keeps the
+identity it holds, and that run of the game goes by one of its own; written over, the new one would be the player's for good and every
+host's session would take them for a stranger) and the host's ban list (`BanList::Load` remembers a file it could not
+read, and `Save` then leaves it alone: a ban made in that run holds until the server stops, and the log says so) go
+by `IniFile::ReadText` too, each with tests on a file that can't be read. A session file was already kept this way
+(`SessionFile::Recover` waits a second for a program that holds it, sets a file it can't read aside as `.corrupt` and
+carries on from the backup). The player's own language file is only ever read.
+
+The rule this follows, for every file: **the package holds nothing a player changes, and a player's files are nowhere
+an update writes.** A zip is extracted over `Data` or swapped whole by a mod manager, so whatever it holds replaces
+what was there. What the zip holds (the DLL, `lang\*.txt`, `about.txt`, `release-notes.md`, the menu movie, INSTALL.md,
+the license, and on GitHub the server) is the mod's and is replaced on purpose; tools/package.ps1 refuses a package
+with an `F4Multiplayer.ini` in it. What is the player's: the settings file (above, written by the plugin, the only file
+of theirs under `Data`); their own texts for a language (`F4Multiplayer_lang_<code>.txt`, below); and the files the
+plugin keeps for them, all in `Documents\My Games\Fallout4\F4SE` (`Identity::DataFolder`): the player id, each
+character's session file, the ban list, the logs and the crash and hang reports. The dedicated server keeps a session
+or a ban list only where `--session-file` and `--ban-file` say. One case is out of reach: updating from 0.21.0 or
+earlier with a mod manager, the manager removes the ini that came in the old zip together with the old version
+(INSTALL.md says to copy it first).
+
 ## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
 
 Everything a player reads that the plugin wrote (HUD notices, the F1 menu's pages and buttons, the server's refusals
@@ -4499,7 +4671,10 @@ from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that ord
 `Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
 `Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
 `esmx` = Latin American Spanish, its own file `es-mx`) to the file codes; Ukrainian, which the game lacks, is `uk`, and
-the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1), so
+each update replaces them: a player's own texts for a language (a correction, or a language the mod lacks) are read
+from `F4Multiplayer_lang_<code>.txt` beside the log (`Text::OwnFileName`) and go over the mod's file key by key
+(`Text::Overlay`), where no update or mod manager writes. The
 tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
 mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
 `Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are

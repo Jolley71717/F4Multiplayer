@@ -25,6 +25,7 @@
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 SANCT=000250FE; RR=00054BAE
+run_cap 6000    # its longest good run took 32 minutes (one with no verdict, 49): 100 minutes
 PHASES=${*:-together friend-owned}
 PIECES=${PIECES:-"floor:STRUCTURES,WOOD,FLOORS wall:STRUCTURES,WOOD,WALLS generator:POWER,GENERATORS light:POWER,LIGHTS:000D38D4 bed:FURNITURE,BEDS"}
 need_session

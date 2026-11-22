@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -61,6 +63,17 @@ namespace StandInSeat
 	constexpr std::string_view RELAXATION_CLASS = "FurnitureClassRelaxation";
 	// Work furniture and nothing a stand-in was ever seen to get into: one that is relaxation furniture as well is tried.
 	constexpr bool WorkOnly(bool a_work, bool a_relaxation) { return a_work && !a_relaxation; }
+
+	// Furniture no stand-in is ever put in, by its base (Fallout4.esm's, the same form ID in every game): the memory
+	// lounger (0016BD68, the Memory Den's, Kellogg's memory's and Irma's). A memory's lounger is the way into it, and a
+	// player's own press on it runs the memory's way in whoever is in it: Dangerous Minds' alias PlayerMemoryLounger sets
+	// MQ202 160 on a press even with the lounger's activation blocked (155), and 160's fragment takes the controls and
+	// then seats the player itself. With a friend's stand-in in that lounger the seat fails, MQ202PlayerScript.OnSit
+	// never sets 170, and the player is left with no controls (MemoryLounger.h gets them out). The friend in it is
+	// on the way into a memory that is theirs alone: their stand-in is held where it stood as they sat down, and one in
+	// it is stood up at once. RemotePlayers' UpdateSeat refuses it whatever a friend's game tells.
+	constexpr std::array<std::uint32_t, 1> NEVER_SEATS{ 0x0016BD68 };
+	constexpr bool                         NeverSeats(std::uint32_t a_base) { return std::ranges::find(NEVER_SEATS, a_base) != NEVER_SEATS.end(); }
 
 	// Our own player, as Party::SampleStatus reads it.
 	struct Own
@@ -162,6 +175,7 @@ namespace StandInSeat
 	struct Facts
 	{
 		bool     wanted = false;    // their status names a seat
+		bool     refused = false;   // ... one no stand-in is put in (NeverSeats): it is not looked for
 		bool     found = false;     // ... and it is here (Pick)
 		bool     near = false;      // their spot is within NEAR of it (of where they said it stands while none is found)
 		bool     ready = true;      // the stand-in has had its 3D and its AI process READY_AFTER: it can be sent in
@@ -227,6 +241,13 @@ namespace StandInSeat
 		}
 		if (!a_facts.wanted) {
 			return a_facts.inTarget || a_facts.inOther ? Act::kStand : Act::kFollow;
+		}
+		if (a_facts.refused) {
+			// Never in it: out of any furniture (that one too, if it got in somehow), else held where it stood beside it.
+			if (a_facts.inTarget || a_facts.inOther) {
+				return Act::kStand;
+			}
+			return a_facts.near ? Act::kHold : Act::kFollow;
 		}
 		if (a_facts.inTarget) {
 			return Act::kHold;

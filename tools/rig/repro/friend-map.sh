@@ -63,6 +63,7 @@ inside() { grep -oE "(^| )inside[0-9]+=[a-z]+" <<<"$1" | head -1 | cut -d= -f2; 
 le2() { awk -v w="$1" 'BEGIN { exit !(w != "" && w + 0 <= 2.0) }'; }
 
 need_session
+on_end close_map host; on_end close_map vm   # a run ended early leaves no Pip-Boy open (real Tabs)
 say "host: $(dc host 'net status' | grep -oE 'status=[a-z]+ id=[0-9]+')  vm: $(dc vm 'net status' | grep -oE 'status=[a-z]+ id=[0-9]+')"
 
 # ---- each way, outside -----------------------------------------------------------------------------------------------------
@@ -105,10 +106,15 @@ done
 
 # ---- interiors (console placement: both players coc'd into $INTERIOR) --------------------------------------------------------
 hcell=$(field "$(dc host pos)" cell); vcell=$(field "$(dc vm pos)" cell)
+gods_off() { local w; for w in host vm; do dc $w "god off" >/dev/null; done; }
+on_end gods_off   # however the run ends (a VOID below, the time cap), nobody is left in god mode
 for who in vm host; do dc $who "god on" >/dev/null; dc $who "console coc $INTERIOR" >/dev/null; done
 say "both players coc'd into $INTERIOR (console placement, to reach an interior; god mode on while away from home)"
-sleep 15; wait_ingame host 60; wait_ingame vm 60; sleep 8
-[ "$(field "$(dc host pos)" cell)" = "$hcell" ] || [ "$(field "$(dc vm pos)" cell)" = "$vcell" ] && verdict VOID "a player did not reach $INTERIOR (still in the cell they were in)"
+sleep 15; wait_ingame host 60; wait_ingame vm 60
+# the interior checks mean nothing unless both players are inside: a cell that did not change is VOID, with both logs' last lines
+_both_inside() { [ "$(field "$(dc host pos)" cell)" != "$hcell" ] && [ "$(field "$(dc vm pos)" cell)" != "$vcell" ]; }
+scene_live "both players' cells changed after the coc to $INTERIOR" 30 _both_inside
+sleep 8
 for viewer in host vm; do
 	doors=$(dc $viewer "friendmap doors"); say "$viewer $doors"
 	way=$(grep -oE "byDoors=[^ ]+" <<<"$doors" | cut -d= -f2); [ "${way:-none}" = none ] && way=$(grep -oE "byLocation=[^ ]+" <<<"$doors" | cut -d= -f2)

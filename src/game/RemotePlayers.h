@@ -153,4 +153,7 @@ namespace RemotePlayers
 
 
 	[[nodiscard]] std::string Describe();
+	// The dev's `standindraw [off|once|hold]`: every stand-in's 3D culled once, or every frame, so the steps for a friend near us
+	// who is not shown (StandInDraw.h) can be seen on the rig; what the mode and the counts are.
+	[[nodiscard]] std::string SetDrawTest(std::string_view a_mode);
 }

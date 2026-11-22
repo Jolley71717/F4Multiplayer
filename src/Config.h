@@ -7,7 +7,10 @@
 #include <vector>
 
 // Settings read from Data/F4SE/Plugins/F4Multiplayer.ini (simple "key = value" lines,
-// '#' or ';' start a comment). Missing keys keep their defaults.
+// '#' or ';' start a comment). Missing keys keep their defaults. The file is the player's: the zip ships none,
+// Load writes one from the compiled-in defaults (dist/F4Multiplayer.ini) when there is none, and appends the keys an
+// older file lacks, with their explanations, leaving every value and comment it has as it is (IniFile::AddMissing).
+// The reading is Config::Read (ConfigRead.h).
 namespace Config
 {
 	struct Settings
@@ -243,6 +246,9 @@ namespace Config
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;
 		std::uint16_t devChannelPort = 7790;
+
+		// Two sets of settings are the same when every one of them is (the tests: a key at its default reads as a missing key).
+		bool operator==(const Settings&) const = default;
 	};
 
 	void            Load();

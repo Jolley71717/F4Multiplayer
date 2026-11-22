@@ -122,6 +122,11 @@ namespace StateBuffer
 		Prediction::SenderClock  sender;
 		Prediction::ArrivalClock arrivals;  // for states that don't say when they were sent
 		Clock::time_point        arrived{};  // when the last state came
+		// States that came and were not taken (Push: no newer than the newest held): when the last one did, and how many since
+		// one was taken. One now and then is the network handing them over out of order; every one of them, for seconds, is a
+		// sender whose count runs behind what is held here: nothing recent to draw their stand-in from (RemotePlayers says so).
+		Clock::time_point        refusedAt{};
+		std::uint32_t            refused = 0;
 		float                    delay = std::chrono::duration<float>(MIN_DELAY).count();  // seconds behind now it is drawn
 		std::array<float, LEADS> leads{};  // the furthest our frames went past the newest state the last one handed over, each recent slot, seconds
 		std::size_t              leadCount = 0;
@@ -137,6 +142,8 @@ namespace StateBuffer
 		bool Push(const Protocol::PlayerState& a_state, Clock::time_point a_now)
 		{
 			if (!snapshots.empty() && a_state.sequence <= snapshots.back().state.sequence) {
+				refusedAt = a_now;
+				++refused;
 				return false;
 			}
 			// Where it is drawn now, before this state changes that (see Correction).
@@ -154,6 +161,7 @@ namespace StateBuffer
 			}
 			snapshots.push_back({ stamp, a_state });
 			arrived = a_now;
+			refused = 0;
 			while (snapshots.size() > MAX_SNAPSHOTS) {
 				snapshots.pop_front();
 			}

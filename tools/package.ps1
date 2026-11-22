@@ -147,7 +147,9 @@ Copy-Item (Join-Path $build 'F4Multiplayer.dll') (Join-Path $stage 'F4SE\Plugins
 if ([Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $build 'F4Multiplayer.dll'))).Contains('TRACY_')) {
 	throw 'F4Multiplayer.dll was built with Tracy (xmake f --tracy=...): a profiling build is never packaged'
 }
-Copy-Item (Join-Path $root 'dist\F4Multiplayer.ini') (Join-Path $stage 'F4SE\Plugins')
+# No F4Multiplayer.ini: the plugin writes it from the defaults compiled in (dist\F4Multiplayer.ini, xmake.lua) when
+# there is none and adds the keys an older file lacks (src\Config.cpp). Shipped, a mod manager or an extract over Data
+# replaced a player's settings with it on every update.
 # The mod's texts in every language (Text.cpp reads Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt).
 $lang = Join-Path $stage 'F4SE\Plugins\F4Multiplayer\lang'
 New-Item -ItemType Directory -Force $lang | Out-Null
@@ -170,6 +172,10 @@ if ($menuMovies) {
 if (-not $Nexus) { Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer') }
 Copy-Item (Join-Path $root 'dist\INSTALL.md') (Join-Path $stage 'F4Multiplayer')
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'F4Multiplayer')
+if (Get-ChildItem $stage -Recurse -File -Filter 'F4Multiplayer.ini') {
+	Remove-Item -Recurse -Force $stage
+	throw 'The package holds an F4Multiplayer.ini: it would replace a player''s settings on every update (the plugin writes the file itself)'
+}
 
 # Nothing in the zip may name this PC or its user.
 Assert-LeakScanWorks

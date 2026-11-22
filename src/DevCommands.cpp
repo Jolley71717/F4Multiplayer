@@ -59,6 +59,7 @@
 #include "game/RemotePlayers.h"
 #include "game/RollHook.h"
 #include "game/Rolls.h"
+#include "game/MemoryLounger.h"
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
 #include "game/SneakKey.h"
@@ -2471,6 +2472,47 @@ namespace DevCommands
 			return DescribeRef(ref) + std::format(" formFlags={:08X} extraFlags={:X}", ref->formFlags, Equipment::ExtraFlagsOf(ref)) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
+		// standin <refHex>: how an actor is drawn, for a stand-in a friend cannot see: its 3D (loaded, culled, fade, flags, how
+		// many children drawn and culled, the face node), its cell against the player's (and the cell's state), its process
+		// level, and whose stand-in it is.
+		std::string StandIn(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: standin <actorRefHex>";
+			}
+			const auto cell = actor->GetParentCell();
+			const auto ours = PlayerCell();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			std::string out = std::format("ref={:08X} player={} disabled={} deleted={} cell={:08X} ourCell={} cellState={} interior={} process={} dist={:.0f}", actor->GetFormID(),
+				RemotePlayers::PlayerIdFor(actor->GetFormID()), actor->IsDisabled(), actor->IsDeleted(), cell ? cell->GetFormID() : 0, cell == ours,
+				cell ? static_cast<int>(cell->cellState) : -1, cell && cell->IsInterior(), actor->currentProcess ? static_cast<int>(actor->currentProcess->processLevel) : -1,
+				player ? player->data.location.GetDistance(actor->data.location) : 0.0f);
+			const auto root = actor->Get3D();
+			if (!root) {
+				return out + " 3d=none";
+			}
+			std::size_t children = 0, culled = 0, drawn = 0;
+			if (const auto node = root->IsNode()) {
+				for (const auto& child : node->children) {
+					++children;
+					if (!child) {
+						continue;
+					}
+					if (child->GetAppCulled()) {
+						++culled;
+					} else {
+						++drawn;
+					}
+				}
+			}
+			out += std::format(" 3d='{}' culled={} fade={:.2f} flags={:X} scale={:.2f} children={} drawn={} childrenCulled={} face={} at=({:.0f},{:.0f},{:.0f}) off={:.0f}", root->name.c_str(),
+				root->GetAppCulled(), root->fadeAmount, root->GetFlags(), root->world.scale, children, drawn, culled, actor->GetFaceNodeSkinned() != nullptr, root->world.translate.x,
+				root->world.translate.y, root->world.translate.z, root->world.translate.GetDistance(actor->data.location));
+			return out;
+		}
+
 		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked
 		// twice, the visitor answering kContinue and then kStop each time, so the visit counts show which of the two the
 		// engine takes as "go on" (WorldSync counts the scripts on doors and gates this way).
@@ -2684,6 +2726,30 @@ namespace DevCommands
 				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
 		}
 
+		// puppetvoice [mask]: how stand-ins are kept from speaking their own lines (StandInVoice.h: 1 the "can speak" flag cleared
+		// each frame, 2 a line the engine has one saying ended as it is seen; 3 both, the default; 0 neither), and what it is.
+		std::string PuppetVoice(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty()) {
+				const auto mode = ParseHex(args[0]);
+				if (!mode || *mode > 3) {
+					return "error: usage: puppetvoice [0-3]";
+				}
+				Puppets::SetVoiceMode(*mode);
+			}
+			return std::format("voiceMode={} ({})", Puppets::VoiceMode(), Puppets::Describe());
+		}
+
+		// standindraw [off|once|hold]: culls the 3D of every friend's stand-in (once: of those standing now; hold: every frame), so the steps for a
+		// friend who is near and not shown can be seen (StandInDraw.h: said, built again, placed again, placed plain, left); with no
+		// argument, the mode and the counts.
+		std::string StandInDrawTest(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			return RemotePlayers::SetDrawTest(args.empty() ? std::string_view{} : std::string_view{ args[0] });
+		}
+
 		// seat <actorHex> <furnitureHex> [snap|activate] [ai] | seat <actorHex> stand|hold|free: sends a puppet (a stand-in, or an
 		// actor `puppet` made one) into furniture the way a friend's stand-in is sent (Puppets::Enter), stands it up
 		// (Puppets::StandUp), or holds or frees it by hand; then what the puppet's furniture state is. A friend's own stand-in
@@ -2719,6 +2785,13 @@ namespace DevCommands
 				}
 			}
 			return Puppets::Describe(actor);
+		}
+
+		// lounger: each memory lounger's way in as MemoryLounger sees it (the sit and seated stages, the sit stage's layer, our
+		// player in furniture, stuck or not, the lounger) and what its guard asked (seats, the give-back).
+		std::string Lounger(std::string_view)
+		{
+			return MemoryLounger::Describe();
 		}
 
 		// pathto <actorHex> <refHex> [speed 0-1]: the actor walks (0) or runs (1, the default) to the reference on its own AI,
@@ -5278,7 +5351,11 @@ namespace DevCommands
 			Entry{ "scripts", ScriptsCommand },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
+			Entry{ "puppetvoice", PuppetVoice },
+			Entry{ "standin", StandIn },
+			Entry{ "standindraw", StandInDrawTest },
 			Entry{ "seat", Seat },
+			Entry{ "lounger", Lounger },
 			Entry{ "pathto", PathTo },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "companions", CompanionsCommand },

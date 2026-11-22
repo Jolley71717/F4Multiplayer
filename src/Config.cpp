@@ -1,5 +1,6 @@
 ﻿#include "Config.h"
 
+#include "ConfigRead.h"
 #include "IniFile.h"
 #include "Log.h"
 #include "Platform.h"
@@ -11,283 +12,88 @@ namespace Config
 	namespace
 	{
 		constexpr auto PATH = "Data/F4SE/Plugins/F4Multiplayer.ini"sv;
+		constexpr auto FOLDER = "Data/F4SE/Plugins"sv;
+
+		// dist/F4Multiplayer.ini, compiled in (xmake.lua, utils.bin2c): a new install's settings file is written from
+		// it, and an older file gets the keys it lacks from it, each with its explanation. The zip ships no live ini
+		// (0.21.0 and earlier did, and a mod manager or an extract over Data replaced the player's with it on every
+		// update), so a player's values are never replaced.
+		constexpr unsigned char DEFAULTS_BYTES[] = {
+#include "F4Multiplayer.ini.h"
+		};
+
+		std::string_view Defaults()
+		{
+			std::string_view text{ reinterpret_cast<const char*>(DEFAULTS_BYTES), sizeof(DEFAULTS_BYTES) };
+			while (text.ends_with('\0')) {  // bin2c's terminator
+				text.remove_suffix(1);
+			}
+			return text;
+		}
+
+		// Heads the keys an update appends to a player's file (IniFile::AddMissing).
+		constexpr auto NOTE = "# --- Settings added by an update of the mod, each at its default ---"sv;
 
 		Settings settings;
 
-		std::string_view Trim(std::string_view a_str)
+		// The settings file, or where it goes when there is none yet: Platform::GamePath finds a file that is there;
+		// a new one goes beside the plugin, in the Plugins folder it found.
+		std::filesystem::path IniPath()
 		{
-			const auto first = a_str.find_first_not_of(" \t\r");
-			if (first == std::string_view::npos) {
-				return {};
+			auto            path = Platform::GamePath(PATH);
+			std::error_code ec;
+			if (!std::filesystem::exists(path, ec)) {
+				path = Platform::GamePath(FOLDER) / "F4Multiplayer.ini";
 			}
-			const auto last = a_str.find_last_not_of(" \t\r");
-			return a_str.substr(first, last - first + 1);
+			return path;
 		}
 
-		bool ParseBool(std::string_view a_value)
+		// The settings to read: the player's file with the keys this version adds (appended to it), or, with no file
+		// yet, the defaults, written as the file (IniFile::LoadOrCreate). A file that can't be read, or one saved as
+		// UTF-16 (the reader takes UTF-8 or plain text), is left alone.
+		std::string SettingsText()
 		{
-			return a_value == "1" || a_value == "true" || a_value == "True" || a_value == "TRUE";
-		}
-
-		template <class T>
-		void ParseInt(std::string_view a_value, T& a_out, int a_base = 10)
-		{
-			if (a_base == 16 && (a_value.starts_with("0x") || a_value.starts_with("0X"))) {
-				a_value.remove_prefix(2);
+			auto        loaded = IniFile::LoadOrCreate(IniPath(), Defaults(), NOTE, WHEN_ABSENT);
+			std::string names;
+			for (const auto& key : loaded.added) {
+				names += names.empty() ? key : ", " + key;
 			}
-			T value{};
-			const auto [ptr, ec] = std::from_chars(a_value.data(), a_value.data() + a_value.size(), value, a_base);
-			if (ec == std::errc{} && ptr == a_value.data() + a_value.size()) {
-				a_out = value;
+			switch (loaded.what) {
+			case IniFile::Kept::Created:
+				REX::INFO("Config: {} was not there; written with every setting at its default", PATH);
+				break;
+			case IniFile::Kept::NotCreated:
+				REX::WARN("Config: {} is not there and could not be written; using the defaults", PATH);
+				break;
+			case IniFile::Kept::Unreadable:
+				REX::WARN("Config: {} could not be read; using the defaults", PATH);
+				break;
+			case IniFile::Kept::Extended:
+				REX::INFO("Config: added {} setting(s) this version has and {} lacked, at their defaults: {}", loaded.added.size(), PATH, names);
+				break;
+			case IniFile::Kept::NotExtended:
+				REX::WARN("Config: {} lacks {} setting(s) of this version ({}) and could not be written to; they stay at their defaults", PATH, loaded.added.size(), names);
+				break;
+			case IniFile::Kept::Utf16:
+				REX::WARN("Config: {} is saved as UTF-16, which the mod can't read, so it is left as it is and the defaults are used; save it as UTF-8 (Notepad: Save as, Encoding)", PATH);
+				break;
+			case IniFile::Kept::Complete:
+				break;
 			}
-		}
-
-		// A percent key with a ceiling (iCatchUpXp, iGroupDifficulty): past it the ceiling, said in the log; not a number,
-		// the value it had.
-		std::uint8_t ParsePercent(std::string_view a_key, std::string_view a_value, std::uint8_t a_max, std::uint8_t a_current)
-		{
-			std::uint32_t parsed = a_current;
-			ParseInt(a_value, parsed);
-			if (parsed > a_max) {
-				REX::WARN("Config: {} = {} is past {}; it is {}", a_key, parsed, a_max, a_max);
-				return a_max;
-			}
-			return static_cast<std::uint8_t>(parsed);
+			return std::move(loaded.text);
 		}
 	}
 
 	void Load()
 	{
-		std::ifstream file{ Platform::GamePath(PATH) };
-		if (!file) {
-			REX::INFO("Config: {} not found, using defaults", PATH);
-			return;
-		}
-
-		std::string line;
-		while (std::getline(file, line)) {
-			auto view = Trim(line);
-			if (view.empty() || view.front() == '#' || view.front() == ';' || view.front() == '[') {
-				continue;
-			}
-
-			const auto eq = view.find('=');
-			if (eq == std::string_view::npos) {
-				continue;
-			}
-
-			const auto key = Trim(view.substr(0, eq));
-			const auto value = Trim(view.substr(eq + 1));
-
-			if (key == "sPlayerName") {
-				settings.playerName = value;
-			} else if (key == "sLanguage") {
-				settings.language = value;
-			} else if (key == "bHost") {
-				settings.host = ParseBool(value);
-			} else if (key == "sTransport") {
-				settings.transport = value;
-			} else if (key == "sServerAddress") {
-				settings.serverAddress = value;
-			} else if (key == "iPort") {
-				ParseInt(value, settings.port);
-			} else if (key == "iMaxPlayers") {
-				ParseInt(value, settings.maxPlayers);
-			} else if (key == "sPassword") {
-				settings.password = value;
-			} else if (key == "bFriendlyFire") {
-				settings.friendlyFire = ParseBool(value);
-			} else if (key == "sStory") {
-				if (const auto shared = StorySetting::Parse(value)) {
-					settings.sharedStory = *shared;
-				} else {
-					REX::WARN("Config: sStory = '{}' is neither shared nor own; the story stays {}", value, StorySetting::Name(settings.sharedStory));
-				}
-			} else if (key == "sQuests") {
-				if (const auto safe = StorySetting::ParseQuests(value)) {
-					settings.safeQuests = *safe;
-				} else {
-					REX::WARN("Config: sQuests = '{}' is neither story nor safe; it stays {}", value, StorySetting::QuestsName(settings.safeQuests));
-				}
-			} else if (key == "sIgnoredPlugins") {
-				settings.ignoredPlugins.clear();
-				for (std::size_t start = 0; start <= value.size();) {
-					const auto comma = value.find(',', start);
-					auto name = value.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
-					const auto first = name.find_first_not_of(" 	");
-					const auto last = name.find_last_not_of(" 	");
-					if (first != std::string::npos) {
-						settings.ignoredPlugins.emplace_back(name.substr(first, last - first + 1));
-					}
-					if (comma == std::string::npos) {
-						break;
-					}
-					start = comma + 1;
-				}
-			} else if (key == "iMyAppearance") {
-				ParseInt(value, settings.myAppearance, 16);
-			} else if (key == "iPuppetBaseForm") {
-				ParseInt(value, settings.puppetBaseForm, 16);
-			} else if (key == "bFriendFaces") {
-				settings.friendFaces = ParseBool(value);
-			} else if (key == "bGrenadeInHand") {
-				settings.grenadeInHand = ParseBool(value);
-			} else if (key == "bFriendShotTrails") {
-				settings.friendShotTrails = ParseBool(value);
-			} else if (key == "bSyncQuests") {
-				settings.syncQuests = ParseBool(value);
-			} else if (key == "bSharedRadiants") {
-				settings.sharedRadiants = ParseBool(value);
-			} else if (key == "bSharedAttacks") {
-				settings.sharedAttacks = ParseBool(value);
-			} else if (key == "bRevive") {
-				settings.revive = ParseBool(value);
-			} else if (key == "iBleedOutSeconds") {
-				ParseInt(value, settings.bleedOutSeconds);
-			} else if (key == "fReviveSeconds") {
-				float seconds = settings.reviveSeconds;
-				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), seconds);
-				if (ec == std::errc{} && std::isfinite(seconds)) {
-					settings.reviveSeconds = std::clamp(seconds, 0.5f, 30.0f);
-				}
-			} else if (key == "iReviveHealth") {
-				ParseInt(value, settings.reviveHealth);
-			} else if (key == "iMaxRevives") {
-				ParseInt(value, settings.maxRevives);
-			} else if (key == "iReviveWindowMinutes") {
-				ParseInt(value, settings.reviveWindowMinutes);
-			} else if (key == "iReviveCooldownSeconds") {
-				ParseInt(value, settings.reviveCooldownSeconds);
-			} else if (key == "bReviveOutOfCombat") {
-				settings.reviveOutOfCombat = ParseBool(value);
-			} else if (key == "bDownedCrawl") {
-				settings.downedCrawl = ParseBool(value);
-			} else if (key == "bRealTimeVats") {
-				settings.realTimeVats = ParseBool(value);
-			} else if (key == "bGroupVatsSlowdown") {
-				settings.groupVatsSlowdown = ParseBool(value);
-			} else if (key == "fGroupVatsSpeed") {
-				float speed = settings.groupVatsSpeed;
-				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), speed);
-				if (ec == std::errc{} && std::isfinite(speed)) {
-					settings.groupVatsSpeed = std::clamp(speed, 0.05f, 1.0f);
-				}
-			} else if (key == "bShareGuestBuilds") {
-				settings.shareGuestBuilds = ParseBool(value);
-			} else if (key == "bSharedStorage") {
-				settings.sharedStorage = ParseBool(value);
-			} else if (key == "bSharedWorkshop") {
-				settings.sharedWorkshop = ParseBool(value);
-			} else if (key == "bSharedWorkshopEdit") {
-				settings.sharedWorkshopEdit = ParseBool(value);
-			} else if (key == "bContainerGifts") {
-				settings.containerGifts = ParseBool(value);
-			} else if (key == "bSaveOnDown") {
-				settings.saveOnDown = ParseBool(value);
-			} else if (key == "sNpcLevel") {
-				if (const auto rule = SessionLevel::Parse(value)) {
-					settings.npcLevel = static_cast<std::uint8_t>(*rule);
-				} else {
-					REX::WARN("Config: sNpcLevel = '{}' is none of average, highest, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(settings.npcLevel)));
-				}
-			} else if (key == "sLegendaryDifficulty") {
-				if (const auto rule = SessionLevel::ParseLegendary(value)) {
-					settings.legendary = static_cast<std::uint8_t>(*rule);
-				} else {
-					REX::WARN("Config: sLegendaryDifficulty = '{}' is none of average, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::LegendaryRule>(settings.legendary)));
-				}
-			} else if (key == "iCatchUpXp") {
-				settings.catchUpXp = ParsePercent(key, value, Protocol::SessionRules::MAX_CATCH_UP_XP, settings.catchUpXp);
-			} else if (key == "iGroupDifficulty") {
-				settings.groupDifficulty = ParsePercent(key, value, Protocol::SessionRules::MAX_GROUP_DIFFICULTY, settings.groupDifficulty);
-			} else if (key == "bSharedRolls") {
-				settings.sharedRolls = ParseBool(value);
-			} else if (key == "bHideTutorials") {
-				settings.hideTutorials = ParseBool(value);
-			} else if (key == "bShareMap") {
-				settings.shareMap = ParseBool(value);
-			} else if (key == "bVatsSkipsFriends") {
-				settings.vatsSkipsFriends = ParseBool(value);
-			} else if (key == "bLendPowerArmor") {
-				settings.lendPowerArmor = ParseBool(value);
-			} else if (key == "bFastLoading") {
-				settings.fastLoading = ParseBool(value);
-			} else if (key == "iFastLoadingSeconds") {
-				ParseInt(value, settings.fastLoadingSeconds);
-			} else if (key == "bRunInBackground") {
-				settings.runInBackground = ParseBool(value);
-			} else if (key == "bCompassMarkers") {
-				settings.compassMarkers = ParseBool(value);
-			} else if (key == "bMenuIcons") {
-				settings.menuIcons = ParseBool(value);
-			} else if (key == "bMenuBadges") {
-				settings.menuBadges = ParseBool(value);
-			} else if (key == "bFriendsOnMap") {
-				settings.friendsOnMap = ParseBool(value);
-			} else if (key == "bFriendsOnMapNames") {
-				settings.friendsOnMapNames = ParseBool(value);
-			} else if (key == "bSyncTime") {
-				settings.syncTime = ParseBool(value);
-			} else if (key == "bSaveSession") {
-				settings.saveSession = ParseBool(value);
-			} else if (key == "bSpokenLines") {
-				settings.spokenLines = ParseBool(value);
-			} else if (key == "bVoiceLines" || key == "bExperimentalVoiceLines") {
-				// Not read any more: they asked for the console's Say on our copy of the NPC, which could leave
-				// the player held in dialogue. A player's ini is kept across updates (the in-game menu writes to
-				// it), and the one from 0.8.6 says bExperimentalVoiceLines = false: read, it would keep the new
-				// way of hearing lines off for everyone who updated.
-				REX::INFO("Config: {} is no longer read; friends' lines are heard unless bSpokenLines = false", key);
-			} else if (key == "fXpShare") {
-				float share = settings.xpShare;
-				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), share);
-				if (ec == std::errc{} && std::isfinite(share)) {
-					settings.xpShare = std::clamp(share, 0.0f, 1.0f);
-				}
-			} else if (key == "bVoiceChat") {
-				settings.voiceChat = ParseBool(value);
-			} else if (key == "bVoiceOpenMic") {
-				settings.voiceOpenMic = ParseBool(value);
-			} else if (key == "iKeyVoice") {
-				ParseInt(value, settings.keyVoice, 16);
-			} else if (key == "fVoiceRange") {
-				float range = settings.voiceRange;
-				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), range);
-				if (ec == std::errc{} && std::isfinite(range)) {
-					settings.voiceRange = std::clamp(range, 0.0f, 100000.0f);
-				}
-			} else if (key == "iKeyMenu") {
-				ParseInt(value, settings.keyMenu, 16);
-			} else if (key == "iKeyPlayerList") {
-				ParseInt(value, settings.keyPlayerList, 16);
-			} else if (key == "iKeyTeleport") {
-				ParseInt(value, settings.keyTeleport, 16);
-			} else if (key == "iKeyPing") {
-				ParseInt(value, settings.keyPing, 16);
-			} else if (key == "iKeyWhere") {
-				ParseInt(value, settings.keyWhere, 16);
-			} else if (key == "iKeyEmotePoint") {
-				ParseInt(value, settings.keyEmotePoint, 16);
-			} else if (key == "iKeyEmoteCheer") {
-				ParseInt(value, settings.keyEmoteCheer, 16);
-			} else if (key == "iKeyEmoteClap") {
-				ParseInt(value, settings.keyEmoteClap, 16);
-			} else if (key == "iHangSeconds") {
-				ParseInt(value, settings.hangSeconds);
-			} else if (key == "bHangDump") {
-				settings.hangDump = ParseBool(value);
-			} else if (key == "bCrashReport") {
-				settings.crashReport = ParseBool(value);
-			} else if (key == "sLogLevel") {
-				settings.logLevel = value;
-			} else if (key == "bDevChannel") {
-				settings.devChannel = ParseBool(value);
-			} else if (key == "iDevChannelPort") {
-				ParseInt(value, settings.devChannelPort);
+		// The reading itself is Config::Read (ConfigRead.h, which the tests run on the defaults); what it says goes to the log.
+		Read(SettingsText(), settings, [](bool a_warn, const std::string& a_text) {
+			if (a_warn) {
+				REX::WARN("{}", a_text);
 			} else {
-				REX::WARN("Config: unknown key '{}'", key);
+				REX::INFO("{}", a_text);
 			}
-		}
+		});
 
 		if (!Log::SetLevel(settings.logLevel)) {
 			REX::WARN("Config: sLogLevel '{}' is not info or debug; keeping {}", settings.logLevel, Log::Level());
@@ -308,22 +114,26 @@ namespace Config
 
 	bool Write(std::string_view a_key, std::string_view a_value)
 	{
-		// The whole file is read and written back: it's a few kilobytes, and keeping the player's
+		// The whole file is read and written back (IniFile::SaveValue): it's a few kilobytes, and keeping the player's
 		// comments and ordering matters more than speed here (a menu click, not a frame).
-		std::string text;
-		const auto  path = Platform::GamePath(PATH);  // the one Load read
-		if (std::ifstream in{ path, std::ios::binary }) {
-			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
-		}
 		// The password never goes in the log (players share their logs): only whether one is set.
 		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
-		const auto    updated = IniFile::SetValue(text, a_key, a_value);
-		std::ofstream out{ path, std::ios::binary | std::ios::trunc };
-		if (!out || !out.write(updated.data(), static_cast<std::streamsize>(updated.size()))) {
-			REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
+		switch (IniFile::SaveValue(IniPath() /* the one Load read or wrote */, a_key, a_value, Defaults())) {
+		case IniFile::Saved::Written:
+			REX::INFO("Config: wrote {} = {}", a_key, shown);
+			return true;
+		case IniFile::Saved::Unreadable:
+			// Written back now, the file would hold this one line in place of every setting the player had.
+			REX::WARN("Config: {} can't be read right now (another program may have it open), so {} = {} is not written to it; it holds until the game closes", PATH, a_key, shown);
 			return false;
+		case IniFile::Saved::Utf16:
+			// Not a file to put a UTF-8 line in (Load said so in the log and left it alone too).
+			REX::WARN("Config: {} is saved as UTF-16; {} is not written to it", PATH, a_key);
+			return false;
+		case IniFile::Saved::NotWritten:
+			break;
 		}
-		REX::INFO("Config: wrote {} = {}", a_key, shown);
-		return true;
+		REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
+		return false;
 	}
 }

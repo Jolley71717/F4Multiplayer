@@ -864,3 +864,42 @@ TEST("state buffer: on a clean link where a state now and then comes late, a fri
 		CHECK(MeanDelay(before, FirstAfter(before, 5s)) > delay + 0.04f);
 	}
 }
+
+TEST("state buffer: a state that came and was not taken is counted and timed, and the count starts over when one is taken")
+{
+	// What a friend's stand-in watch goes by (RemotePlayers): their states still come, though none is taken, or they have stopped.
+	StateBuffer::Buffer   buffer;
+	Protocol::PlayerState state;
+	state.worldspace = 0x3C;
+	auto now = start;
+	CHECK(buffer.refused == 0);
+	CHECK(buffer.refusedAt == Clock::time_point{});
+	for (std::uint32_t i = 1; i <= 10; ++i) {
+		state.sequence = 100 + i;
+		state.sentMs = Protocol::SentMs(now);
+		CHECK(buffer.Push(state, now));
+		now += 33ms;
+	}
+	CHECK(buffer.refused == 0);
+	const auto taken = buffer.arrived;
+	// A sender whose count runs behind what is held: every state refused, for seconds. Nothing is kept of them, and the
+	// newest held grows stale; but they are known to have come.
+	for (std::uint32_t i = 1; i <= 200; ++i) {
+		state.sequence = i > 110 ? 110 : i;
+		state.sentMs = Protocol::SentMs(now);
+		CHECK(!buffer.Push(state, now));
+		CHECK(buffer.refusedAt == now);
+		now += 33ms;
+	}
+	CHECK(buffer.refused == 200);
+	CHECK(buffer.arrived == taken);
+	CHECK(buffer.snapshots.size() == 10);
+	CHECK(!buffer.Sample(now).has_value());  // STALE_AFTER behind: nothing to draw from
+	CHECK(now - buffer.refusedAt <= StateBuffer::STALE_AFTER);
+	// One newer than the newest held is taken, and the count starts over.
+	state.sequence = 111;
+	state.sentMs = Protocol::SentMs(now);
+	CHECK(buffer.Push(state, now));
+	CHECK(buffer.refused == 0);
+	CHECK(buffer.arrived == now);
+}

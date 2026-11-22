@@ -24,6 +24,7 @@ cd "$(dirname "$0")" || exit 2
 WHO=${1:-host}; ROUNDS=${2:-16}; RAPID=${RAPID:-20}; FRIEND=$(other_game "$WHO"); CELL=${CELL:-Vault111Ext}
 RAIDER=${RAIDER:-001AE38D}; PISTOL=00004822; AMMO=0001F276; VK_Q=0x51; VK_D=0x44
 VARIANTS=(plain line fight standin)
+run_cap $((9000 * (ROUNDS > 16 ? ROUNDS : 16) / 16))   # 16 rounds took up to 71 minutes: 2.5 h, more for more rounds
 [ "$WHO" = host ] || [ "$WHO" = vm ] || verdict VOID "usage: vats-enter.sh [host|vm] [rounds]"
 need_session
 
