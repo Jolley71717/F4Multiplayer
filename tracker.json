@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T03:58:56+00:00",
+ "updated": "2026-11-22T04:35:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -500,8 +500,8 @@
    "title": "Crash to desktop whenever a flying ant swarm is met in Nuka-World (only in a session)",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "Fix built (PR 545); proof run in a game under way."
+   "stage": 5,
+   "note": "Fix merged; ships in the next patch"
   },
   {
    "id": "498g",
@@ -542,6 +542,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 485
+  },
+  {
+   "id": "4n7r",
+   "title": "Kill-blast guard follow-ups: no-hook fallback logs a refused kill as 'killed' and retries; repro grep trims on+script to on; KillBlasts.h comment names only the console hook",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "4o2r",
@@ -1750,6 +1758,14 @@
    "pr": 223
   },
   {
+   "id": "etr2",
+   "title": "Handing a suited NPC to the friend's game (ownership hand-off) loses its power armor",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "eyzs",
    "title": "Shared workshop: a friend's move of the host's piece across a cell's edge is refused and the piece put back",
    "kind": "bug",
@@ -2001,6 +2017,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0: a downed player the game stands back up is put down again.",
    "desc": "A downed player was sometimes stood up by the game, for example when downed in a pile of objects or around a save. 0.9.0 puts them down again, and they keep waiting for help."
+  },
+  {
+   "id": "h9cz",
+   "title": "A melee NPC hit made real on the victim picks its own limb, not the stand-in's",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "hccb",
@@ -2304,6 +2328,14 @@
    "pr": 483
   },
   {
+   "id": "j0nn",
+   "title": "A friend's explosion leaves a copy a ghost when its death lands: the first kill fails, a retry kills it",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "j802",
    "title": "Power Play 8 hostile hold waits on all three gangs, allies included",
    "kind": "bug",
@@ -2579,6 +2611,14 @@
    "pr": 174,
    "partial": "0.9.0",
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
+  },
+  {
+   "id": "lisn",
+   "title": "NPC hits on a stand-in by an attacker the victim can't see (or friendly fire) still skip the victim's perks",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "loum",
@@ -3164,6 +3204,14 @@
    "desc": "Players asked that tutorial hints not pop up in a session and that menus not freeze things for friends. 0.9.0 turns tutorial hints off during a session (bHideTutorials) and they come back afterward. The next release handles one effect of a menu pausing your game: after five seconds in a menu, the enemies your game runs are handed to a friend nearby so they no longer freeze on the friend's screen. A menu that doesn't pause is tracked separately."
   },
   {
+   "id": "r9kz",
+   "title": "Per-player loot as a host session rule (outside PR 507)",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "rb3u",
    "title": "Quest sharing: generic creature pairing (roadmap PR C) would pair vertibirds and could drop a seated player; exclude vehicles first",
    "kind": "bug",
@@ -3412,6 +3460,14 @@
    "id": "svjl",
    "title": "Radiant sharing: a friend's game refuses to start the host's DN121/DN151 run from its fills (MinRecruit00 starts); find the refused alias",
    "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "sxvr",
+   "title": "Ricochet-style reflected damage from an NPC's hit on a stand-in hurts only the victim's local copy",
+   "kind": "bug",
    "priority": 3,
    "stage": 0,
    "note": ""
