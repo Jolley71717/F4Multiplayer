@@ -320,17 +320,21 @@ namespace CharacterBinding
 	}
 
 	// The session file for a_character in a_folder, adopting the old shared file when it is this character's
-	// (a_saveSession: the session the loaded save's co-save record names). Says what it did through a_log.
+	// (a_saveSession: the session the loaded save's co-save record names). Says what it did through a_log: the text
+	// key the player is shown (session.file_*, in their language) and the English line for the log, with the files.
 	inline std::filesystem::path PrepareFile(const std::filesystem::path& a_folder, std::uint64_t a_character, bool a_dev, std::uint64_t a_saveSession,
-		const std::function<void(const std::string&)>& a_log)
+		const std::function<void(std::string_view a_key, const std::string& a_logged)>& a_log)
 	{
 		const auto      path = a_folder / FileName(a_character, a_dev);
 		std::error_code error;
 		if (!std::filesystem::exists(path, error)) {
 			if (const auto whole = FileUnderWholeId(a_folder, a_character, a_dev, a_saveSession)) {
 				std::filesystem::rename(*whole, path, error);
-				a_log(error ? std::format("could not rename {} to {}: {}", whole->filename().string(), path.filename().string(), error.message()) :
-				              std::format("continuing the saved co-op session: {} is now {}", whole->filename().string(), path.filename().string()));
+				if (error) {
+					a_log("session.file_rename_failed", std::format("could not rename {} to {}: {}", whole->filename().string(), path.filename().string(), error.message()));
+				} else {
+					a_log("session.file_continued", std::format("continuing the saved co-op session: {} is now {}", whole->filename().string(), path.filename().string()));
+				}
 				error.clear();
 			}
 		}
@@ -345,11 +349,14 @@ namespace CharacterBinding
 		switch (ForLegacy(std::filesystem::exists(path, error), legacy.has_value(), legacy ? legacy->sessionId : 0, a_saveSession)) {
 		case Legacy::kAdopt:
 			std::filesystem::rename(legacyPath, path, error);
-			a_log(error ? std::format("could not rename {} to {}: {}", LEGACY_FILE, path.filename().string(), error.message()) :
-			              std::format("continuing the saved co-op session: {} is now {}", LEGACY_FILE, path.filename().string()));
+			if (error) {
+				a_log("session.file_rename_failed", std::format("could not rename {} to {}: {}", LEGACY_FILE, path.filename().string(), error.message()));
+			} else {
+				a_log("session.file_continued", std::format("continuing the saved co-op session: {} is now {}", LEGACY_FILE, path.filename().string()));
+			}
 			break;
 		case Legacy::kLeave:
-			a_log(std::format("{} is another save's session; this character starts its own in {}", LEGACY_FILE, path.filename().string()));
+			a_log("session.file_other_save", std::format("{} is another save's session; this character starts its own in {}", LEGACY_FILE, path.filename().string()));
 			break;
 		case Legacy::kNone:
 			break;

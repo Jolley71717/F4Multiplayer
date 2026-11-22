@@ -482,14 +482,14 @@ namespace RemotePlayers
 		std::string NameTag(const RemotePlayer& a_player)
 		{
 			if (a_player.downed) {
-				return a_player.name + " (down - help them up)";
+				return Text::Format("party.tag_down", { { "name", a_player.name } });
 			}
 			if (a_player.health == 0) {
-				return a_player.name + " (dead)";
+				return Text::Format("party.tag_dead", { { "name", a_player.name } });
 			}
 			// Rounded to tens so the tag doesn't change with every scratch.
 			const int shown = (a_player.health + 9) / 10 * 10;
-			auto      tag = shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
+			auto      tag = shown >= 100 ? a_player.name : Text::Format("party.tag_hurt", { { "name", a_player.name }, { "hp", shown } });
 			// In their Pip-Boy or another menu (the icon over them says which kind; MenuIcons).
 			if (a_player.menu == Protocol::MenuKind::kPipboy) {
 				return Text::Format("party.tag_pipboy", { { "name", tag } });

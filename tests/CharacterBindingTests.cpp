@@ -2,6 +2,7 @@
 
 #include "Test.h"
 
+#include "Text.h"
 #include "game/CharacterBinding.h"
 #include "game/Story.h"
 
@@ -236,7 +237,10 @@ TEST("character binding: an old shared file that can't be read is left alone, an
 	const auto folder = std::filesystem::temp_directory_path() / std::format("f4mp-bind-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
 	std::filesystem::create_directories(folder);
 	std::vector<std::string> log;
-	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	const auto               say = [&](std::string_view a_key, const std::string& a_line) {
+		CHECK(Text::GetEnglish(a_key) != a_key);  // a key the player is shown, not a typo
+		log.push_back(a_line);
+	};
 	{
 		std::ofstream garbage{ folder / CharacterBinding::LEGACY_FILE, std::ios::binary };
 		garbage << "not a session";
@@ -293,7 +297,10 @@ TEST("character binding: a session file named after the whole ID (up to 0.9.0-rc
 	const auto folder = std::filesystem::temp_directory_path() / std::format("f4mp-bind-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
 	std::filesystem::create_directories(folder);
 	std::vector<std::string> log;
-	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	const auto               say = [&](std::string_view a_key, const std::string& a_line) {
+		CHECK(Text::GetEnglish(a_key) != a_key);  // a key the player is shown, not a typo
+		log.push_back(a_line);
+	};
 	const auto               write = [&](const std::string& a_name, std::string_view a_text) {
 		std::ofstream out{ folder / a_name, std::ios::binary };
 		out << a_text;
@@ -336,7 +343,10 @@ TEST("character binding: of two files under whole IDs, the one of the session th
 	const auto folder = std::filesystem::temp_directory_path() / std::format("f4mp-bind-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
 	std::filesystem::create_directories(folder);
 	std::vector<std::string> log;
-	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	const auto               say = [&](std::string_view a_key, const std::string& a_line) {
+		CHECK(Text::GetEnglish(a_key) != a_key);  // a key the player is shown, not a typo
+		log.push_back(a_line);
+	};
 	const auto               save = [&](std::uint64_t a_wholeId, std::uint64_t a_session) {
 		SessionFile::Snapshot snapshot;
 		snapshot.sessionId = a_session;

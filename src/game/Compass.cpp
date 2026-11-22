@@ -9,6 +9,7 @@
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "MainThread.h"
+#include "Text.h"
 
 namespace Compass
 {
@@ -31,14 +32,14 @@ namespace Compass
 		{
 			std::uint32_t    color;
 			Shape            shape;
-			std::string_view name;
+			std::string_view key;  // its name's text key, for the player list
 		};
 
 		constexpr std::array<Marker, 4> MARKERS{ {
-			{ 0x4FC3F7, Shape::kCircle, "blue circle" },
-			{ 0xFFB74D, Shape::kSquare, "orange square" },
-			{ 0xF06292, Shape::kDiamond, "pink diamond" },
-			{ 0xB39DDB, Shape::kTriangle, "purple triangle" },
+			{ 0x4FC3F7, Shape::kCircle, "compass.blue_circle" },
+			{ 0xFFB74D, Shape::kSquare, "compass.orange_square" },
+			{ 0xF06292, Shape::kDiamond, "compass.pink_diamond" },
+			{ 0xB39DDB, Shape::kTriangle, "compass.purple_triangle" },
 		} };
 
 		const Marker& MarkerOf(std::uint32_t a_playerId)
@@ -434,9 +435,9 @@ namespace Compass
 		armorCompass.queued = true;
 	}
 
-	std::string_view MarkerName(std::uint32_t a_playerId)
+	std::string MarkerName(std::uint32_t a_playerId)
 	{
-		return MarkerOf(a_playerId).name;
+		return Text::Get(MarkerOf(a_playerId).key);
 	}
 
 	std::uint32_t MarkerColor(std::uint32_t a_playerId)

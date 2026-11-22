@@ -1,6 +1,7 @@
 #include "steam/Steam.h"
 
 #include "Redact.h"
+#include "Text.h"
 
 namespace Steam
 {
@@ -179,12 +180,14 @@ namespace Steam
 			api->ClearRichPresence(api->friends);
 		}
 
-		// Our friends see "Join Game" for the lobby we're in.
+		// Our friends see "Join Game" for the lobby we're in, and a status line in our language (Steam shows it as we
+		// set it, whatever language the friend reads).
 		void AdvertiseLobby()
 		{
 			const auto connect = std::format("+f4mp_lobby {}", lobby);
 			api->SetRichPresence(api->friends, "connect", connect.c_str());
-			api->SetRichPresence(api->friends, "status", hosting ? "Hosting Fallout 4 co-op" : "Playing Fallout 4 co-op");
+			const auto status = Text::Get(hosting ? "steam.status_hosting" : "steam.status_playing");
+			api->SetRichPresence(api->friends, "status", status.c_str());
 		}
 
 		bool IsLobbyMember(SteamId a_user)
