@@ -89,10 +89,11 @@ namespace Config
 		// loading screen that never ends (a hang) stops drawing at 1800 fps. Any real load is done well within them.
 		std::uint32_t fastLoadingSeconds = 20;
 
-		// While a session runs, keep the game running while its window is not focused (the game's own bAlwaysActive), so
-		// a player who alt-tabs keeps their stand-in, and the NPCs their game runs, going for friends. Their character
-		// stays live meanwhile (it can be hurt while alt-tabbed) and the sound plays on. Out of a session, or off, the
-		// game's setting is as the player has it (see Background).
+		// While a session runs, or from the moment a host or join starts, keep the game running while its window is not
+		// focused (the game's own bAlwaysActive), so a player who alt-tabs keeps their stand-in, and the NPCs their game
+		// runs, going for friends, and a host or join started at the main menu goes on loading. Their character stays live
+		// meanwhile (it can be hurt while alt-tabbed) and the sound plays on. Always with the developer channel on (the
+		// rig). Playing alone with nothing pending, or off, the game's setting is as the player has it (see Background).
 		bool runInBackground = true;
 
 		// Friends' markers on the compass (bCompassMarkers). Off to test whether writing to the HUD
