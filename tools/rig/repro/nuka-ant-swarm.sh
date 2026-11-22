@@ -211,6 +211,9 @@ enter_both "$CELL" 16
 for w in host vm; do _answers "$w" || verdict VOID "$w is not in the game after the coc to $CELL"; dc "$w" 'god on' >/dev/null; kit "$w"; done
 say "arrived: host $(pos_of host) vm $(pos_of vm); in the hand: host [$(dc host equipped | cut -c1-90)] vm [$(dc vm equipped | cut -c1-90)]"
 check "set-up"
+# every phase makes, shoots, kills or walks to swarms, and each of those logs (spawns and their copies, deaths, hits on copies, the
+# pad's walk once a second): 5 minutes with none of it in either game is a run stuck somewhere, VOID (stalled), not a slow NO
+idle_watch 'Spawns: |WorldSync: |KillBlasts: |CopyWatch: |Pad: walkto' 300
 
 for phase in $PHASES; do
 	case $phase in
