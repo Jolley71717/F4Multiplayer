@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T04:35:31+00:00",
+ "updated": "2026-11-22T06:55:37+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -310,6 +310,14 @@
    "title": "Memory Den: stage 75 of FFGoodneighbor01 reaches a friend mid-quest (shows 75 with objective 10)",
    "kind": "bug",
    "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "2oct",
+   "title": "A console-spawned leveled raider (base 00047162, shared spawn) has different clothes, accessories and weapon in the two games",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -4213,6 +4221,15 @@
    "priority": 4,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "z3vl",
+   "title": "The game runs on behind another window from the moment a host or join starts",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 3,
+   "note": "Reviewed; waiting for a two-game test of alt-tabbing at the menu and during a join",
+   "pr": 549
   },
   {
    "id": "z93u",
