@@ -11,7 +11,7 @@
 # beats the health report. So the crash needs a swarm to DIE in one game with the other player near; meeting and shooting at
 # them does nothing (the first run of this script, with no death, said NO), and a death by damage in its owner's game usually
 # reaches the copy as health 0 first, with no kill (the second run).
-# Phases (default: nuke-host nuke-vm shots-host shots-vm copy-host copy-vm death-host death-vm; after each step both games must
+# Phases (default: nuke-host nuke-vm away-host away-vm shots-host shots-vm copy-host copy-vm death-host death-vm; after each step both games must
 # answer and no new crash log may be on either machine):
 #   nuke-host  many swarms die in one explosion. Both players go to the cell's two mounds (a real walk; console moveto when the
 #              walk does not get there, said so), each game makes SWARMS swarms round its player, and the host's player, given
@@ -19,6 +19,11 @@
 #              host's own and its copies of the VM's die together in the host's game, and each death must land in the VM's.
 #              Swarms the blast left get a second mini nuke, then a Nuka grenade thrown with the real key.
 #   nuke-vm    the same with the VM's player firing (the placed swarms are dead by then: its own and its copies of the host's)
+#   away-host  the friend clears the swarms ahead: the VM's player goes away (console coc AWAY_CELL, Nuka-World unloads there),
+#              the host's player goes to NukaWorld cell (-11,-12) by console cow, walks toward its five placed swarms (a real
+#              walk) and fires up to two mini nukes at them with real clicks (any left: console damageav); then the VM's player
+#              comes back by console cow: the deaths the VM's game held land as the cell loads (the session's console kill)
+#   away-vm    the other way round, at NukaWorld cell (-8,-7) and its four placed swarms (AWAY2_*)
 #   shots-host the host makes SWARMS swarms round itself (dev spawnenemies: made at runtime as an ambush's are, so the session
 #              shares them with the friend). The VM's player shoots its copy of the first dead with real clicks (a combat
 #              shotgun), the host's player shoots the second, its own; each death must land in the other game.
@@ -45,11 +50,16 @@
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 . "$RIG/crashlib.sh"
-PHASES=${*:-nuke-host nuke-vm shots-host shots-vm copy-host copy-vm death-host death-vm}
+PHASES=${*:-nuke-host nuke-vm away-host away-vm shots-host shots-vm copy-host copy-vm death-host death-vm}
 CELL=${CELL:-DLC04POIJS06}
 SWARM_BASE=${SWARM_BASE:-040138C2}                 # DLC04_lvlSwarm
 MOUNDS=${MOUNDS:-"040560B4 040560AE"}              # DLC04_lvlSwarmAmbush refs in the cell (their mounds)
 MOUND_AT=${MOUND_AT:-"-34650 6950"}                # between the two mounds (x y)
+# the away phases: NukaWorld cell (-11,-12) (01003428), five placed swarms close together (four in mounds, one DLC04_lvlSwarm)
+AWAY_GRID=${AWAY_GRID:-"-11 -12"}; AWAY_REFS=${AWAY_REFS:-"04053704 04053705 04053706 04053707 04053708"}
+AWAY_FROM=${AWAY_FROM:-"-43300 -46600"}; AWAY_CELL=${AWAY_CELL:-SanctuaryExt}
+# away-vm: NukaWorld cell (-8,-7) (01003360, one in 01003361 beside it), four placed swarms in mounds
+AWAY2_GRID=${AWAY2_GRID:-"-8 -7"}; AWAY2_REFS=${AWAY2_REFS:-"04043346 04043347 040560A5 040560A0"}; AWAY2_FROM=${AWAY2_FROM:-"-31800 -29400"}
 SWARMS=${SWARMS:-2}; RADIUS=${RADIUS:-350}; TIMEOUT=${TIMEOUT:-45}; LAND=${LAND:-40}
 GUN=${GUN:-0014831C}; AMMO=${AMMO:-0001F673}     # a combat shotgun and its shells: a spread reaches a flying swarm
 FATMAN=000BD56F; MININUKE=000E6B2E; NUKA_GRENADE=000E5750; VK_ALT=0x12
@@ -262,6 +272,52 @@ for phase in $PHASES; do
 		sleep 5; check "$phase: 5 s after the blasts"
 		for r in $own; do dc "$who" "remove $r" >/dev/null; done; for r in $theirs; do dc "$other" "remove $r" >/dev/null; done
 		sleep 3; check "$phase: the swarms removed"
+		;;
+	away-host|away-vm)
+		# the friend clears the swarms ahead while the other player is away; the deaths wait in the other game until the cell
+		# loads there, and land then (WorldSync's held deaths: the session's console kill as the swarms load)
+		who=${phase#away-}; other=$(other_game "$who")
+		if [ "$who" = vm ]; then GRID=$AWAY2_GRID; REFS=$AWAY2_REFS; FROM=$AWAY2_FROM; else GRID=$AWAY_GRID; REFS=$AWAY_REFS; FROM=$AWAY_FROM; fi
+		say "$phase: $other's player goes away by console coc $AWAY_CELL (Nuka-World unloads in its game); $who's player to NukaWorld $GRID by console cow"
+		dc "$other" "console coc $AWAY_CELL" >/dev/null; sleep 16; wait_ingame "$other" 30
+		dc "$who" "console cow NukaWorld $GRID" >/dev/null; sleep 16; wait_ingame "$who" 30
+		check "$phase: $other away, $who at $GRID"
+		# shellcheck disable=SC2086
+		rwalk "$who" $FROM 250 0.8; say "$phase: $who walked toward the swarms (pad): $WALKED; at $(pos_of "$who")"
+		check "$phase: $who's walk"
+		TARGETS=""
+		for r in $REFS; do grep -q 'dead=false' <<<"$(refhp "$who" "$r")" && { TARGETS="$TARGETS $r"; MET=$((MET + 1)); }; done
+		say "$phase: placed swarms alive in $who's game: [${TARGETS# }] (of $REFS); in $other's game now: [$(for r in $REFS; do echo -n "$r $(refhp "$other" "$r"); "; done)]"
+		[ -n "$TARGETS" ] || { say "$phase: none alive; skipped"; continue; }
+		say "$phase: $who's player gets a Fat Man and 6 mini nukes by console"
+		dc "$who" "console player.additem $FATMAN 1" >/dev/null; dc "$who" "console player.additem $MININUKE 6" >/dev/null
+		dc "$who" "console player.equipitem $FATMAN" >/dev/null; dc "$who" "draw on" >/dev/null; sleep 4
+		HELD=""
+		for try in 1 2; do
+			aim=""; for r in $TARGETS; do case " $HELD " in *" $r "*) continue;; esac; grep -q 'dead=false' <<<"$(refhp "$who" "$r")" && { aim=$r; break; }; done
+			[ -n "$aim" ] || break
+			dc "$who" "turnto $aim 300 aim" >/dev/null; dc "$who" focus >/dev/null; sleep 0.4; dc "$who" 'click 150' >/dev/null
+			sleep 8; check "$phase: 8 s after $who's mini nuke $try"
+			n=0; for r in $TARGETS; do case " $HELD " in *" $r "*) continue;; esac; _dead "$who" "$r" && { HELD="$HELD $r"; n=$((n + 1)); DIED=$((DIED + 1)); }; done
+			say "$phase: $who's mini nuke $try (a real click, turned to $aim) killed $n placed swarm(s) in one blast"
+		done
+		for r in $TARGETS; do
+			case " $HELD " in *" $r "*) continue;; esac
+			dc "$who" "console $r.damageav health 5000" >/dev/null
+			wait_for 10 _dead "$who" "$r" && { HELD="$HELD $r"; DIED=$((DIED + 1)); say "$phase: $r (left by the blasts) killed in $who's game by console damageav"; }
+		done
+		sleep 3; check "$phase: the deaths in $who's game"
+		say "$phase: dead in $who's game: [${HELD# }]; $other's player comes back by console cow NukaWorld $GRID: the cell loads there and the held deaths land as it does"
+		dc "$other" "console cow NukaWorld $GRID" >/dev/null; sleep 16; wait_ingame "$other" 30
+		check "$phase: $other back at the swarms"
+		for r in $HELD; do
+			if wait_for "$LAND" _dead "$other" "$r"; then
+				LANDED=$((LANDED + 1)); say "$phase: $r landed in $other's game as it loaded: $(refhp "$other" "$r"); $other's log: $(kill_lines "$other" "$r")"
+			else
+				say "$phase: $r did NOT land in $other's game in $LAND s: $(refhp "$other" "$r"); $other's log: $(kill_lines "$other" "$r")"
+			fi
+		done
+		sleep 5; check "$phase: the deaths landed"
 		;;
 	shots-host|shots-vm)
 		who=${phase#shots-}; other=$(other_game "$who")
