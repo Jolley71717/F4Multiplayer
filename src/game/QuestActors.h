@@ -5,6 +5,7 @@
 #include "Protocol.h"
 
 #include <cstdint>
+#include <string_view>
 
 // Creatures a quest's alias creates at runtime (the alias's "create reference" fill), the same in every game's run of
 // that quest: Salem's three mirelurks in Gun Run (DN083_Barney's StartMirelurk01 to 03). Each game's run creates its
@@ -39,6 +40,15 @@
 // game's own as before. The quest's other guards hold for an enemy too (shared, running, once, official, no radiant,
 // not PER_GAME), and so does the vertibird's. No new wire: the spawn names its alias as Gun Run's do, and a game of an
 // older build takes it for what it took it for before (it pairs nothing, and places a copy or withholds one as for any spawn).
+//
+// Only an alias that holds one reference is keyed: a reference collection alias (BGSRefCollectionAlias, "RefColl") holds
+// any number, and every one of its members would name the same alias. Each game would then hold its own members back as
+// the twins of the first game's (Twin), while nothing pairs a collection's member (Spawns' CandidateFor reads one
+// reference from one alias): the second game's members were shared with nobody, so its player alone saw and could hurt
+// them, and only its own run of the quest counted their deaths (0.21.1-rc: Special Delivery's raider reinforcements,
+// Boston After Dark's raiders, the Constitution's mercenaries and scavengers; Far Harbor's Walk in the Park mirelurk
+// waves since creatures were first paired). A collection's members are shared as plain spawns, as before: each game has
+// its own, and copies of a friend's where theirs stand apart from its own (SpawnBook::NPC_SAME_SPOT).
 namespace QuestActors
 {
 	// BGSRefAlias::FILL_TYPE::kCreated: the alias makes its reference as the quest starts.
@@ -50,6 +60,18 @@ namespace QuestActors
 	inline constexpr std::uint16_t FILL_NONE = 0xFFFF;
 	// How many external aliases in a row are followed to the alias that fills the last one.
 	inline constexpr int EXTERNAL_HOPS = 4;
+
+	// BGSBaseAlias::QType() of a reference alias (RE::BGSRefAlias::TYPE): it holds one reference. A reference collection
+	// alias's is "RefColl" (RE::BGSRefCollectionAlias::TYPE); its class is made from BGSRefAlias, so its fill type reads as
+	// a reference alias's does (a collection that creates its members is FILL_CREATED too).
+	inline constexpr std::string_view REF_ALIAS = "Ref";
+
+	// The fill an alias of that kind (its QType) is keyed by: a reference alias's own, FILL_NONE for any other kind. A
+	// reference collection's members are never keyed: none of them pairs one to one with a friend's.
+	constexpr std::uint16_t AliasFill(std::string_view a_type, std::uint16_t a_fill)
+	{
+		return a_type == REF_ALIAS ? a_fill : FILL_NONE;
+	}
 
 	// The fill an alias is judged by: its own, or for one that holds another quest's alias, the fill of the alias its
 	// chain ends at (a_sourceFill: FILL_NONE when it could not be followed). Min00's wave raiders are created by DN092 (The

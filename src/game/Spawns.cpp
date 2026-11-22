@@ -627,8 +627,14 @@ namespace Spawns
 
 		// The fill a reference alias is judged by (QuestActors::KeyFill): its own, or for an external alias that of the alias
 		// its chain ends at (another quest's: Min00's wave raiders are DN092's created ones), FILL_NONE when the chain breaks.
+		// A reference collection's is FILL_NONE (QuestActors::AliasFill): its members are never keyed, as none pairs.
+		static_assert(QuestActors::REF_ALIAS == RE::BGSRefAlias::TYPE && QuestActors::AliasFill(RE::BGSRefCollectionAlias::TYPE, QuestActors::FILL_CREATED) == QuestActors::FILL_NONE);
 		std::uint16_t FillOf(const RE::BGSBaseAlias* a_alias)
 		{
+			const char* kind = a_alias->QType().c_str();
+			if (QuestActors::AliasFill(kind ? std::string_view{ kind } : std::string_view{}, a_alias->fillType) == QuestActors::FILL_NONE) {
+				return QuestActors::FILL_NONE;
+			}
 			const RE::BGSBaseAlias* at = a_alias;
 			for (int hop = 0; at && hop <= QuestActors::EXTERNAL_HOPS; ++hop) {
 				if (at->fillType != QuestActors::FILL_EXTERNAL) {
