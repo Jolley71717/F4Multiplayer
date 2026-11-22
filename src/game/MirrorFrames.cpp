@@ -30,13 +30,14 @@ namespace MirrorFrames
 			bool                       in = false;  // switched into the copy by us
 			const RE::NiAVObject*      root = nullptr;  // its 3D last seen (a new one has a fresh graph: Puppets::GraphRebuilt)
 			std::optional<Clock::time_point> outAt;    // got out at: its own 3D on its way (a fresh graph once it is in)
+			std::optional<Clock::time_point> heldAt;   // held in its copy since (its owner's copy went silent: Leave, WhileHeld)
 		};
 
 		std::unordered_map<std::uint32_t, Entry> entries;  // by the mirror's form ID
 
 		struct Counters
 		{
-			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0, released = 0;
+			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0, released = 0, held = 0;
 		} counters;
 
 		std::vector<Count> ArmorOf(RE::Actor* a_actor)
@@ -242,13 +243,26 @@ namespace MirrorFrames
 		}
 	}
 
-	void Leave(std::uint32_t a_actorId, std::string_view a_why)
+	void Leave(std::uint32_t a_actorId, std::string_view a_why, bool a_hold)
 	{
 		const auto it = entries.find(a_actorId);
 		if (it == entries.end()) {
 			return;
 		}
 		MainThread::Assert("MirrorFrames::Leave");
+		if (a_hold) {
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_actorId);
+			const auto copy = CopyOf(it->second, actor);
+			if (actor && copy && Equipment::InPowerArmor(actor) && Equipment::PowerArmorFrameOf(actor).get() == copy.get()) {
+				if (!it->second.heldAt) {
+					it->second.heldAt = Clock::now();
+					++counters.held;
+					REX::INFO("MirrorFrames: {:08X} is held in frame copy {:08X} ({}): taken out in {} s unless it dies or is mirrored again", a_actorId, copy->GetFormID(),
+						a_why, std::chrono::duration_cast<std::chrono::seconds>(HOLD).count());
+				}
+				return;
+			}
+		}
 		GetOut(a_actorId, it->second, a_why, LEAVE_WAIT, true);
 		entries.erase(it);
 	}
@@ -277,9 +291,30 @@ namespace MirrorFrames
 			auto&      entry = it->second;
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 			if (!actor || !Puppets::IsRegistered(actor) || Puppets::IsPuppet(actor)) {
+				if (actor && entry.heldAt) {
+					const auto copy = CopyOf(entry, actor);
+					const bool inCopy = copy && Equipment::InPowerArmor(actor) && Equipment::PowerArmorFrameOf(actor).get() == copy.get();
+					switch (WhileHeld(inCopy, inCopy && IsDown(actor), now - *entry.heldAt)) {
+					case Held::kWait:
+						++it;
+						continue;
+					case Held::kRelease:
+						GetOut(id, entry, "it died while held", LEAVE_WAIT, true);  // a body: left in it, the copy the game's
+						break;
+					case Held::kLeave:
+						GetOut(id, entry, "held, not mirrored again", LEAVE_WAIT, true);
+						break;
+					}
+					it = entries.erase(it);
+					continue;
+				}
 				GetOut(id, entry, "no longer mirrored", LEAVE_WAIT, true);  // StopMirroring leaves it first; this is for one it missed
 				it = entries.erase(it);
 				continue;
+			}
+			if (entry.heldAt) {
+				REX::INFO("MirrorFrames: {:08X} is mirrored again while held in its frame copy", id);
+				entry.heldAt.reset();
 			}
 			auto copy = CopyOf(entry, actor);
 			if (entry.copyId != 0 && (!copy || copy->IsDeleted()) && !Equipment::InPowerArmor(actor)) {
@@ -387,8 +422,8 @@ namespace MirrorFrames
 
 	std::string Describe()
 	{
-		return std::format("mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} outWaited={} gaveUp={} dropped={} givenBack={} graphs={} released={}", entries.size(),
+		return std::format("mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} outWaited={} gaveUp={} dropped={} givenBack={} graphs={} released={} held={}", entries.size(),
 			counters.placed, counters.in, counters.inFailed, counters.out, counters.outFailed, counters.outWaited, counters.gaveUp, counters.dropped, counters.givenBack,
-			counters.graphs, counters.released);
+			counters.graphs, counters.released, counters.held);
 	}
 }

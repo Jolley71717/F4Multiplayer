@@ -198,3 +198,17 @@ TEST("mirror frames: as mirroring stops, a body or one the exit did not take out
 	CHECK(AfterExit(false) == Leaving::kDrop);
 	CHECK(AfterExit(true) == Leaving::kRelease);  // refused, failed, or the preload still loading: never orphaned
 }
+
+TEST("mirror frames: a mirror whose owner's copy went silent is held in its copy, so a death said after leaves the body in its suit")
+{
+	using MirrorFrames::Held;
+	using MirrorFrames::HOLD;
+	using MirrorFrames::WhileHeld;
+	CHECK(WhileHeld(true, false, 0s) == Held::kWait);
+	CHECK(WhileHeld(true, false, HOLD - 1s) == Held::kWait);
+	CHECK(WhileHeld(true, true, 1s) == Held::kRelease);  // its death came: never taken out
+	CHECK(WhileHeld(true, true, HOLD + 5s) == Held::kRelease);
+	CHECK(WhileHeld(true, false, HOLD) == Held::kLeave);  // not mirrored again, not dead: as any mirror that stops
+	CHECK(WhileHeld(false, false, 1s) == Held::kLeave);   // out of its copy on its own AI: the copy goes
+	CHECK(WhileHeld(false, true, 1s) == Held::kLeave);
+}

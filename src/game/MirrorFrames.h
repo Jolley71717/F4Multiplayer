@@ -105,6 +105,29 @@ namespace MirrorFrames
 		return a_stillInCopy ? Leaving::kRelease : Leaving::kDrop;
 	}
 
+	// A mirror whose owner's copy went silent is held in its copy a while before it is taken out (Leave with a_hold): an NPC
+	// killed in its owner's game goes silent there first (its states stop), and its death is said a moment later. Taken out at
+	// once, the body was out of its suit here and in it there (rig, 2026-11-21: out 44 ms before the death came).
+	constexpr auto HOLD = std::chrono::seconds(10);
+
+	enum class Held
+	{
+		kWait,     // still in its copy, on its feet, within HOLD: left as it is (mirrored again, it carries on as before)
+		kRelease,  // down in its copy (its death came): never taken out, the copy left to the game with it (Leaving::kRelease)
+		kLeave,    // out of its copy, or HOLD over: left as any mirror that stops being one (ChooseLeaving)
+	};
+
+	constexpr Held WhileHeld(bool a_inCopy, bool a_down, Duration a_heldFor)
+	{
+		if (!a_inCopy) {
+			return Held::kLeave;
+		}
+		if (a_down) {
+			return Held::kRelease;
+		}
+		return a_heldFor < HOLD ? Held::kWait : Held::kLeave;
+	}
+
 	constexpr Do Choose(const Facts& a_facts)
 	{
 		if (a_facts.inFrame && !a_facts.inCopy) {
@@ -184,7 +207,8 @@ namespace MirrorFrames
 	// We stop mirroring it (its owner's game no longer runs it here, it unloaded, a save or a load comes, the session ends):
 	// out of its copy at once, the copy gone (ChooseLeaving). A body (Down), or one the exit did not take out, stays in it, and
 	// the copy is left to the game with it, never orphaned. a_why names it in the log. Its form ID: the actor may be unloaded.
-	void Leave(std::uint32_t a_actorId, std::string_view a_why);
+	// a_hold (its owner's copy went silent): one in its copy is held in it for HOLD first (WhileHeld, Update).
+	void Leave(std::uint32_t a_actorId, std::string_view a_why, bool a_hold = false);
 
 	// Every mirror in a copy taken out (Leave), and what was wanted forgotten.
 	void LeaveAll(std::string_view a_why);

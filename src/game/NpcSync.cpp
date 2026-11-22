@@ -374,7 +374,7 @@ namespace NpcSync
 			return { 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0 };
 		}
 
-		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror)
+		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror, bool a_silent = false)
 		{
 			WeaponFire::EndShield(a_id);  // a ghost made against a friend's explosion, if it is one now
 			a_mirror.heldAt.reset();      // a hold ends with the mirror (UpdateMirrors counts the ones it ends itself)
@@ -386,7 +386,9 @@ namespace NpcSync
 			WeaponFire::DropHandThrowable(a_mirror.registeredId);
 			// Out of the frame copy it was shown in, while it is still a mirror (MirrorFrames): before a save or a load, at the
 			// session's end, and whenever its owner's game stops running it here, it is never left in a frame of ours.
-			MirrorFrames::Leave(a_mirror.registeredId, "mirroring stops");
+			// Gone silent, it is held in its copy a while (MirrorFrames::Leave): its death, said a moment later, leaves the body in
+			// its suit as on its owner's game.
+			MirrorFrames::Leave(a_mirror.registeredId, a_silent ? "its owner's copy is silent" : "mirroring stops", a_silent);
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_mirror.registeredId) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 				meter.Released();  // and its evp
@@ -2089,7 +2091,7 @@ namespace NpcSync
 						mirror.fellBackAt = a_now;
 					}
 					mirror.lostNoted = true;
-					StopMirroring(id, mirror);
+					StopMirroring(id, mirror, true);
 					++it;
 					continue;
 				}
