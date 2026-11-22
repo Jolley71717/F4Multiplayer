@@ -599,6 +599,14 @@ namespace Spawns
 			std::uint16_t alias = 0;
 		};
 
+		// Whether our NPC is an enemy of our player as our game has it (QuestActors: an enemy a quest's alias created is
+		// paired whatever the quest's line and the NPC's race). Only one that is enabled, alive and has its 3D is asked.
+		bool EnemyOfOurs(RE::Actor* a_actor)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return player && a_actor && !a_actor->IsDisabled() && !a_actor->IsDead(false) && a_actor->Get3D() && a_actor->GetHostileToActor(player);
+		}
+
 		// The quest alias that created our NPC, when that quest's creatures are paired across games (QuestActors::Keyed).
 		AliasKey KeyOf(RE::Actor* a_actor)
 		{
@@ -608,10 +616,11 @@ namespace Spawns
 			}
 			const auto               race = RaceFlags(a_actor);
 			const auto               raceForm = RaceForm(a_actor);
+			const bool               enemy = EnemyOfOurs(a_actor);
 			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 			for (const auto& entry : aliases->aliasArray) {
 				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest &&
-					QuestActors::Keyed(QuestFactsOf(entry.quest), entry.alias->fillType, race, raceForm, entry.alias->aliasID)) {
+					QuestActors::Keyed(QuestFactsOf(entry.quest), entry.alias->fillType, race, raceForm, entry.alias->aliasID, enemy)) {
 					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
 				}
 			}
@@ -1061,9 +1070,9 @@ namespace Spawns
 				return out;
 			}
 			const auto questFacts = QuestFactsOf(quest);
-			facts.questPairs = QuestActors::QuestPairs(questFacts);
+			// A quest of any line may pair an enemy (QuestActors::QuestPairs): whether ours is one is read below.
 			const auto alias = std::ranges::find_if(quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == a_copy.spawn.alias; });
-			if (!facts.questPairs || alias == quest->aliases.end()) {
+			if (!QuestActors::QuestPairs(questFacts, true) || alias == quest->aliases.end()) {
 				return out;
 			}
 			const char* type = (*alias)->QType().c_str();
@@ -1076,10 +1085,21 @@ namespace Spawns
 			if (!actor || !Protocol::IsSpawnRef(local) || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
 				return out;
 			}
+			// Ours from the alias, by the rules for what it is here (an enemy of our player, or not). One those rules don't
+			// pair (a calm NPC of a story's quest) leaves their spawn as any other: a copy placed, or withheld while ours
+			// stands at its spot (SpawnBook::NPC_SAME_SPOT), as before. So does one still switched off here: the quest's
+			// script switches each game's own on as its own player comes (Min00's waves as its player leaves the museum's
+			// roof), and a friend whose game has not yet would see none of the owner's raiders at all, held back for ours;
+			// a copy is placed, and goes once ours is switched on and pairs with theirs (PairOrHold).
+			const bool enemy = EnemyOfOurs(actor);
+			facts.questPairs = QuestActors::QuestPairs(questFacts, enemy);
+			if (!facts.questPairs || actor->IsDisabled()) {
+				return out;
+			}
 			out.oursThere = true;
-			facts.ours = !actor->IsDisabled() && actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
+			facts.ours = actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
 			             !NpcSync::IsOurCompanion(actor) && !Leaving(local);
-			facts.creature = QuestActors::Keyed(questFacts, (*alias)->fillType, RaceFlags(actor), RaceForm(actor), (*alias)->aliasID);
+			facts.creature = QuestActors::Keyed(questFacts, (*alias)->fillType, RaceFlags(actor), RaceForm(actor), (*alias)->aliasID, enemy);
 			// One our game reported and the server granted is ours (the server refuses a second game's report of the alias,
 			// so theirs could not be granted too); one reported and not answered yet will be refused, as this one's twin.
 			facts.shared = ours.IdOf(local) != 0 || theirs.IdOf(local) != 0;

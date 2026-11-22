@@ -935,8 +935,11 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   ours then shares it itself if it is hostile. Unpairing also puts back the roll, level and factions NpcSync made ours
   from the owner's (read as ours was paired, made so again with Rolls::Apply: `restored=`), so a save keeps our game's
   own. Paired only while the spawn is alive, our player within PLACE_RANGE of it, ours alive, loaded and within
-  PAIR_RANGE (4096) of theirs, and nobody's yet (granted to us, a puppet or a copy); while ours is in the alias but not
-  to be paired, no copy is placed beside it. While our player hasn't started the quest, a friend's creature gets no copy
+  PAIR_RANGE (4096) of theirs, and nobody's yet (granted to us, a puppet or a copy); while ours is in the alias, switched
+  on, but not to be paired, no copy is placed beside it. One still switched off here holds nothing back: a copy of theirs
+  is placed as for any spawn, and goes once ours is switched on and pairs (a quest's script can switch each game's own on
+  as that game's player comes, so a friend whose game had not yet saw none of the owner's raiders). One the rules don't
+  pair here (a calm NPC of a story's quest) leaves their spawn as any other's. While our player hasn't started the quest, a friend's creature gets no copy
   here (its base is unique: BaseOk), as before. Our game does not report a creature whose alias a friend's live spawn
   names (`twinsHeld=`), and the server refuses such a report from another game (naming nobody, logged). Guarded so no
   story is touched: only a quest this session shares (`QuestSync::SharesHere`: a side quest, or with the host's
@@ -951,6 +954,23 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   the player sits in it, and pairing would mirror it to the owner's bird while its own flight scene still moves it, so
   a seated player could be dropped. Gun Run's stages are shared only with the host's `sQuests = safe` (DN083_Barney is
   in QuestFilter SAFE), so with `sQuests = story` its mirelurks are each game's own again. `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
+  *Enemies, of any quest's line and any race (0.21.1).* An NPC a created alias holds that is hostile to our player (as its
+  game has it: `Actor::GetHostileToActor`, read on one switched on, alive and loaded) is paired whatever the quest's type
+  and whatever its race: the type rule and the creature rule are for calm ones. When Freedom Calls (Min00, a Minutemen
+  quest, type 4) creates the raiders that come at the players in Concord's street (aliases 17 and 19 to 22: RaiderBoss,
+  RaiderLookout, WaveRaider01 to 03), humans, and its script switches each game's own on as its player comes down from the
+  museum's roof. Left each game's own, both games shared theirs as plain spawns, each placed a copy of the friend's once
+  the two had moved apart (`NPC_SAME_SPOT` withholds one only while ours stands on its spot), so each game had two raiders
+  for each alias, and a friend's shots hurt only the raider their own game made: the host's raider of the alias never
+  lost a point, the friend's quest counted kills of the friend's own (a Nexus report on 0.21.0, "my friend's shots just
+  don't register"; the rig's `tools/rig/repro/quest-created-raiders.sh`, YES both ways on 0.21.0). Paired, the alias's raider
+  is one NPC in the session, hurt by both players' hits and dying in both games, so both runs of the quest count it. An
+  enemy's scenes are its fight, which the game that runs it plays, as for any placed enemy of a story (Kellogg, the
+  museum's own raiders); a calm NPC of a story's or a faction's quest (a giver, a companion to be) and a human of any
+  quest that is no enemy stay each game's own, as before. The quest's other guards hold for an enemy too (shared,
+  running, run once or started with the game, the game's own files, no radiant, not PER_GAME), and a vertibird is never
+  paired. No new wire: the spawn names its alias as Gun Run's do, and a game of an older build pairs nothing of a story's
+  quest, so it places a copy of the spawn or withholds one as for any other (each game's own then, as before).
 - *Random encounters shared calm (src/game/Encounters.h, protocol 63).* The game that rolled a random encounter owns it,
   and its actors are shared as spawns from the moment they stand, calm or not: a man held at gunpoint and called a
   synth (RESceneLC01, whose accusor only aims), travellers, a trader, a settler asking for help. Up to 0.13.2 a

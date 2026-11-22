@@ -25,6 +25,18 @@
 // it would be mirrored to the owner's while its own flight scene still moves it, and a seated player could be dropped).
 // The pairing's wire, the server's refusal and the every-frame rules are those Gun Run, the first quest paired, brought
 // (protocol 61). Kept free of the game so it can be tested (tests/QuestActorTests.cpp).
+//
+// An enemy is paired whatever the quest's line and whatever its race: an NPC the alias created that is hostile to our
+// player, as its game has it (Actor::GetHostileToActor). When Freedom Calls (Min00, a Minutemen quest) creates the raiders
+// that come at the players in Concord's street (its aliases WaveRaider01 to 03, RaiderLookout and RaiderBoss), and each
+// game's script switches its own on as its player comes down from the museum's roof. Left each game's own, both games
+// shared theirs as spawns, each game had two raiders for each alias, and a friend's shots hurt only the one their own game
+// made: in the other game the raider never lost a point (a Nexus report on 0.21.0, "my friend's shots just don't
+// register"). An enemy's scenes are its fight, which the game that runs it plays, as for any placed enemy of a story; a
+// calm NPC of a story or a faction (a giver, a companion to be), or a human of any quest that is not hostile, stays each
+// game's own as before. The quest's other guards hold for an enemy too (shared, running, once, official, no radiant,
+// not PER_GAME), and so does the vertibird's. No new wire: the spawn names its alias as Gun Run's do, and a game of an
+// older build takes it for what it took it for before (it pairs nothing, and places a copy or withholds one as for any spawn).
 namespace QuestActors
 {
 	// BGSRefAlias::FILL_TYPE::kCreated: the alias makes its reference as the quest starts.
@@ -67,19 +79,22 @@ namespace QuestActors
 
 	// Whether a quest's created creatures are paired across games. One that starts with the game but has no run-once flag
 	// (Fallout4.esm's MS13 and DN054, read from the file's flags) is taken as running once per game all the same: the new
-	// game starts it, and no event starts it again. So is one QuestFilter::RUNS_ONCE names (Vault 75's DN143).
-	constexpr bool QuestPairs(const Quest& a_quest)
+	// game starts it, and no event starts it again. So is one QuestFilter::RUNS_ONCE names (Vault 75's DN143). a_enemy:
+	// for an NPC hostile to our player, a quest of any line (the main quest's, a faction's, an add-on's story) pairs it.
+	constexpr bool QuestPairs(const Quest& a_quest, bool a_enemy = false)
 	{
-		const bool typeOk = a_quest.type == QUEST_TYPE_NONE || a_quest.type == QUEST_TYPE_MISC || a_quest.type == QUEST_TYPE_SIDE;
+		const bool typeOk = a_enemy || a_quest.type == QUEST_TYPE_NONE || a_quest.type == QUEST_TYPE_MISC || a_quest.type == QUEST_TYPE_SIDE;
 		const bool once = (a_quest.flags & (QUEST_RUN_ONCE | QUEST_STARTS_ENABLED)) != 0 || a_quest.runsOnce;
 		return a_quest.shared && a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && once && typeOk && !a_quest.radiant && !a_quest.perGame;
 	}
 
 	// Whether our NPC, held by an alias of that fill type in such a quest, of a race with those flags and that form ID, is
-	// named with the alias as we share it. An alias ID past what the wire holds is not, nor is a vertibird.
-	constexpr bool Keyed(const Quest& a_quest, std::uint16_t a_fillType, std::uint32_t a_raceFlags, std::uint32_t a_raceForm, std::uint32_t a_alias)
+	// named with the alias as we share it: a creature, or an enemy of any race (a_enemy: hostile to our player). An alias ID
+	// past what the wire holds is not, nor is a vertibird.
+	constexpr bool Keyed(const Quest& a_quest, std::uint16_t a_fillType, std::uint32_t a_raceFlags, std::uint32_t a_raceForm, std::uint32_t a_alias, bool a_enemy = false)
 	{
-		return a_fillType == FILL_CREATED && (a_raceFlags & RACE_ALLOWS_DIALOGUE) == 0 && a_raceForm != VERTIBIRD_RACE && a_alias <= 0xFFFF && QuestPairs(a_quest);
+		return a_fillType == FILL_CREATED && (a_enemy || (a_raceFlags & RACE_ALLOWS_DIALOGUE) == 0) && a_raceForm != VERTIBIRD_RACE && a_alias <= 0xFFFF &&
+		       QuestPairs(a_quest, a_enemy);
 	}
 
 	// A friend's spawn named with an alias, and what our game has in that alias of our run of the quest.
