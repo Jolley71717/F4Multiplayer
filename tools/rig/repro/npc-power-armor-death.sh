@@ -7,7 +7,10 @@
 #   1. Both games at PLACE (default Sanctuary; console coc CELL when not, said), joined. The NPC: NPC_REF, a placed NPC of the
 #      world, enabled and brought to the host's player (console enable, moveto); else a base from safenpc (or NPC_BASE) placed
 #      with the dev spawn (a runtime reference, which the session does not mirror: VOID then). The friend's game mirrors it.
-#      Run 2026-11-21: PLACE=Concord CELL=ConcordExt NPC_REF=0008340C (a raider of the museum's, disabled until its quest).
+#      Corvega's own raiders are mirrored and can die (PLACE=Corvega CELL=CorvegaAssemblyPlant01 NPC_REF=<one the host's game
+#      runs>, console stopcombat and setav aggression 0 first). Run 2026-11-21: YES on 25ae884e3 (the friend's raider was taken
+#      out alive as its owner's copy went silent, 44 ms before its death came), and the body in its suit on both games on
+#      48aa2a083 (the frame in the friend's save loaded alone is the body's own; this check was then made to say so).
 #   2. A frame (base 0004A9C1) placed at it in the host's game (console placeatme) and the NPC ordered into it (console
 #      Actor.SwitchToPowerArmor). The friend's copy is looked for in a frame copy (its log: "MirrorFrames: <id> is in frame copy").
 #   3. The host's NPC killed in the suit (console kill). The friend's copy is looked at for 30 s: dead, in or out of power armor
@@ -107,7 +110,12 @@ sleep 10
 alive_or_yes "load"
 F=$(dc vm 'paframes 1500')
 say "load: frames near the friend's player: $(cut -c1-300 <<<"$F")"
-grep -qE "[0-9A-F]{8} base=" <<<"$F" && LEFTOVER="$LEFTOVER the save loaded alone has a frame near the friend's player;"
+# A body left in its suit keeps its frame (the copy was left to the game with it): that one is the save's own, worn by the body.
+if [ "$(field "$P" inPA)" = true ]; then
+	say "load: the body was left in its suit, its frame copy ($(field "$P" frame)) left to the game with it: a frame here is that one"
+else
+	grep -qE "[0-9A-F]{8} base=" <<<"$F" && LEFTOVER="$LEFTOVER the save loaded alone has a frame near the friend's player;"
+fi
 say "load: the friend's log: $(rsince vm load | grep -iE 'stray|power armor|frame' | tail -4 | cut -c1-200 | paste -sd'|' -)"
 alive_or_yes "the end"
 rkeep vm npc-power-armor-death; rkeep host npc-power-armor-death
