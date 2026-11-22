@@ -14,6 +14,7 @@
 #include "game/Papyrus.h"
 #include "game/RealTime.h"
 #include "game/StandInTime.h"
+#include "game/StandInVoice.h"
 
 #include "Protocol.h"
 
@@ -79,6 +80,7 @@ namespace Puppets
 			std::uint32_t                         scaledSteps = 0;
 			float                                 loggedScale = 1.0f;
 			std::uint32_t                         loggedSpell = 0;
+			StandInVoice::Track                   voice;  // a stand-in's own lines, found and ended (Quiet)
 		};
 
 		std::mutex                                    lock;
@@ -118,6 +120,55 @@ namespace Puppets
 			a_actor->boolFlags.set(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR));
 			if (a_kind == Kind::kPlayer) {
 				a_actor->boolFlags.set(RE::Actor::BOOL_FLAGS::kEssential);
+			}
+		}
+
+		// A stand-in says nothing of its own (StandInVoice.h): its "can speak" flag is cleared every frame, and a line the
+		// engine has it saying all the same (seen by its talking state or a voice state on its way) is ended now: its dialogue
+		// sounds stopped, its voice timers and state cleared, the subtitle with them. The first few are logged.
+		std::atomic<std::uint32_t> voiceMode{ StandInVoice::DEFAULT };
+		std::atomic<std::uint32_t> linesSeen{ 0 };   // stand-ins' own lines found (all stand-ins)
+		std::atomic<std::uint32_t> linesEnded{ 0 };  // ... of those, ended
+		constexpr std::uint32_t    LINES_LOGGED = 20;
+
+		void Quiet(RE::Actor* a_actor, const Puppet& a_puppet)
+		{
+			const auto mode = voiceMode.load(std::memory_order_relaxed);
+			if (mode & StandInVoice::kQuietFlag) {
+				a_actor->boolFlags.reset(RE::Actor::BOOL_FLAGS::kCanSpeak);
+			}
+			const auto process = a_actor->currentProcess;
+			const auto high = process ? process->high : nullptr;
+			StandInVoice::Facts facts;
+			facts.talking = a_actor->IsTalking();
+			facts.voiceState = high ? static_cast<int>(high->voiceState.get()) : 0;
+			auto track = a_puppet.voice;
+			const auto linesBefore = track.lines;
+			const bool end = StandInVoice::Frame(track, facts, mode);
+			if (track.lines != linesBefore) {
+				const auto n = linesSeen.fetch_add(1, std::memory_order_relaxed) + 1;
+				linesEnded.fetch_add(end, std::memory_order_relaxed);
+				if (n <= LINES_LOGGED) {
+					const char* text = high ? high->strVoiceSubtitle.c_str() : nullptr;
+					REX::INFO("Puppets: stand-in {:08X} has a line of its own (talking={} voiceState={} '{}'); {} ({} so far)", a_actor->GetFormID(), facts.talking, facts.voiceState,
+						text ? text : "", end ? "ended" : "left to play", n);
+				}
+			}
+			if (end) {
+				if (high) {
+					high->soundHandle[0].Stop();
+					high->soundHandle[1].Stop();
+					high->voiceTimer = 0.0f;
+					high->voiceTimeElapsed = 0.0f;
+					high->voiceState = RE::HighProcessData::VOICE_STATE::kNone;
+					high->strVoiceSubtitle = {};
+				}
+				a_actor->voiceTimer = 0.0f;
+				a_actor->voiceLengthTotal = 0.0f;
+			}
+			std::scoped_lock l{ lock };
+			if (const auto entry = Find(a_actor)) {
+				entry->voice = track;
 			}
 		}
 
@@ -778,6 +829,11 @@ namespace Puppets
 			if (puppet->kind == Kind::kNpc && a_this->IsDead(false)) {
 				originalUpdate(a_this, a_delta);
 				return;
+			}
+			// A stand-in says nothing of its own, whichever update runs it: its own AI (below) is where its hellos and idle
+			// chatter would come from.
+			if (puppet->kind == Kind::kPlayer) {
+				Quiet(a_this, *puppet);
 			}
 			// Climbing into or out of power armor is a furniture interaction the AI drives: let it.
 			const auto now = std::chrono::steady_clock::now();
@@ -1535,6 +1591,16 @@ namespace Puppets
 		return point ? std::optional<RE::NiPoint3>{ RE::NiPoint3{ point->x, point->y, point->z } } : std::nullopt;
 	}
 
+	void SetVoiceMode(std::uint32_t a_mode)
+	{
+		voiceMode.store(a_mode, std::memory_order_relaxed);
+	}
+
+	std::uint32_t VoiceMode()
+	{
+		return voiceMode.load(std::memory_order_relaxed);
+	}
+
 	std::string Describe()
 	{
 		const auto resyncs = standInResyncs.load(std::memory_order_relaxed);
@@ -1557,6 +1623,9 @@ namespace Puppets
 		}
 		if (const auto dropped = doNothingsDropped.load(std::memory_order_relaxed); dropped != 0) {
 			out += std::format("{}doNothingsDropped={}", out.empty() ? "" : " ", dropped);
+		}
+		if (const auto seen = linesSeen.load(std::memory_order_relaxed); seen != 0 || voiceMode.load(std::memory_order_relaxed) != StandInVoice::DEFAULT) {
+			out += std::format("{}ownLines={}/{} voiceMode={}", out.empty() ? "" : " ", seen, linesEnded.load(std::memory_order_relaxed), voiceMode.load(std::memory_order_relaxed));
 		}
 		return out;
 	}
