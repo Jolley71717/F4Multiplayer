@@ -79,8 +79,9 @@ TEST("quest actors: a quest pairs its creatures only while the session shares it
 	CHECK(!QuestPairs({ .shared = false, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC }));  // sQuests = story, or alone
 	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));    // a side quest
 	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));
-	for (const std::int8_t type : std::array<std::int8_t, 6>{ 1, 2, 3, 4, 5, 8 }) {  // the main quest's, the factions', an add-on's story: never, even shared
+	for (const std::int8_t type : std::array<std::int8_t, 6>{ 1, 2, 3, 4, 5, 8 }) {  // the main quest's, the factions', an add-on's story: never, even shared...
 		CHECK(!QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = type }));
+		CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = type }, true));  // ... but for an enemy
 	}
 	CHECK(!QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC, .radiant = true }));
 	CHECK(!QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC, .perGame = true }));
@@ -156,6 +157,53 @@ TEST("quest actors: a creature its alias created is named with the alias; a talk
 	main.type = 1;
 	CHECK(!Keyed(main, FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 26));
 	static_assert((HUMAN_RACE & RACE_ALLOWS_DIALOGUE) != 0 && (MIRELURK_RACE & RACE_ALLOWS_DIALOGUE) == 0);
+}
+
+TEST("quest actors: an enemy a story's or a faction's quest created is named with the alias, a human too; a calm one is not")
+{
+	// When Freedom Calls (Min00, 001A001C): a Minutemen quest (type 4), running, runs once; its waves of raiders in Concord's
+	// street are humans its aliases 20 to 22 hold (made by another quest: the test below), hostile to the player (a Nexus
+	// report on 0.21.0: each game fought its own).
+	const Quest min00{ .shared = true, .official = true, .flags = 0xAD21, .type = 4 };
+	CHECK(!QuestPairs(min00));                                            // as before, for one that is no enemy
+	CHECK(QuestPairs(min00, true));                                       // an enemy's quest, of any line
+	CHECK(Keyed(min00, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	CHECK(!Keyed(min00, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20));    // a calm human of a story's quest stays each game's own
+	CHECK(!Keyed(min00, FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 20)); // ... and a calm creature of one, as before
+	for (const std::int8_t type : std::array<std::int8_t, 7>{ 1, 2, 3, 4, 5, 8, 14 }) {  // the main quest's, the factions', an add-on's story
+		auto quest = min00;
+		quest.type = type;
+		CHECK(Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	}
+	// A misc or side quest's human enemy pairs too; its talker (Gun Run's Barney, calm) does not.
+	CHECK(Keyed(GunRun(), FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 25, true));
+	CHECK(!Keyed(GunRun(), FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 25));
+}
+
+TEST("quest actors: an enemy is paired only under the quest's other guards, and never in a vertibird")
+{
+	const Quest min00{ .shared = true, .official = true, .flags = 0xAD21, .type = 4 };
+	auto        quest = min00;
+	quest.shared = false;  // the session doesn't share it (sQuests off, or alone)
+	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest = min00;
+	quest.official = false;  // a mod's
+	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest = min00;
+	quest.flags &= ~QUEST_RUNNING;  // over, or not started here
+	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest = min00;
+	quest.flags &= ~(QUEST_RUN_ONCE | QUEST_STARTS_ENABLED);  // started again and again: a second run's alias would be the first's
+	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest = min00;
+	quest.radiant = true;
+	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest = min00;
+	quest.perGame = true;
+	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	CHECK(!Keyed(min00, 0, HUMAN_RACE, ANY_RACE_FORM, 5, true));                    // a placed raider the alias found: mirrored already
+	CHECK(!Keyed(min00, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 0x10000, true));    // past what the wire holds
+	CHECK(!Keyed(min00, FILL_CREATED, VERTIBIRD_FLAGS, VERTIBIRD_RACE, 20, true));   // a hostile vertibird: still never
 }
 
 TEST("quest actors: a vertibird a shared quest's alias created is not named with the alias (the player sits in it)")
@@ -300,4 +348,27 @@ TEST("quest actors: a joiner hears the quest alias of a spawn already shared")
 	const auto spawned = Spawned(Received(f, 2));
 	REQUIRE(spawned.size() == 1);
 	CHECK(spawned[0].playerId == alice && spawned[0].quest == DN083 && spawned[0].alias == 41);
+}
+
+TEST("quest actors: an external alias is judged by the alias its chain ends at: Min00's raiders, created by DN092, are keyed with Min00's alias")
+{
+	// Min00's WaveRaider01 (alias 20) holds DN092's alias 10 (The Museum of Freedom, a misc quest the session does not share),
+	// which creates the raider: the raider is keyed with Min00's alias, which both games run as the same story.
+	const Quest min00{ .shared = true, .official = true, .flags = 0xAD21, .type = 4 };
+	CHECK(KeyFill(FILL_EXTERNAL, FILL_CREATED) == FILL_CREATED);
+	CHECK(Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	// DN092 itself, not shared here: its own created alias does not key the raider.
+	const Quest dn092{ .shared = false, .official = true, .flags = 0x8501, .type = 6 };
+	CHECK(!Keyed(dn092, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 10, true));
+	// An alias's own fill is its own; an external alias whose chain ends at a placed or found reference, or breaks, is not keyed.
+	CHECK(KeyFill(FILL_CREATED, FILL_NONE) == FILL_CREATED);
+	CHECK(KeyFill(0, FILL_CREATED) == 0);
+	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, 1), HUMAN_RACE, ANY_RACE_FORM, 20, true));          // forced: a placed reference
+	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, 0), HUMAN_RACE, ANY_RACE_FORM, 20, true));          // found by its conditions
+	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_NONE), HUMAN_RACE, ANY_RACE_FORM, 20, true));  // a chain that broke
+	// The shared quest's guards still hold: a calm human, or a quest not shared, is not keyed through an external alias.
+	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20));
+	auto quest = min00;
+	quest.shared = false;
+	CHECK(!Keyed(quest, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20, true));
 }
