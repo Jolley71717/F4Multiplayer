@@ -66,12 +66,52 @@ namespace MirrorFrames
 		int           tries = 0;           // switch-ins tried for this wear that did not take
 		Duration      sinceTried = Duration::max();
 		bool          gaveUp = false;      // given up for this wear (owner's frame base)
+		bool          down = false;        // dead, dying or knocked down (ragdolled): Down
 	};
+
+	// The engine's life states (ActorState::lifeState) a body is past an exit in.
+	constexpr std::int32_t LIFE_DYING = 1;
+	constexpr std::int32_t LIFE_DEAD = 2;
+
+	// Whether the mirror is a body the engine never takes out of a frame: dead, dying, or knocked down (ragdolled; a_knockState
+	// not 0). The engine leaves a corpse in its suit, its pieces looted off it there, as the owner's game shows its copy; and the
+	// exit's 3D rebuild under a ragdoll is nothing the engine ever runs.
+	constexpr bool Down(bool a_dead, std::int32_t a_lifeState, std::uint32_t a_knockState)
+	{
+		return a_dead || a_lifeState == LIFE_DYING || a_lifeState == LIFE_DEAD || a_knockState != 0;
+	}
+
+	// As we stop mirroring it (Leave): what becomes of it and its copy.
+	enum class Leaving
+	{
+		kDrop,     // not in its copy: the copy goes (RemotePlayers::Discard)
+		kExit,     // in it, on its feet: the engine's exit, then the copy goes; still in it after (refused, failed, or the engine's
+		           // preload still loading after the wait): kRelease
+		kRelease,  // in it and down: never taken out; the copy is left to the game with it in it (SaveGuard::Release), so a save
+		           // has the frame it wears, as the game's
+	};
+
+	constexpr Leaving ChooseLeaving(bool a_inCopy, bool a_down)
+	{
+		if (!a_inCopy) {
+			return Leaving::kDrop;
+		}
+		return a_down ? Leaving::kRelease : Leaving::kExit;
+	}
+
+	// After the exit (Leaving::kExit): still in the copy, it is left to the game with it in it; out, the copy goes.
+	constexpr Leaving AfterExit(bool a_stillInCopy)
+	{
+		return a_stillInCopy ? Leaving::kRelease : Leaving::kDrop;
+	}
 
 	constexpr Do Choose(const Facts& a_facts)
 	{
 		if (a_facts.inFrame && !a_facts.inCopy) {
 			return Do::kNothing;  // a frame of its own here: never ours to take it out of
+		}
+		if (a_facts.inCopy && a_facts.down) {
+			return Do::kNothing;  // a body in its suit stays in it (Down); one knocked down gets out once it is up
 		}
 		if (a_facts.inCopy) {
 			// An exit begun and not over (waiting on the engine's preload of its own 3D) is carried on, whatever the owner's copy
@@ -142,7 +182,8 @@ namespace MirrorFrames
 	void Want(RE::Actor* a_actor, std::uint32_t a_frameBase, const std::vector<std::uint32_t>& a_items);
 
 	// We stop mirroring it (its owner's game no longer runs it here, it unloaded, a save or a load comes, the session ends):
-	// out of its copy at once, the copy gone. a_why names it in the log. Its form ID: the actor may be unloaded.
+	// out of its copy at once, the copy gone (ChooseLeaving). A body (Down), or one the exit did not take out, stays in it, and
+	// the copy is left to the game with it, never orphaned. a_why names it in the log. Its form ID: the actor may be unloaded.
 	void Leave(std::uint32_t a_actorId, std::string_view a_why);
 
 	// Every mirror in a copy taken out (Leave), and what was wanted forgotten.

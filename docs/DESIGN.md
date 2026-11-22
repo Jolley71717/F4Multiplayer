@@ -491,7 +491,13 @@
   the engine's step, never by calling the transfer directly. Armor the switch-in gave that is still on it after the
   exit (a piece, a frame item) is taken back. A mirror gets out before every save and load (a step before the stand-ins'
   graveyard is flushed, so the copy is kept out of that save), as the session ends and whenever we stop mirroring it, so
-  neither the frame nor the power armor state reaches a save; it goes back in once it is mirrored again. Never touched:
+  neither the frame nor the power armor state reaches a save; it goes back in once it is mirrored again. A body
+  (dead, dying or knocked down) is never taken out, as the engine never takes one out: it stays in the suit as on its
+  owner's game, its pieces looted off it there, and when we stop mirroring it the copy is left to the game with it
+  (saved as the game's frame). The same for one whose exit did not take as mirroring stops (refused, or a preload still
+  loading after the wait): never left in a copy nothing holds or saves. Talking to a mirrored NPC in a copy (the
+  conversation stops mirroring it) takes it out of the suit for the dialogue while its owner's copy stays in; it goes
+  back in once it is mirrored again. Never touched:
   an NPC our game runs, a frame that is not its copy, a mirror in a frame of its own here. A frame our game lacks is not
   shown (logged once, `framesNotShown=`). `npcpa <ref>` on the dev channel says an actor's power armor state and copy.
 - Roll (`NpcRoll.h`, game-free and tested; `Rolls.cpp`; protocol 50): a leveled NPC (a bloatfly, a ghoul, a raider

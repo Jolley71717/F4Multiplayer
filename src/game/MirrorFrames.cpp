@@ -5,6 +5,7 @@
 #include "game/InventoryStacks.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/SaveGuard.h"
 
 #include <format>
 #include <optional>
@@ -35,7 +36,7 @@ namespace MirrorFrames
 
 		struct Counters
 		{
-			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0;
+			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0, released = 0;
 		} counters;
 
 		std::vector<Count> ArmorOf(RE::Actor* a_actor)
@@ -97,12 +98,43 @@ namespace MirrorFrames
 		// exit (Equipment::SwitchOutOfPowerArmor); a frame's own try does not wait (tried again next frame).
 		constexpr auto LEAVE_WAIT = std::chrono::milliseconds(1500);
 
+		bool IsDown(RE::Actor* a_actor)
+		{
+			const auto& state = static_cast<RE::ActorState&>(*a_actor);
+			return Down(a_actor->IsDead(false), static_cast<std::int32_t>(state.lifeState), static_cast<std::uint32_t>(state.knockState));
+		}
+
+		// The copy left to the game with the mirror in it (Leaving::kRelease): saved as the game's from now on, so a save has the
+		// frame it wears; nothing of ours holds it any more.
+		void ReleaseCopy(std::uint32_t a_id, Entry& a_entry, RE::TESObjectREFR* a_copy, std::string_view a_why, std::string_view a_because)
+		{
+			SaveGuard::Release(a_copy->GetFormID());
+			++counters.released;
+			REX::WARN("MirrorFrames: {:08X} stays in frame copy {:08X} ({}; {}): the copy is left to the game with it", a_id, a_copy->GetFormID(), a_why, a_because);
+			a_entry.copy = {};
+			a_entry.copyId = 0;
+			a_entry.copyBase = 0;
+			a_entry.tries = 0;
+			a_entry.in = false;
+		}
+
 		// Out of its copy (when it is in it), what the switch-in gave it and the exit left taken back, the copy gone.
-		void GetOut(std::uint32_t a_id, Entry& a_entry, std::string_view a_why, std::chrono::milliseconds a_wait)
+		// a_leaving: we stop mirroring it (Leave), so nothing is tried again: a body (Down), or one the exit did not take out,
+		// is left in the copy and the copy left to the game (ChooseLeaving, AfterExit). Else (a frame's own try) one still in
+		// it is left as it is, tried again next frame.
+		void GetOut(std::uint32_t a_id, Entry& a_entry, std::string_view a_why, std::chrono::milliseconds a_wait, bool a_leaving)
 		{
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
 			const auto copy = CopyOf(a_entry, actor);
-			if (actor && copy && Equipment::InPowerArmor(actor) && Equipment::PowerArmorFrameOf(actor).get() == copy.get()) {
+			const bool inCopy = actor && copy && Equipment::InPowerArmor(actor) && Equipment::PowerArmorFrameOf(actor).get() == copy.get();
+			const auto leaving = ChooseLeaving(inCopy, inCopy && IsDown(actor));
+			if (leaving == Leaving::kRelease) {
+				if (a_leaving) {
+					ReleaseCopy(a_id, a_entry, copy.get(), a_why, "dead, dying or knocked down: never taken out");
+				}
+				return;  // never exited (Choose never asks it for a body)
+			}
+			if (leaving == Leaving::kExit) {
 				const auto state = Equipment::PowerArmorState(actor);
 				switch (Equipment::SwitchOutOfPowerArmor(actor, copy.get(), a_wait)) {
 				case Equipment::ExitResult::kOut:
@@ -138,9 +170,12 @@ namespace MirrorFrames
 					REX::INFO("MirrorFrames: {:08X} gives back {} of {:08X} the switch-in gave it", a_id, gained.count, gained.item);
 				}
 			}
-			// Still in it (the exit did not take): left as it is, never deleted from under it (its frame gone, a save would have it
-			// wear one it does not have). Said above.
+			// Still in it (the exit did not take): never deleted from under it (its frame gone, a save would have it wear one it
+			// does not have). Leaving, the copy is the game's now; else tried again next frame. Said above.
 			if (actor && copy && Equipment::PowerArmorFrameOf(actor).get() == copy.get()) {
+				if (a_leaving && AfterExit(true) == Leaving::kRelease) {
+					ReleaseCopy(a_id, a_entry, copy.get(), a_why, "its exit did not take");
+				}
 				return;
 			}
 			DropCopy(a_entry);
@@ -214,7 +249,7 @@ namespace MirrorFrames
 			return;
 		}
 		MainThread::Assert("MirrorFrames::Leave");
-		GetOut(a_actorId, it->second, a_why, LEAVE_WAIT);
+		GetOut(a_actorId, it->second, a_why, LEAVE_WAIT, true);
 		entries.erase(it);
 	}
 
@@ -242,7 +277,7 @@ namespace MirrorFrames
 			auto&      entry = it->second;
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 			if (!actor || !Puppets::IsRegistered(actor) || Puppets::IsPuppet(actor)) {
-				GetOut(id, entry, "no longer mirrored", LEAVE_WAIT);  // StopMirroring leaves it first; this is for one it missed
+				GetOut(id, entry, "no longer mirrored", LEAVE_WAIT, true);  // StopMirroring leaves it first; this is for one it missed
 				it = entries.erase(it);
 				continue;
 			}
@@ -273,6 +308,7 @@ namespace MirrorFrames
 			facts.tries = entry.tries;
 			facts.sinceTried = entry.tries > 0 ? now - entry.triedAt : Duration::max();
 			facts.gaveUp = entry.gaveUp != 0 && entry.gaveUp == entry.want;
+			facts.down = IsDown(actor);
 			switch (Choose(facts)) {
 			case Do::kNothing:
 				break;
@@ -302,7 +338,7 @@ namespace MirrorFrames
 					facts.state != STATE_IN         ? "its exit carried on"
 					: entry.want                    ? "its owner's copy is in another frame"
 													: "its owner's copy got out",
-					std::chrono::milliseconds(0));
+					std::chrono::milliseconds(0), false);
 				break;
 			case Do::kDropCopy:
 				DropCopy(entry);
@@ -351,8 +387,8 @@ namespace MirrorFrames
 
 	std::string Describe()
 	{
-		return std::format("mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} outWaited={} gaveUp={} dropped={} givenBack={} graphs={}", entries.size(),
+		return std::format("mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} outWaited={} gaveUp={} dropped={} givenBack={} graphs={} released={}", entries.size(),
 			counters.placed, counters.in, counters.inFailed, counters.out, counters.outFailed, counters.outWaited, counters.gaveUp, counters.dropped, counters.givenBack,
-			counters.graphs);
+			counters.graphs, counters.released);
 	}
 }

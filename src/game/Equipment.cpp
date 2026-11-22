@@ -7,6 +7,7 @@
 #include "game/GearReport.h"
 #include "game/Hud.h"
 #include "game/InventoryStacks.h"
+#include "game/MirrorFrames.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
@@ -958,6 +959,11 @@ namespace Equipment
 		// Only a mirror, and only out of a copy this game placed for it.
 		if (!Puppets::IsRegistered(a_actor) || Puppets::IsPuppet(a_actor) || !MayChange(a_actor, OwnGear::Change::kDressCopy) ||
 			!MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
+			return ExitResult::kRefused;
+		}
+		// Never a body: the engine leaves a dead, dying or ragdolled actor in its frame (MirrorFrames::Down).
+		if (const auto& life = static_cast<RE::ActorState&>(*a_actor);
+			MirrorFrames::Down(a_actor->IsDead(false), static_cast<std::int32_t>(life.lifeState), static_cast<std::uint32_t>(life.knockState))) {
 			return ExitResult::kRefused;
 		}
 		const auto first = PowerArmorState(a_actor);

@@ -151,3 +151,50 @@ TEST("mirror frames: what the switch-in gave and the exit left is given back, no
 	const std::vector<Count> twoStacks{ { 0x100, 1 }, { 0x100, 1 } };
 	CHECK(Gained(one, twoStacks) == one);
 }
+
+TEST("mirror frames: a dead, dying or knocked down mirror is never taken out of its copy, whatever its owner's copy does")
+{
+	using MirrorFrames::Down;
+	CHECK(Down(true, 0, 0));
+	CHECK(Down(false, MirrorFrames::LIFE_DYING, 0));
+	CHECK(Down(false, MirrorFrames::LIFE_DEAD, 0));
+	CHECK(Down(false, 0, 1));   // ragdolled
+	CHECK(!Down(false, 0, 0));  // alive, on its feet
+	CHECK(!Down(false, 8, 0));  // bleeding out on its feet: an exit as any
+
+	Facts f = InCopy();
+	f.down = true;
+	f.ready = false;  // Ready asks it to be alive
+	f.ownerFrame = 0;  // its owner's copy out (or its gear report gone with its death)
+	CHECK(Choose(f) == Do::kNothing);
+	f.ownerFrame = OTHER;
+	CHECK(Choose(f) == Do::kNothing);
+	for (std::uint8_t s = 3; s <= MirrorFrames::STATE_LAST_EXIT; ++s) {
+		f.state = s;  // an exit begun as it died is not carried on over the body
+		CHECK(Choose(f) == Do::kNothing);
+	}
+	// Up again (a knock-down over): out as before.
+	f = InCopy();
+	f.ownerFrame = 0;
+	CHECK(Choose(f) == Do::kGetOut);
+	// Down and out of any frame: its copy goes as any copy nobody is in.
+	f = Ready();
+	f.down = true;
+	f.ready = false;
+	f.copyPlaced = true;
+	f.copyBase = T45;
+	CHECK(Choose(f) == Do::kDropCopy);
+}
+
+TEST("mirror frames: as mirroring stops, a body or one the exit did not take out stays in its copy, and the copy is the game's")
+{
+	using MirrorFrames::AfterExit;
+	using MirrorFrames::ChooseLeaving;
+	using MirrorFrames::Leaving;
+	CHECK(ChooseLeaving(false, false) == Leaving::kDrop);
+	CHECK(ChooseLeaving(false, true) == Leaving::kDrop);  // a body out of any frame: nobody is in the copy
+	CHECK(ChooseLeaving(true, false) == Leaving::kExit);
+	CHECK(ChooseLeaving(true, true) == Leaving::kRelease);  // never exited: left in it, the copy left to the game
+	CHECK(AfterExit(false) == Leaving::kDrop);
+	CHECK(AfterExit(true) == Leaving::kRelease);  // refused, failed, or the preload still loading: never orphaned
+}
