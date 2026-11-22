@@ -3021,6 +3021,12 @@ namespace WorkshopSync
 		WorkshopDoors::Book doorBook;
 		Clock::time_point   nextDoorPoll{};
 		std::uint32_t       doorStatesSent = 0, doorStatesHeard = 0, doorStatesSet = 0;
+		// The log's word on built doors: each door the first time it is looked at (whether its state is shared, and its
+		// key), and the first DOOR_LOG_LINES states said and heard, so a rig run shows where a state stopped.
+		std::unordered_set<std::uint32_t> doorsNoted;
+		std::uint32_t                     doorLines = 0;
+		constexpr std::size_t             DOOR_NOTED_MAX = 64;
+		constexpr std::uint32_t           DOOR_LOG_LINES = 60;
 		constexpr auto      DOOR_POLL = std::chrono::milliseconds(500);
 		bool                     repairsOn = true;       // the dev channel's `wsdamage repairs off`: the host's game refuses friends' repairs (as its setting off does)
 		Clock::time_point        nextDamageTrack{};
@@ -3137,12 +3143,27 @@ namespace WorkshopSync
 			}
 		}
 
-		// A loaded door whose open state is a player's to share (WorldSync::SharesOpenState: a door, not automatic, no script
-		// on it but the quiet ones), ours or a copy.
-		bool IsSharedDoor(RE::TESObjectREFR* a_ref)
+		// The first look at a built door, ours or a copy, in the log: whether its open state is shared (a door, not automatic,
+		// no script but the quiet ones), and the key it is kept under.
+		void NoteDoor(RE::TESObjectREFR* a_ref, std::uint32_t a_builder, std::uint32_t a_refId, bool a_shared)
+		{
+			if (doorsNoted.size() >= DOOR_NOTED_MAX || !doorsNoted.insert(a_ref->GetFormID()).second) {
+				return;
+			}
+			REX::INFO("WorkshopSync: built door {:08X} ({}'s {:08X}, our player {}): {}", a_ref->GetFormID(), a_builder == 0 ? "our own" : std::format("player {}", a_builder), a_refId,
+				NpcSync::LocalPlayer(), a_shared ? "its open state is shared" : "its open state is its own game's (a script on it, or automatic)");
+		}
+
+		// A built piece that is a door with its 3D: noted once (NoteDoor), and whether its open state is shared.
+		bool LookableDoor(RE::TESObjectREFR* a_ref, std::uint32_t a_builder, std::uint32_t a_refId)
 		{
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-			return base && base->Is(RE::ENUM_FORM_ID::kDOOR) && a_ref->Get3D() && !a_ref->IsDeleted() && !a_ref->IsDisabled() && WorldSync::SharesOpenState(a_ref);
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kDOOR) || !a_ref->Get3D() || a_ref->IsDeleted() || a_ref->IsDisabled()) {
+				return false;
+			}
+			const bool shared = WorldSync::SharesOpenState(a_ref);
+			NoteDoor(a_ref, a_builder, a_refId, shared);
+			return shared;
 		}
 
 		// One look at a door (ours, a_builder 0, or a copy of a_builder's): the word set on it, or its state reported.
@@ -3165,6 +3186,11 @@ namespace WorkshopSync
 			case WorkshopDoors::Do::kSend:
 				if (a_out.size() < Protocol::MAX_STATE_ENTRIES) {
 					a_out.push_back({ a_builder, a_refId, *open });
+					if (doorLines < DOOR_LOG_LINES) {
+						++doorLines;
+						REX::INFO("WorkshopSync: built door {:08X} ({}'s {:08X}) is {} here: said to the others", a_ref->GetFormID(), a_builder == 0 ? "our own" : std::format("player {}", a_builder), a_refId,
+							*open ? "open" : "shut");
+					}
 				}
 				break;
 			case WorkshopDoors::Do::kNothing:
@@ -3195,14 +3221,14 @@ namespace WorkshopSync
 				}
 				for (const auto id : ids) {
 					const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
-					if (ref && OwnPiece(*ref) && IsSharedDoor(ref.get())) {
+					if (ref && OwnPiece(*ref) && LookableDoor(ref.get(), 0, id)) {
 						LookAtDoor(ref.get(), 0, id, out);
 					}
 				}
 			}
 			for (const auto& [key, copy] : copies) {
 				const auto ref = Live(copy);
-				if (ref && IsSharedDoor(ref.get())) {
+				if (ref && LookableDoor(ref.get(), key.first, key.second)) {
 					LookAtDoor(ref.get(), key.first, key.second, out);
 				}
 			}
@@ -9845,6 +9871,8 @@ namespace WorkshopSync
 		damageReporter.Clear();
 		damageMirror.Clear();
 		doorBook.Clear();
+		doorsNoted.clear();
+		doorLines = 0;
 		copiesLost.clear();
 		TakeResourcesOff("leaving");
 		resources.Clear();
@@ -10028,6 +10056,10 @@ namespace WorkshopSync
 			}
 			doorBook.Heard({ builder, entry.refId }, entry.open);
 			++doorStatesHeard;
+			if (doorLines < DOOR_LOG_LINES) {
+				++doorLines;
+				REX::INFO("WorkshopSync: built door: player {} says player {}'s {:08X} is {} (kept as {}'s)", a_states.playerId, entry.builder, entry.refId, entry.open ? "open" : "shut", builder);
+			}
 		}
 		nextDoorPoll = {};  // set on the doors at the next frame, not the next poll
 	}

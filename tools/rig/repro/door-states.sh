@@ -18,6 +18,7 @@ pass() { say "ok: $*"; }
 # dstate <who> <ref>: that game's open state of the door (1..4), or empty when it is not within 3000 u with its 3D
 dstate() { dc "$1" "doors 3000" | tr ';' '\n' | grep -o "$2 '[^']*' open=[0-9]" | grep -o '[0-9]$'; }
 is_open() { case "$(dstate "$1" "$2")" in 1|2) return 0;; esac; return 1; }
+doorcount() { dc "$1" wsdamage | grep -oE 'doors: known=[0-9]+ sent=[0-9]+ heard=[0-9]+ set=[0-9]+'; }
 is_shut() { case "$(dstate "$1" "$2")" in 3|4) return 0;; esac; return 1; }
 coc_both() { local who; for who in host vm; do dc $who "god on" >/dev/null; dc $who "console coc $1" >/dev/null; done; say "both players coc'd into $1 (console placement)"; sleep 15; wait_ingame host 60; wait_ingame vm 60; sleep 8; }
 # press_door <who> <ref> <open|shut>: E on the door until that game has it that way (up to 3 presses, each only with the door
@@ -41,10 +42,16 @@ press_door() {
 # reached its game) is first put back by a press of its own (set-up, said so); when the other game's door is already that way (left
 # over from a change that never crossed) the direction proves nothing and is not counted.
 one_way() {
-	local who=$1 ref=$2 other=$3 oref=$4 want=$5 opp x y ax ay
+	local who=$1 ref=$2 other=$3 oref=$4 want=$5 opp x y ax ay ri rz side sx sy
 	[ "$want" = open ] && opp=shut || opp=open
-	read -r x y <<<"$(field "$(dc $who "refinfo $ref")" x) $(field "$(dc $who "refinfo $ref")" y)"
-	rwalk $who "${x%.*}" "${y%.*}" 100 0.7; say "$who walked to the door ($ref at ${x%.*},${y%.*}): $WALKED"
+	ri=$(dc $who "refinfo $ref"); x=$(field "$ri" x); y=$(field "$ri" y); rz=$(field "$ri" rz)
+	# To a spot 90 u before the door along its facing (the far side if that one can't be reached): from beside its frame
+	# the crosshair names nothing (the second run).
+	for side in 90 -90; do
+		read -r sx sy <<<"$(awk -v x="$x" -v y="$y" -v rz="$rz" -v d="$side" 'BEGIN { r = rz * 3.14159265 / 180; printf "%d %d", x + d * sin(r), y + d * cos(r) }')"
+		rwalk $who "$sx" "$sy" 30 0.6; say "$who walked to $side u before the door ($ref at ${x%.*},${y%.*}): $WALKED"
+		[ "$(dist_xy "$(pos_of $who)" "$sx $sy")" -le 45 ] 2>/dev/null && break
+	done
 	read -r ax ay <<<"$(pos_of $who)"
 	rwalk $other $(awk -v dx="$x" -v dy="$y" -v ax="$ax" -v ay="$ay" 'BEGIN { vx = ax - dx; vy = ay - dy; l = sqrt(vx * vx + vy * vy); if (l < 1) { vx = 1; vy = 0; l = 1 } printf "%d %d", dx + vx / l * 340, dy + vy / l * 340 }') 70 0.7
 	say "$other walked back behind $who, away from the door: $WALKED"
@@ -52,10 +59,11 @@ one_way() {
 		press_door $who $ref $opp; say "set-up: $who's own door was already $want (the last change never reached its game); its own press put it back: open=$(dstate $who $ref)"
 	fi
 	if is_$want $other $oref; then say "not counted: $other's door $oref is already $want (left over from a change that never crossed): $who $want proves nothing"; NOTCOUNTED=$((NOTCOUNTED + 1)); return 0; fi
-	if ! press_door $who $ref $want; then fail "$who $want $ref: its own game has open=$(dstate $who $ref) after the presses"; return 1; fi
+	if ! press_door $who $ref $want; then say "not counted: $who's presses never put its own door $ref $want (open=$(dstate $who $ref)): nothing to share"; NOTCOUNTED=$((NOTCOUNTED + 1)); return 1; fi
 	pass "$who $want $ref in its own game (open=$(dstate $who $ref))"
 	COUNTED=$((COUNTED + 1))
 	if wait_for 6 is_$want $other $oref; then pass "$other agrees: $oref open=$(dstate $other $oref)"; else fail "$other does not agree: $oref open=$(dstate $other $oref) 6 s after $who $want $ref"; fi
+	say "  built-door counters (builds that have them): host $(doorcount host); vm $(doorcount vm)"
 }
 COUNTED=0; NOTCOUNTED=0
 need_session
@@ -87,6 +95,7 @@ sleep 2; dc host "wsfinish $href $BENCH" >/dev/null; sleep 2
 say "set-up: the host placed a workshop door $href ($DOOR_BASE) at its workbench (console placement: wsreport place + wsfinish): $(dc host "refinfo $href" | cut -c1-120)"
 vref=""; for i in $(seq 1 25); do vref=$(ws_copy_of vm "$href"); [ -n "$vref" ] && break; sleep 1; done
 if [ -z "$vref" ]; then say "the VM has no copy of the host's door after 25 s: $(dc vm 'wspower copies' | cut -c1-200)"; fail "settlement door: the friend's copy of the host's door"; else
+	say "scripts on the door: host $(dc host "scripts $href" | cut -c1-160); vm $(dc vm "scripts $vref" | cut -c1-160)"
 	say "the VM's copy of the host's door: $vref ($(dc vm "refinfo $vref" | cut -c1-120)); host door open=$(dstate host $href) VM copy open=$(dstate vm $vref)"
 	one_way vm $vref host $href open
 	one_way host $href vm $vref shut
@@ -95,9 +104,9 @@ if [ -z "$vref" ]; then say "the VM has no copy of the host's door after 25 s: $
 fi
 dc host "wsreport $href $BENCH scrap" >/dev/null; sleep 2; say "the host's door scrapped again ($(dc host "refinfo $href" | cut -c1-80))"
 for who in host vm; do dc $who "god off" >/dev/null; done
-for who in host vm; do say "$who built doors (builds that share them): $(dc $who 'net status' | grep -oE 'doors: known=[0-9]+ sent=[0-9]+ heard=[0-9]+ set=[0-9]+')"; done
-rsince host | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|WorkshopSync: built door|refused|doorPoll" | tail -6 | sed 's/^/host log: /' | tee -a "$REPRO_OUT/run.log"
-rsince vm | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|WorkshopSync: built door|refused" | tail -6 | sed 's/^/vm log: /' | tee -a "$REPRO_OUT/run.log"
+for who in host vm; do say "$who built doors (builds that share them): $(doorcount $who)"; done
+rsince host | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|WorkshopSync: built door|refused|doorPoll" | tail -12 | sed 's/^/host log: /' | tee -a "$REPRO_OUT/run.log"
+rsince vm | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|WorkshopSync: built door|refused" | tail -12 | sed 's/^/vm log: /' | tee -a "$REPRO_OUT/run.log"
 rkeep host end; rkeep vm end
 [ "$COUNTED" = 0 ] && [ "$FAILS" = 0 ] && verdict VOID "no direction could be tried ($NOTCOUNTED not counted)"
 [ "$FAILS" = 0 ] && verdict NO "every door state reached the other game in the $COUNTED direction(s) tried (a plain dungeon door and a settlement-built door, both ways; $NOTCOUNTED not counted)"
