@@ -41,7 +41,7 @@ SECS=${SECS:-40}; GATE=${GATE:-30}
 need_session
 
 av() { local v; v=$(dc "$WHO" "av 00000014 $1"); awk -v v="$v" 'BEGIN { if (v ~ /^-?[0-9.]+$/) printf "%.1f", v }'; }
-taken() { field "$(dc "$WHO" 'net status')" taken; }
+taken() { dc "$WHO" 'net status' | grep -oE 'hits: taken=[0-9]+' | head -1 | cut -d= -f2; }   # not field: other counters in net status are named taken= too (drops, radiants), and the first was read
 limbs() { local l s=""; for l in $LIMBS; do s="$s $(av "$l")"; done; echo "${s# }"; }
 limb_min() { tr ' ' '\n' <<<"$1" | sort -g | head -1; }
 standin_of() { dc "$1" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2; }
