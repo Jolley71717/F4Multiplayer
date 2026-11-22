@@ -1,7 +1,7 @@
 # What is shared in co-op
 
 Each of you plays in your own game, with your own save. The mod keeps your games matching where it counts: the
-same enemies, the same loot, the same quests and the same settlements. This page lists, system by system, what is
+same enemies, much of the same loot, the same quests and the host's settlements. This page lists, system by system, what is
 shared between players and what isn't. It is written for version 0.21.0.
 
 What each word means:
@@ -39,7 +39,7 @@ says otherwise. [INSTALL.md](../dist/INSTALL.md) explains each one.
 | Sitting and lying down | Partly | Chairs, couches, benches, stools, beds and sleeping bags show. At a workbench, a terminal, a cooking or chemistry station or a work spot, a friend just stands. A vertibird seat isn't shown. |
 | Lockpicking, hacking, looting, talking, crafting | Not yet | No animation: a friend just stands there, and their tag says "[in a menu]". In the Pip-Boy their tag says "[Pip-Boy]" and they glance at their wrist now and then. |
 | Pip-Boy light | Synced | |
-| Level, SPECIAL, perks, caps, inventory | Your own | Nothing the session does takes from you, gives to you or puts on you. |
+| Level, SPECIAL, perks, caps, inventory | Your own | Nothing a friend does changes your character: no item, perk or point is taken from you or put on you for them. |
 | XP | Partly | You get half the XP of a friend's kills. A player behind the group's average level earns a little more (catch-up XP, the host's `iCatchUpXp`). Quest XP comes with the quest in each game. |
 | Survival needs, radiation, chems, difficulty | Your own | Jet slows only your own game. Your difficulty sets the damage you deal and take. The host picks the level enemies are built at and the chance of a legendary for everyone. |
 | Teleport to a friend (F7) | Synced | Not in a conversation, a scene, furniture, a memory or Survival. |
@@ -59,7 +59,7 @@ says otherwise. [INSTALL.md](../dist/INSTALL.md) explains each one.
 | An enemy whose player opens a menu | Partly | Its copies stand still for a few seconds, then a friend's game nearby takes it over. |
 | Two hits at the same moment | Not yet | If you and a friend hit the same enemy in the same instant, one of the hits can be lost. |
 | Explosions | Synced | Each goes off once in every game: grenades, mines, traps, cars, barrels, robots' and turrets' death blasts. |
-| Robot limbs blown off | Not yet | Show only in the game that runs the robot. |
+| Limbs blown off | Not yet | Shown only in the game where it happened, for any creature. |
 | Friendly fire | Synced | Off by default (the host's F1 menu). A friend's grenade or Fat Man shell that lands at your feet hurts you even with it off. |
 | Group difficulty | Synced | The host's `iGroupDifficulty` makes enemies tougher for each extra player (off by default). |
 
@@ -83,7 +83,7 @@ says otherwise. [INSTALL.md](../dist/INSTALL.md) explains each one.
 |---|---|---|
 | Side quests | Synced | When one of you moves a quest on, everyone moves along (never backwards). A joiner is caught up on the host's. |
 | Main story and factions | Synced | By default one story for everyone. The host can let each player play the story on their own (`sStory = own`). Make big choices together: if two of you side with rival factions, both games get both results. |
-| Misc quests, and Far Harbor's and Nuka-World's own stories | Partly | Shared with the host's *More quests* switch (about 80% of the game's quests then). Without it, each player's own. |
+| Misc quests, and Far Harbor's and Nuka-World's own stories | Partly | Shared with the host's *More quests* switch (about 80% of the game's quests then). Without it, each player's own. *More quests* only works with the shared story (not with `sStory = own`). |
 | Quests left out even with *More quests* | Your own | Quests whose targets each game picks, repeatable quests, quests that teleport you or deal with your own gear or rank, survival mode's and your dog's. |
 | Radiant jobs | Partly | Shared with the shared story (and everyone's own `bSharedRadiants` on): the Minutemen's settlement requests and Preston's defense jobs (the host's), the Brotherhood's, the Institute's and the Railroad's repeatable jobs (those with someone to escort, rescue or kill included), Diamond City's wanted posters, Far Harbor's settlement requests. Everyone gets the same job for the same place. |
 | Radiant jobs not shared yet | Not yet | The Castle's defense, the Minutemen's refugees, the Railroad's High Ground, and Nuka-World's cache and rival-boss jobs and settlement raids. |
@@ -117,8 +117,8 @@ says otherwise. [INSTALL.md](../dist/INSTALL.md) explains each one.
 | Weather | Synced | The host's, while you're outside in the same land as the host. |
 | Cars, barrels, fuel tanks, gas pumps | Synced | Blow up once and stay wrecked in every game. Wrecks from before the session stay as each save has them. Gas canisters aren't shared yet. |
 | Traps | Synced | Mines, tripwires, gun, grenade, flame, arc and radiation traps, IEDs, Far Harbor's bear traps: set off, disarmed or taken for everyone. The XP for disarming is the disarmer's. |
-| Mines | Synced | A friend's mine beeps the whole countdown in every game. A mine picked up is gone for everyone. |
-| Pressure plates, thrown mines, traps built in a settlement | Not yet | Each game's own. |
+| Mines | Synced | A mine already in the world that a friend sets off beeps the whole countdown in every game. A mine picked up is gone for everyone. |
+| Pressure plates, thrown mines, traps built in a settlement | Not yet | Each game's own. A mine a friend throws is theirs alone. |
 | Areas that reset | Partly | When the host's game resets a cleared place, its enemies are back for everyone. |
 
 ## Settlements and building
@@ -139,7 +139,7 @@ At a settlement the host owns, with the host's `bSharedWorkshop` (on by default)
 | The settlement's figures | Partly | The workshop bar shows the host's food, water, power, defense, beds and happiness. The Pip-Boy's workshop list still shows your own. |
 | Workbench materials | Partly | Each player's own, unless the host turns on `bSharedStorage` (experimental, off by default). |
 | Attacks | Synced | The host's alone (`bSharedAttacks`): one attack, fought together. A friend there while the host is away sees no attackers, and it ends off-screen. |
-| What a friend builds there, in their own save | Your own | It's the host's: it isn't kept in the friend's save. |
+| What a friend builds there, in their own save | Not kept | It's the host's: it isn't kept in the friend's save. |
 
 Anywhere else (a friend's own settlement, or with the shared workshop off):
 
@@ -149,7 +149,7 @@ Anywhere else (a friend's own settlement, or with the shared workshop off):
 | Power | Partly | Shown, not shared: a friend's lights and machines light up as their game powers them, but their generator never powers your lamp. |
 | Food, water, defense | Partly | A friend's crops, pumps, turrets and generators count in yours once you've seen them. Beds don't count. Happiness, population and supply lines are each game's own. |
 | Attacks | Your own | Each game runs its own. |
-| Crafting stations | Synced | A chemistry, cooking, armor or weapons station uses the junk of the settlement it stands in, in your game. |
+| Crafting stations | Partly | A chemistry, cooking, armor or weapons station uses the junk of the settlement it stands in, in your game. |
 | Conveyor belts | Partly | They run or stop as their builder's game says. What rides on them isn't shared. |
 | Building done before the session | Your own | A guest's earlier building stays out of the host's world unless the host turns on `bShareGuestBuilds`. |
 | Dedicated server | Not yet | No shared workshop: everyone builds their own pieces, and attacks are each player's own. |
@@ -159,7 +159,7 @@ Anywhere else (a friend's own settlement, or with the shared workshop off):
 | What | Status | Details |
 |---|---|---|
 | Giving an item | Synced | Drop it from your Pip-Boy near a friend: it moves from your game to theirs with its mods, legendary effect and name, and only one of you can take it. |
-| What can't be given | Not yet | Keys, notes, holotapes, books, bobbleheads, magazines, quest items, items a mod made while playing, and an item you picked up before the session started. |
+| What can't be given | Not yet | Keys, notes, holotapes, books, bobbleheads, magazines, quest items, items a mod made while playing, and an item you found lying in the world and picked up before the session (or before your last load). Things you looted, bought or crafted can be given whenever you got them. |
 | Giving through a container | Partly | Weapons and armor put in a container stay in your game, unless the host turns on `bContainerGifts` (experimental, off by default). Ammo, aid and junk in a container are shared loot anyway. |
 | Caps | Partly | Put them in a container for a friend (caps can't be dropped). |
 | Trading with a friend | Not yet | You can't talk to, trade with or hand things to a friend's stand-in. |

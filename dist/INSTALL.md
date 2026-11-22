@@ -412,7 +412,7 @@ character your game places where your friend is, and moves as they move.
   friend. Their kills, loot, doors and quest steps reach your game as described below. Pressing E on them does
   nothing: you can't talk to, trade with or give things to a stand-in (drop an item near them instead: see Giving items below).
 - **Their companion:** it walks with them in your game too, but it stays their companion: its affinity, its romance
-  and what it carries are kept in each game apart. If you both travel with Dogmeat, each game keeps its own.
+  and what it carries are kept in each game apart. Dogmeat has one owner like any companion: if you both recruit him, the second player's recruit is dismissed with a notice.
 
 The session never changes your own character for a friend: nothing it does on a friend's behalf gives you, takes
 from you or puts on you any item, and a friend paying for something in a conversation doesn't charge you.
@@ -486,8 +486,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   friend's. A job your game can't match (it needs someone your game doesn't have, or you already took
   your own) stays the other player's own, and the log says why. The jobs whose enemies or helpers the
   game makes on the spot stay each player's own: the Castle's defense (your friend's attackers come to
-  your game anyway, as everyone's enemies do), and the jobs that give you someone to escort, rescue or
-  kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
+  your game anyway, as everyone's enemies do), the refugees and High Ground. The jobs that give you someone to escort, rescue or
+  kill (a squire, a scribe, a courser, a patrol, a synth boss, a captive) are shared.
   Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
   the faction quests in their own game, getting a notice when a friend finishes a story quest. Play

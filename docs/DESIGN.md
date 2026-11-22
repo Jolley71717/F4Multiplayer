@@ -412,7 +412,7 @@
   is not moved there; it runs its own AI meanwhile. The same goes outdoors when the owner's copy is more than
   a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
-  our own current companion (two players can both have Dogmeat). In an interior a copy follows the owner's however far
+  our own current companion (Dogmeat has one owner like any companion: a second player's recruit of him is dismissed with a notice). In an interior a copy follows the owner's however far
   across the cell it stands (`NpcPlace::LostWhy`): the whole cell is loaded. Held to 4096 units there, copies the host's
   game had across Corvega's assembly plant after it restarted from a save (its raiders where the save had them, the
   joiner's where the fight had left them) were never mirrored and stood still for minutes. A copy let go to its own AI walks its own way, and
@@ -3944,7 +3944,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   is counted (`sendOutsHeld`, `sendOutsDropped`, `sendOutsAfterLoad`). A plugin's frame (each game has its own
   reference), our player's own (a copy they are in or got out of last stays usable) and a quest's are never kept from
   them. Counted as `framesKeptOut`, `othersSentOut` and `sendOutsFailed` (`net status`) and `keptOut`,
-  `transfersKeptOut` and `transfersClosedAtShow` (`paframes`). Borrowing a friend's suit comes later.
+  `transfersKeptOut` and `transfersClosedAtShow` (`paframes`). Borrowing a friend's suit ships (see the frame loans above).
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The
