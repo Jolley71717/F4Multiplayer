@@ -86,7 +86,7 @@ XSE_FO4_GAME_PATH=<the game folder in Steam-2> F4MP_DEV_PORT=7791 tools/crossove
 ```
 
 `restart` closes only its own bottle's game. The game in the background keeps running while it is in
-a session (`bRunInBackground`), but out of one it pauses, and a joiner that lost the host connects
-again only once its window is in front: `bAlwaysActive=1` under `[General]` in both bottles' `Fallout4Custom.ini` keeps both
+a session or one is under way (a joiner trying the host again too), and always with the developer channel on
+(`bRunInBackground`). With the channel off it pauses out of a session: `bAlwaysActive=1` under `[General]` in both bottles' `Fallout4Custom.ini` keeps both
 running (not `Fallout4Prefs.ini`: the game doesn't read it from there, and the plugin's log says what it read). `sIntroSequence=`
 under `[General]` in `Fallout4Custom.ini` skips the intro video.

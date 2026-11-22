@@ -9,7 +9,8 @@
 //
 // The game itself stops reading its devices when its window loses focus: Main::SetActive(false) turns the input
 // manager's polling off (BSInputDeviceManager::pollingEnabled) and clears every device's state. But with
-// bAlwaysActive on, which bRunInBackground sets in a session (Background.h), SetActive takes every focus change as
+// bAlwaysActive on, which bRunInBackground sets in a session, while one is under way and with the developer channel on
+// (Background.h), at the main menu and in the world alike, SetActive takes every focus change as
 // "active": polling stays on while the player is in another window, and the mouse, keyboard and pad go on reaching
 // the player's controls (2026-10-19: alt-tabbed, the character fired at clicks meant for another window). So once a
 // frame this does what the game would: polling off while the window is not in front, the devices' state cleared as

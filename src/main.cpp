@@ -436,9 +436,10 @@ namespace
 		QuestSync::RevertBodyRecord();
 	}
 
-	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
-	// or a player who alt-tabbed stood still for friends, with the NPCs their game runs. Out of a session the setting is
-	// back as the player's ini has it (see Background). Looked at once a frame.
+	// bRunInBackground: while a session runs or is under way, or with the developer channel on, the game runs on while its
+	// window is not focused (its own bAlwaysActive), or a player who alt-tabbed stood still for friends, with the NPCs
+	// their game runs, and a host or join started from the main menu waited for the window. Otherwise the setting is back
+	// as the player's ini has it (see Background). Looked at once a frame; InputGate keeps input out while unfocused.
 	Background::Switch background;
 
 	RE::Setting* AlwaysActive()
@@ -470,10 +471,20 @@ namespace
 		if (!setting) {
 			return;
 		}
-		const bool session = InSession();
-		if (const auto value = background.Update(Config::Get().runInBackground, session, setting->GetBinary())) {
+		const auto status = Session::GetStatus();
+		const auto reason = Background::RunOn({
+			.session = status.hosting || status.link == Session::Status::Link::kJoined,
+			// From the moment a host or join starts, not once it is up: the load before it would stop behind another window.
+			.underWay = status.link != Session::Status::Link::kNone || status.hostWaiting,
+			.devChannel = Config::Get().devChannel,
+		});
+		if (const auto value = background.Update(Config::Get().runInBackground, reason != Background::Reason::kNone, setting->GetBinary())) {
 			setting->SetBinary(*value);
-			REX::INFO("Config: {}", *value ? "in a session, the game runs on while it is not focused (bRunInBackground)" : "out of the session, the game's bAlwaysActive is back off");
+			if (*value) {
+				REX::INFO("Config: {}, the game runs on while it is not focused (bRunInBackground)", Background::Describe(reason));
+			} else {
+				REX::INFO("Config: {}, the game's bAlwaysActive is back off", Background::Describe(reason));
+			}
 		}
 	}
 

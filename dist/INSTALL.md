@@ -283,7 +283,8 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `bSharedRadiants` (true): needs `bSyncQuests` and the shared story. Everyone in the session needs it on for the
   repeatable jobs to match.
 - `bHideTutorials` (true): the game's tutorial hints stay hidden in a session.
-- `bRunInBackground` (true): your game keeps running when you alt-tab, while you are in a session.
+- `bRunInBackground` (true): your game keeps running when you alt-tab, while you are in a session or from the moment
+  you start hosting or accept a join (so the main menu and the load before it go on too).
 - `bFastLoading` (true) and `iFastLoadingSeconds` (20): faster loading screens.
 - `sTransport` (auto), `sServerAddress` (empty) and `bHost`: how you join or host. See
   [Without Steam](#without-steam-lan-or-vpn).
