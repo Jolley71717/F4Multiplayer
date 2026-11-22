@@ -75,11 +75,12 @@ menus() { dc "$1" menus | grep -oE 'open=[^ ]*' | sed 's/^open=//'; }
 # ---- real input ------------------------------------------------------------------------------------------------------------------
 # rkey <who> <vk> [ms]: a real key press into that game's window (brought to the front first)
 rkey() { dc "$1" focus >/dev/null; sleep 0.3; dc "$1" "key $2 ${3:-80}" >/dev/null; }
-# rwalk <who> <ref | x y> [radius] [speed]: that player walks there (the pad's stick); 0 = arrived (or as near as the walk got: WALKED)
+# rwalk <who> <ref | x y> [radius] [speed]: that player walks there (the pad's stick); 0 = arrived (or as near as the walk got: WALKED).
+# A ref is 8 hex digits (one of only decimal digits, 00057280, is a ref, never a coordinate)
 rwalk() {
 	local who=$1 r s; shift
 	_REPRO_WALKING="$_REPRO_WALKING $who"   # a run ended mid-walk stops this walk (_repro_end_steps)
-	if [ $# -ge 2 ] && is_int "${1%.*}" && is_int "${2%.*}"; then WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "$2" "${4:-0.8}" "${3:-120}" 40 2>&1 | tail -1); else WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "${3:-0.8}" "${2:-120}" 40 2>&1 | tail -1); fi
+	if [ $# -ge 2 ] && ! [[ $1 =~ ^[0-9A-Fa-f]{8}$ ]] && is_int "${1%.*}" && is_int "${2%.*}"; then WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "$2" "${4:-0.8}" "${3:-120}" 40 2>&1 | tail -1); else WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "${3:-0.8}" "${2:-120}" 40 2>&1 | tail -1); fi
 	dc "$who" "pad unplug" >/dev/null; _REPRO_WALKING=${_REPRO_WALKING/ $who/}
 	grep -qE ': (arrived|stuck) ' <<<"$WALKED"
 }
@@ -88,6 +89,37 @@ rwalk() {
 rpress_e() { dc "$1" "turnto $2 300 aim" >/dev/null; sleep 0.8; ROLLOVER=$(rrollover "$1"); rkey "$1" "$VK_E" 100; }
 pos_of() { local p; p=$(dc "$1" pos); echo "$(field "$p" x) $(field "$p" y)"; }
 dist_xy() { awk -v a="$1" -v b="$2" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") {print ""; exit} printf "%d", sqrt((q[1]-p[1])^2+(q[2]-p[2])^2)}'; }
+# step_aside <who> <ref> [dist]: that player walks (the pad) dist units (400) further from the reference, straight away from it,
+# so their stand-in in the other game is out of the way of a walk to it and of an E pressed at it
+step_aside() {
+	local ri to; ri=$(dc "$1" "refinfo $2")
+	to=$(awk -v a="$(pos_of "$1")" -v b="$(field "$ri" x) $(field "$ri" y)" -v d="${3:-400}" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") exit; dx=p[1]-q[1]; dy=p[2]-q[2]; l=sqrt(dx*dx+dy*dy); if (l<1) {dx=1; dy=0; l=1} printf "%d %d", p[1]+dx/l*d, p[2]+dy/l*d}')
+	[ -n "$to" ] || return 1
+	# shellcheck disable=SC2086
+	rwalk "$1" $to 80
+}
+# doors_near <who>: the doors (dev refs 32) within 4000 units of that player, nearest first
+doors_near() {
+	local p; p=$(pos_of "$1")
+	dc "$1" "refs 32 4000" | tr ';' '\n' | awk -v p="$p" '{ split(p, q, " "); n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] == "at") { id = $1; gsub(/[^0-9A-F]/, "", id); printf "%d %s\n", (w[i+1]-q[1])^2 + (w[i+2]-q[2])^2, id } }' | sort -n | awk '{ print $2 }'
+}
+cell_of() { field "$(dc "$1" status)" cell; }
+# go_through <who> <label> [door...]: that player walks (the pad) to each door given, else the 4 nearest, and opens it (E) until
+# their cell changes: a load door gone through. WENT: that door. 1 when none took the player elsewhere.
+go_through() {
+	local who=$1 label=$2 c0 d; shift 2
+	c0=$(cell_of "$who"); WENT=""
+	for d in ${*:-$(doors_near "$who" | head -4)}; do
+		say "$label: $who walks to door $d (the pad) and opens it (E)"
+		rwalk "$who" "$d" 150 || say "$label: the walk ended short ($WALKED)"
+		rpress_e "$who" "$d"
+		say "$label: $who pressed E on '$ROLLOVER'"
+		sleep 8; wait_ingame "$who" 60
+		[ "$(cell_of "$who")" != "$c0" ] && { WENT=$d; return 0; }
+		say "$label: $who is still in cell $c0 (not a load door, or it did not open)"
+	done
+	return 1
+}
 
 # ---- workshop mode's own menu, by its keys ---------------------------------------------------------------------------------------
 # The build menu's path ("STRUCTURES >  WOOD >  FLOORS") and the item named, read from WorkshopMenu's display objects; the held

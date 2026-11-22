@@ -7,6 +7,7 @@
 #include "game/GearReport.h"
 #include "game/Hud.h"
 #include "game/InventoryStacks.h"
+#include "game/MirrorFrames.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
@@ -20,6 +21,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <optional>
 #include <unordered_map>
 
@@ -47,6 +49,17 @@ namespace Equipment
 		// actor only once that task has run, a frame or more later.
 		constexpr REL::ID SWITCH_INTO_POWER_ARMOR{ 2219442 };
 		constexpr REL::ID GET_POWER_ARMOR_HANDLE{ 2190600 };  // ExtraDataList::GetPowerArmorHandle (+2908C0)
+		// The engine's exit from a frame (PowerArmor, 1.11.240; see MirrorFrames.h). The state is ExtraPowerArmor's.
+		constexpr REL::ID GET_POWER_ARMOR_STATE{ 2190605 };    // ExtraDataList::GetPowerArmorState (+2909C0): 7 with no ExtraPowerArmor
+		constexpr REL::ID BEGIN_POWER_ARMOR_EXIT{ 2219450 };   // (Actor*) (+98BE40): from state 2, frame put at the actor, state 3; done at once below middle-high
+		constexpr REL::ID POWER_ARMOR_EXIT_STEP{ 2219448 };    // (Actor*, level) (+98B580): from state 3 or 4, state 4 while the preload loads, else the transfer
+		constexpr REL::ID PRELOAD_PA_EXIT{ 474811 };           // bPreloadPAExit:GamePlay's value (+2F2AF68): the exit's preload is made only when set
+		constexpr REL::ID ANIM_GRAPH_PRELOAD_READY{ 2191466 }; // (ExtraAnimGraphPreload*) (+2B4C80): its graphs loaded (read only)
+		constexpr REL::ID GET_EXTRA_DATA{ 2190936 };           // ExtraDataList::GetExtraData(uchar) (+2A0350), under the list's lock
+		constexpr std::uint8_t EXTRA_ANIM_GRAPH_PRELOAD = 0xCE; // its graphs loaded on the background loader thread
+		constexpr REL::ID POWER_ARMOR_EXIT_FINISH{ 2219449 };  // (Actor*, level) (+98B8C0): above level 0, no exit animation; ExtraPowerArmor gone
+		constexpr REL::ID UPDATE_3D_MODEL{ 2231882 };          // AIProcess::Update3dModel(Actor*, bool) (+D02600)
+		constexpr REL::ID REMOVE_EXTRA{ 2190971 };             // ExtraDataList::RemoveExtra(uchar), as the switch-in removes its preload extra
 		constexpr REL::ID SET_OWNER{ 2202623 };               // TESObjectREFR::SetOwner(TESForm*) (+562380)
 		// What the engine asks before it lets our player into furniture (see FrameUse.h).
 		constexpr REL::ID GET_MARKER_ENABLED{ 2198041 };      // TESFurniture::GetMarkerEnabled(uint) (+44C590)
@@ -875,22 +888,37 @@ namespace Equipment
 		return handle.get();
 	}
 
-	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame)
+	std::uint8_t PowerArmorState(const RE::Actor* a_actor)
+	{
+		if (!a_actor || !a_actor->extraList) {
+			return 7;
+		}
+		static REL::Relocation<std::uint8_t (*)(RE::ExtraDataList*)> state{ GET_POWER_ARMOR_STATE };
+		return state(a_actor->extraList.get());
+	}
+
+	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame, bool a_keepItems)
 	{
 		if (!a_actor || !a_frame || InPowerArmor(a_actor) || !IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}
-		// Only a stand-in, and only into a copy this game placed for it: the switch-in empties the frame and moves its
-		// items onto the actor.
-		if (!MayChange(a_actor, OwnGear::Change::kDressStandIn) || !MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
+		// Only a stand-in, or a mirror (MirrorFrames), and only into a copy this game placed for it: the switch-in moves the
+		// frame's items onto the actor.
+		const bool mirror = Puppets::IsRegistered(a_actor) && !Puppets::IsPuppet(a_actor);
+		if (!MayChange(a_actor, mirror ? OwnGear::Change::kDressCopy : OwnGear::Change::kDressStandIn) || !MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
 			return false;
+		}
+		if (a_keepItems && !mirror) {
+			return false;  // a stand-in's copy is always emptied: its pieces go on after (Outfit)
 		}
 		MainThread::Assert("Equipment::SwitchIntoPowerArmor");
 		// Empty, so that what goes on is only what the actor is told to wear: the switch-in below moves the frame's items
 		// onto the actor. Emptied here and now, stack by stack, with the engine's own RemoveItem (InventoryStacks), as
 		// FrameLoans empties a lent frame's copy: the console's removeallitems empties the reference a moment after it is
 		// called, by then the switch-in had moved whatever the frame held onto the actor. A quest's item stays.
-		if (a_frame->inventoryList) {
+		if (a_keepItems) {
+			// A mirror's copy, filled with its owner's pieces as it was placed (MirrorFrames): they go on with the switch-in.
+		} else if (a_frame->inventoryList) {
 			if (const auto emptied = InventoryStacks::RemoveAllBut(a_frame, [](RE::TESBoundObject*, RE::ExtraDataList* a_extra) { return InventoryStacks::QuestItem(a_extra); }); emptied > 0) {
 				REX::INFO("Equipment: {} stacks taken out of frame copy {:08X} before {:08X} gets in", emptied, a_frame->GetFormID(), a_actor->GetFormID());
 			}
@@ -910,6 +938,100 @@ namespace Equipment
 		static REL::Relocation<void (*)(RE::Actor&, RE::TESObjectREFR*, bool)> switchIn{ SWITCH_INTO_POWER_ARMOR };
 		switchIn(*a_actor, a_frame, false);
 		return PowerArmorFrameOf(a_actor).get() == a_frame;
+	}
+
+	bool PowerArmorPreloadPending(RE::Actor* a_actor)
+	{
+		if (!a_actor || !a_actor->extraList) {
+			return false;
+		}
+		static REL::Relocation<RE::BSExtraData* (*)(RE::ExtraDataList*, std::uint8_t)> getExtra{ GET_EXTRA_DATA };
+		static REL::Relocation<bool (*)(RE::BSExtraData*)>                              ready{ ANIM_GRAPH_PRELOAD_READY };
+		const auto preload = getExtra(a_actor->extraList.get(), EXTRA_ANIM_GRAPH_PRELOAD);
+		return preload && !ready(preload);
+	}
+
+	ExitResult SwitchOutOfPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame, std::chrono::milliseconds a_wait)
+	{
+		if (!a_actor || !a_frame || !InPowerArmor(a_actor) || PowerArmorFrameOf(a_actor).get() != a_frame) {
+			return ExitResult::kRefused;
+		}
+		// Only a mirror, and only out of a copy this game placed for it.
+		if (!Puppets::IsRegistered(a_actor) || Puppets::IsPuppet(a_actor) || !MayChange(a_actor, OwnGear::Change::kDressCopy) ||
+			!MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
+			return ExitResult::kRefused;
+		}
+		// Never a body: the engine leaves a dead, dying or ragdolled actor in its frame (MirrorFrames::Down).
+		if (const auto& life = static_cast<RE::ActorState&>(*a_actor);
+			MirrorFrames::Down(a_actor->IsDead(false), static_cast<std::int32_t>(life.lifeState), static_cast<std::uint32_t>(life.knockState))) {
+			return ExitResult::kRefused;
+		}
+		const auto first = PowerArmorState(a_actor);
+		if (first < 2 || first > 5) {
+			return ExitResult::kRefused;  // getting in (an exit begins only from in), or not in one the engine has
+		}
+		// No process at all: nothing the engine's exit is ever run on (its cell unloaded leaves an actor a low one, the
+		// engine's own way out for an actor that is not high, run below as it runs it).
+		if (!a_actor->currentProcess) {
+			return ExitResult::kRefused;
+		}
+		MainThread::Assert("Equipment::SwitchOutOfPowerArmor");
+		// An anim graph preload of its (ExtraAnimGraphPreload) still loading on the background loader thread: nothing is begun
+		// or carried on over it. The transfer changes the race and the 3D that load reads, and the finish destroys the extra,
+		// which waits on the loader: run over a load still going they crashed the loader thread and hung the game (1.11.240,
+		// a mirror's exit at a session end). Waited on here for at most a_wait (a save, a load, the session's end), else
+		// tried again on a later frame.
+		if (PowerArmorPreloadPending(a_actor)) {
+			const auto until = std::chrono::steady_clock::now() + a_wait;
+			while (PowerArmorPreloadPending(a_actor) && std::chrono::steady_clock::now() < until) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(2));
+			}
+			if (PowerArmorPreloadPending(a_actor)) {
+				return ExitResult::kWaiting;
+			}
+		}
+		static REL::Relocation<void (*)(RE::Actor*)>                       begin{ BEGIN_POWER_ARMOR_EXIT };
+		static REL::Relocation<void (*)(RE::Actor*, std::int32_t)>         step{ POWER_ARMOR_EXIT_STEP };
+		static REL::Relocation<void (*)(RE::Actor*, std::int32_t)>         finish{ POWER_ARMOR_EXIT_FINISH };
+		static REL::Relocation<void (*)(RE::AIProcess*, RE::Actor*, bool)> update3d{ UPDATE_3D_MODEL };
+		static REL::Relocation<bool*>                                      preloadExit{ PRELOAD_PA_EXIT };
+		// The level the steps are run at: 1, middle-high, the engine's own for an actor near but not high (no exit animation,
+		// the actor set down where it stands); a lower process at its own, as the engine runs it.
+		const auto         process = a_actor->currentProcess;
+		const std::int32_t own = process ? static_cast<std::int32_t>(process->processLevel) : 3;
+		const std::int32_t level = own < 1 ? 1 : own;
+		const bool         hadBadPosition = a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kBadPosition);
+		if (first == 2) {
+			// Begun without the preload of its own 3D the engine makes for a high actor's exit (bPreloadPAExit, the game's
+			// setting, off for this one call on the main thread and put back at once): with none, the step goes straight on to
+			// the transfer, the engine's own way for an actor that is not high, or with the setting off.
+			const bool was = *preloadExit;
+			*preloadExit = false;
+			begin(a_actor);  // state 3; below middle-high the engine takes it through the rest here (2219448 at its own level)
+			*preloadExit = was;
+		}
+		// The engine's step, as its update runs it each frame: from 3 (or 4) the transfer, or 4 while a preload loads (none was
+		// made above; one there already had loaded, waited on above). The transfer is never called over a load.
+		if (InPowerArmor(a_actor) && (PowerArmorState(a_actor) == 3 || PowerArmorState(a_actor) == 4)) {
+			step(a_actor, level);
+		}
+		if (InPowerArmor(a_actor) && PowerArmorState(a_actor) == 5) {
+			finish(a_actor, level);
+		}
+		// The finish marks the actor's place as one to be put right (ExtraBadPosition), for an actor set down in the frame's
+		// spot: a mirror's place is its owner's, set each frame.
+		if (!InPowerArmor(a_actor) && !hadBadPosition && a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kBadPosition)) {
+			static REL::Relocation<void (*)(RE::ExtraDataList*, std::uint8_t)> removeExtra{ REMOVE_EXTRA };
+			removeExtra(a_actor->extraList.get(), static_cast<std::uint8_t>(RE::EXTRA_DATA_TYPE::kBadPosition));
+		}
+		if (InPowerArmor(a_actor)) {
+			return PowerArmorState(a_actor) == 4 ? ExitResult::kWaiting : ExitResult::kFailed;
+		}
+		// Its own 3D back now, as the switch-in has the power armor one built (the transfer flagged it for rebuilding).
+		if (process && a_actor->Get3D()) {
+			update3d(process, a_actor, true);
+		}
+		return ExitResult::kOut;
 	}
 
 	bool HasPowerArmorSkeleton(RE::Actor* a_actor)

@@ -541,10 +541,48 @@
   a robot's late, just after a load. So
   the mirror evens out robots (their bases have scripts) and any scripted NPC with mods of its own, and leaves a
   creature's variant each game's own. The copy keeps that build in its game's saves, as it keeps the session's roll.
-- Power armor: the report also names the frame (its furniture base) an NPC is in in its owner's game. A friend's copy
-  is not put in one (a frame of this world switched into and out of a real NPC of this world's saves, with the frame's
-  multi-frame exit, is not done without a look at it in a game): the difference is logged once a session for each NPC
-  (`framesNotShown=` in the status).
+- Power armor (`MirrorFrames.h`, game-free rules tested; `MirrorFrames.cpp`): the report also names the frame (its
+  furniture base) an NPC is in in its owner's game. A friend's copy (a mirror) is put into a copy of that frame placed
+  here for it (`RemotePlayers::PlaceFrameCopy`, kept out of saves as every frame copy), with the owner's pieces in it,
+  which the engine's switch-in moves onto it and puts on. As the owner's copy gets out, or goes into another suit, ours
+  gets out of the copy and the copy goes (buried as every copy). The game's `SwitchToPowerArmor` with None only begins
+  the engine's exit (state 3) and leaves the rest to the actor's update, which a mirror never runs (Puppets swaps it for
+  one without AI): the mirror stayed in, and a save kept it in the frame. So the exit's own steps are run one after another
+  there and then (`Equipment::SwitchOutOfPowerArmor`, 1.11.240), as the engine runs them for an actor whose process is
+  not high: the pieces back into the frame, the race and the 3D given back, no exit animation; the bad-position mark the
+  finish leaves is taken off (a mirror's place is its owner's). For a high actor the engine's exit first preloads its
+  own 3D's animation graphs on the background loader thread (`ExtraAnimGraphPreload`) and waits on it; running the
+  transfer and the finish over that load crashed the loader thread and hung the game at a session end. So the exit is
+  begun with the game's `bPreloadPAExit` off for that one call (no preload: the engine's own way for an actor that is
+  not high), it is never begun or carried on while a preload of the actor's is still loading (a frame's try waits for
+  the next frame, a save, a load or the session's end waits up to 1.5 s), and an exit left part-way is carried on with
+  the engine's step, never by calling the transfer directly. Armor the switch-in gave that is still on it after the
+  exit (a piece, a frame item) is taken back. A mirror gets out before every save and load (a step before the stand-ins'
+  graveyard is flushed, so the copy is kept out of that save), as the session ends and whenever we stop mirroring it, so
+  neither the frame nor the power armor state reaches a save; it goes back in once it is mirrored again. A body
+  (dead, dying or knocked down) is never taken out, as the engine never takes one out: it stays in the suit as on its
+  owner's game, its pieces looted off it there, and when we stop mirroring it the copy is left to the game with it
+  (saved as the game's frame). An NPC killed in its owner's game goes silent there about 3 s before its death reaches
+  us, so a mirror in a copy whose owner's copy goes silent is held there, still mirrored and still at its owner's last
+  state, for up to 10 s of silence, and so is one the server lets go of meanwhile (it does that just before the death
+  of an NPC that died in its runner's game reaches us): its death then leaves the body in the suit; its states back, it is mirrored on;
+  anything else (the 10 s over, its owner gone, its cell unloaded, a save, a load, the session's end) stops mirroring it
+  as any stop does. Only silence holds: an owner's copy that went through a door or ran far is alive, and ours gets out
+  at once. Every stop leaves the copy while the NPC is still a mirror (before Puppets lets it go, and at a save, a load
+  or the session's end before the mirrors are released), since the exit only ever takes a mirror out. One whose exit did
+  not take as mirroring stops (refused, or a preload still loading after the wait), or knocked down alive at that
+  moment (counted: `releasedKnocked=`), stays in it and the copy is left to the game the same way: never left in a copy
+  nothing holds or saves. The switch-in makes the copy persistent, so it outlives its cell while the NPC is in it; the
+  exit demotes it, and a frame whose cell is not loaded here (the friend walked off through a door and left the NPC
+  behind, its exit run as its cell unloaded) is then unloaded by the engine at once: its form is freed and its record
+  of changes stays under the cell, which brought it back, the owner's pieces in it, into the friend's save. A copy is
+  therefore buried only while its handle still names it under the ID it was placed under; otherwise it is forgotten
+  and its record dropped (`SaveGuard::Forget`, as for a friend's frame copy, `HeldCopy.h`; counted `unloaded=`), and
+  so is a copy placed and not yet got into that went with its cell. Talking to a mirrored NPC in a copy (the
+  conversation stops mirroring it) takes it out of the suit for the dialogue while its owner's copy stays in; it goes
+  back in once it is mirrored again. Never touched:
+  an NPC our game runs, a frame that is not its copy, a mirror in a frame of its own here. A frame our game lacks is not
+  shown (logged once, `framesNotShown=`). `npcpa <ref>` on the dev channel says an actor's power armor state and copy.
 - Roll (`NpcRoll.h`, game-free and tested; `Rolls.cpp`; protocol 50): a leveled NPC (a bloatfly, a ghoul, a raider
   placed from a leveled list) is put together by each game on its own as it first loads, its list and its legendary
   chance rolled at that game's player's level, so one game had a legendary black bloatfly where the other had a plain

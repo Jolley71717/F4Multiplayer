@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include "Protocol.h"
 #include "game/FrameUse.h"
 #include "game/OwnGear.h"
@@ -122,7 +124,31 @@ namespace Equipment
 	// armor yet. Whether the engine has it in that frame now. Its 3D on return is still the one it had: the power armor
 	// skeleton is there only once that task has run (HasPowerArmorSkeleton), so nothing of the new skeleton, biped or
 	// collision may be read right after this.
-	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame);
+	// A mirror (an NPC a friend's game runs, MirrorFrames) may be switched into a copy placed for it too; with a_keepItems
+	// (a mirror only) the copy is not emptied: the pieces put in it go on with the switch-in.
+	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame, bool a_keepItems = false);
+
+	// The actor's power armor state as the engine has it (ExtraPowerArmor: 1 getting in, 2 in, 3 to 6 getting out), 7 with none.
+	[[nodiscard]] std::uint8_t PowerArmorState(const RE::Actor* a_actor);
+
+	// Whether an anim graph preload of the actor's (ExtraAnimGraphPreload) is still loading on the background loader thread.
+	[[nodiscard]] bool PowerArmorPreloadPending(RE::Actor* a_actor);
+
+	enum class ExitResult
+	{
+		kOut,      // out of it
+		kWaiting,  // an anim graph preload of its still loading: nothing begun over it, or the exit left in state 4; tried again
+		kFailed,   // begun and not out (said by the caller)
+		kRefused,  // not a mirror in that copy, or getting in
+	};
+
+	// Takes a mirror out of the frame copy placed for it (MirrorFrames): the engine's own exit, its steps run one after
+	// another as its update runs them for an actor whose process is not high (no exit animation), the pieces moved back into
+	// the frame, its race and 3D given back. Begun without the engine's preload of its own 3D (bPreloadPAExit off for that
+	// call), and never begun or carried on over a preload still loading: waited on for at most a_wait, else kWaiting. From
+	// state 2 (in) it begins; from 3 to 5 (an exit begun and left) it is carried on. Only a mirror, only out of that frame.
+	// Main thread.
+	ExitResult SwitchOutOfPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame, std::chrono::milliseconds a_wait = std::chrono::milliseconds(0));
 
 	// Whether the actor's 3D is built on the power armor skeleton: the one the switch-in's queued rebuild gives an actor
 	// in a frame, which has bones its own skeleton has not. Power armor pieces are modelled for those bones.

@@ -17,6 +17,7 @@
 #include "game/Hud.h"
 #include "game/LinkedTargets.h"
 #include "game/MirrorClock.h"
+#include "game/MirrorFrames.h"
 #include "game/MirrorGait.h"
 #include "game/MoveSync.h"
 #include "game/NpcClaims.h"
@@ -240,8 +241,9 @@ namespace NpcSync
 		std::uint32_t              modCalls = 0, modCallsLate = 0, modCallsRefused = 0, modsMatched = 0, modsGaveUp = 0;
 		// The power armor frame a mirrored NPC is in in its owner's game (NpcEquipment::frame): our copy isn't put in one
 		// (a frame of its own would be a frame of this world, in its saves), so it is said once a session for each.
-		std::unordered_set<std::uint32_t> frameSaid;
-		std::uint32_t                     framesNotShown = 0;
+		std::unordered_set<std::uint32_t>                frameSaid;
+		std::uint32_t                                    framesNotShown = 0;  // in a frame our game lacks there: shown out of one (MirrorFrames)
+		std::unordered_map<std::uint32_t, std::uint32_t> knownFrame;          // NPC -> the frame base its owner's copy is in (0 out)
 		// Rolls: each game rolls a leveled NPC (and its legendary chance) on its own, so owners report what theirs was
 		// rolled as and the others make theirs that roll (NpcRoll.h); a spawn's copy takes its factions too.
 		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
@@ -372,7 +374,7 @@ namespace NpcSync
 			return { 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0 };
 		}
 
-		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror)
+		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror, std::string_view a_why = "mirroring stops")
 		{
 			WeaponFire::EndShield(a_id);  // a ghost made against a friend's explosion, if it is one now
 			a_mirror.heldAt.reset();      // a hold ends with the mirror (UpdateMirrors counts the ones it ends itself)
@@ -382,6 +384,11 @@ namespace NpcSync
 			}
 			WeaponFire::ReleaseSoundsOf(a_mirror.registeredId);  // a replayed burst may still follow the actor's 3D
 			WeaponFire::DropHandThrowable(a_mirror.registeredId);
+			// Out of the frame copy it was shown in, while it is still a mirror (MirrorFrames): the exit only ever takes a mirror
+			// out, so this comes before Puppets lets it go. Before a save or a load, at the session's end, and whenever its owner's
+			// game stops running it here, it is never left in a frame of ours. (One silent in its copy is held a while before it
+			// comes here: UpdateMirrors, MirrorFrames::HoldWhileSilent.)
+			MirrorFrames::Leave(a_mirror.registeredId, a_why);
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_mirror.registeredId) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 				meter.Released();  // and its evp
@@ -2010,8 +2017,24 @@ namespace NpcSync
 				auto&      mirror = it->second;
 				const auto owner = OwnerOf(id);
 				const auto actor = LoadedActor(id);
+				// Let go by the server (owner 0) while in its frame copy: held there as a silent one is (below), since the server
+				// lets go of one that died in its runner's game just before its death comes (ApplyOwners). Its death then leaves the
+				// body in the suit; else the hold runs out (its owner left, or it unloaded there) and it is taken out.
+				if (owner == 0 && actor && !actor->IsDead(false) && mirror.registered == actor && !mirror.snapshots.empty() &&
+					MirrorFrames::HoldWhileSilent(MirrorFrames::InCopy(actor), a_now - mirror.snapshots.back().received)) {
+					MirrorFrames::Held(actor, a_now - mirror.snapshots.back().received);
+					if (auto motion = Sample(mirror, a_now)) {
+						Puppets::SetTarget(actor, *motion);
+					}
+					++it;
+					continue;
+				}
 				if (owner == 0 || owner == localId || !actor || actor->IsDead(false)) {
-					StopMirroring(id, mirror);
+					StopMirroring(id, mirror,
+						!actor                ? "unloaded here"
+						: actor->IsDead(false) ? "dead here"
+						: owner == 0           ? "its owner is gone"
+											   : "ours to run now");
 					it = mirrors.erase(it);
 					continue;
 				}
@@ -2073,6 +2096,21 @@ namespace NpcSync
 							++it;
 							continue;
 						}
+						// In a frame copy here (MirrorFrames): held there, still mirrored, for a while of silence whatever else goes
+						// on: its death in its owner's game, said a moment after its states stop, leaves the body in its suit here
+						// as there. Let go now, it would be taken out (or, once its own AI ran it, never: the exit is a mirror's).
+						if (const auto silentFor = a_now - latest->received; MirrorFrames::HoldWhileSilent(MirrorFrames::InCopy(actor), silentFor)) {
+							if (mirror.heldAt) {
+								EndHold(id, owner, mirror, a_now, true);  // a menu's hold over (a fight began): this one goes on
+							}
+							MirrorFrames::Held(actor, silentFor);
+							if (auto motion = Sample(mirror, a_now)) {
+								motion->rate = RealTime::WorldRate(owner);
+								Puppets::SetTarget(actor, *motion);
+							}
+							++it;
+							continue;
+						}
 					}
 					if (mirror.heldAt) {
 						EndHold(id, owner, mirror, a_now, true);
@@ -2084,7 +2122,10 @@ namespace NpcSync
 						mirror.fellBackAt = a_now;
 					}
 					mirror.lostNoted = true;
-					StopMirroring(id, mirror);
+					StopMirroring(id, mirror,
+						lost == NpcPlace::Lost::kSilent      ? "its owner's copy is silent"
+						: lost == NpcPlace::Lost::kElsewhere ? "its owner's copy is elsewhere"
+															 : "its owner's copy is far");
 					++it;
 					continue;
 				}
@@ -2113,6 +2154,9 @@ namespace NpcSync
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
+						if (const auto frame = knownFrame.find(id); frame != knownFrame.end() && frame->second != 0) {
+							MirrorFrames::Want(actor, frame->second, gear->second);
+						}
 					}
 					rolls.Check(id);  // is it their roll? (CheckRolls, within the second)
 				}
@@ -2166,6 +2210,13 @@ namespace NpcSync
 				sentRolls.Forget(entry.refId);  // and its roll
 				if (Protocol::IsSpawnRef(entry.refId)) {
 					rolls.Forget(entry.refId);  // a spawn's goes with it; a plugin's NPC's is the session's for good (protocol 57)
+				}
+				// One in its frame copy stays mirrored, held there (UpdateMirrors, MirrorFrames::HoldWhileSilent): the server lets
+				// go of an NPC that died in its runner's game just before its death reaches us (the same batch, rig 2026-11-21: 3 ms
+				// apart), and stopped here it was taken out of the suit alive, its body out of it here and in it there.
+				if (const auto it = mirrors.find(entry.refId); it != mirrors.end() && it->second.registered && LoadedActor(entry.refId) == it->second.registered &&
+					MirrorFrames::InCopy(it->second.registered)) {
+					continue;
 				}
 				StopMirroring(entry.refId);
 				continue;
@@ -2478,6 +2529,7 @@ namespace NpcSync
 			SendList(claims, [](const std::vector<Protocol::ActorClaim>& a) { return Protocol::Encode(a); }, true);
 		}
 		UpdateMirrors(now);
+		MirrorFrames::Update();
 	}
 
 	void CountCommands(std::uint32_t a_commands)
@@ -2509,6 +2561,7 @@ namespace NpcSync
 			return;
 		}
 		knownGear[a_equipment.refId] = a_equipment.items;
+		knownFrame[a_equipment.refId] = a_equipment.frame;
 		// Its own mods (a robot's parts): ApplyActorMods gives them to our copy while we mirror it. A report that doesn't
 		// say them (one of them missing here, or made at runtime there) leaves our copy's as they are. An NPC with none of its
 		// own (anyone but a robot) is not looked at, unless it had some before.
@@ -2524,15 +2577,15 @@ namespace NpcSync
 		if (const auto it = mirrors.find(a_equipment.refId); actor && it != mirrors.end() && it->second.registered == actor) {
 			meter.Count(Equipment::Wear(actor, a_equipment.items));
 			++gearApplied;
-			// A power armor frame isn't shown: our copy wears what it can of the owner's gear out of one (GearPlan), and the
-			// difference is said once a session for each NPC.
-			const bool inOurs = Equipment::InPowerArmor(actor);
-			if ((a_equipment.frame != 0) != inOurs) {
+			// In a frame there, in a copy of it here (MirrorFrames): put in and taken out as the owner's copy gets in and out. A
+			// frame our game lacks is not shown: our copy wears what it can of the owner's gear out of one (GearPlan), said once.
+			const bool known = a_equipment.frame == 0 || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(a_equipment.frame));
+			MirrorFrames::Want(actor, known ? a_equipment.frame : 0, a_equipment.items);
+			if (!known) {
 				++framesNotShown;
 				if (frameSaid.insert(a_equipment.refId).second) {
-					REX::INFO("NpcSync: {:08X} is {} power armor in its owner's game (player {}{}) and {} here: frames are not shown on a friend's NPC", a_equipment.refId,
-						a_equipment.frame != 0 ? "in" : "out of", a_equipment.playerId, a_equipment.frame != 0 ? std::format(", frame {:08X}", a_equipment.frame) : std::string{},
-						inOurs ? "in one" : "out of one");
+					REX::INFO("NpcSync: {:08X} is in power armor in its owner's game (player {}, frame {:08X}), a frame our game lacks: shown out of one here", a_equipment.refId,
+						a_equipment.playerId, a_equipment.frame);
 				}
 			}
 		}
@@ -2570,6 +2623,7 @@ namespace NpcSync
 
 	void OnGameLoaded()
 	{
+		MirrorFrames::Forget();  // every mirror left its copy before the load (Session's LeaveAll step); what is noted names the old game
 		// The VM's calls queued before the load don't run on this world's references: an NPC isn't kept in flight for one.
 		modCallBook.Clear();
 		modCall.reset();
@@ -2579,6 +2633,9 @@ namespace NpcSync
 
 	void Reset()
 	{
+		// Each mirror out of its frame copy first, while it is still a mirror (the exit takes only a mirror out), one held there
+		// included: let go to its own AI with the copy kept out of saves, the next save had it in a frame it had not.
+		MirrorFrames::LeaveAll("the session ends");
 		ReleaseMirrors();
 		keptOff.clear();
 		notBrought.clear();
@@ -2589,6 +2646,8 @@ namespace NpcSync
 		sentGear.clear();
 		runBuilds.clear();
 		knownGear.clear();
+		knownFrame.clear();
+		MirrorFrames::Forget();  // LeaveAll above left none in a copy
 		modWork.clear();
 		modRefusedSaid.clear();
 		modNoScript.clear();
