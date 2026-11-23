@@ -15,6 +15,7 @@
 #include "game/GraphInfo.h"
 #include "game/HeldCopy.h"
 #include "game/Hud.h"
+#include "game/LogPace.h"
 #include "game/MenuBadges.h"
 #include "game/MoveSync.h"
 #include "game/NetSim.h"
@@ -376,7 +377,10 @@ namespace RemotePlayers
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
-		std::uint32_t   downedStandIns = 0;  // stand-ins replaced because something here put them down (DownRules::StandInBroken)
+		std::uint32_t   downedStandIns = 0;  // stand-ins knocked down here while their friend was up, and stood up again (StandInDown::KnockedDown)
+		LogPace::Pace   knockedPace;         // ... their log line
+		constexpr float STAND_IN_HEALTH = 10000.0f;  // a stand-in's health (see Spawn)
+		LogPace::Pace   essentialPace;       // stand-ins found no longer essential, and made so again (Puppets::KeepEssential)
 		std::uint32_t   brokenStandIns = 0;  // stand-ins replaced because something here killed or disabled them (DownRules::StandInBroken)
 		std::uint32_t   laidDown = 0;        // stand-ins laid down for their downed friend (DownRules::StandInDown)
 		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
@@ -517,8 +521,8 @@ namespace RemotePlayers
 			return static_cast<std::int32_t>(static_cast<RE::ActorState&>(*a_actor).lifeState);
 		}
 
-		// A dead puppet (killed despite protection, e.g. by a script), or one put down by a hit bigger than its whole
-		// health, is replaced by a fresh one.
+		// Dead (killed despite being essential, e.g. a script's KillEssential), switched off, or down (DownRules::StandInBroken):
+		// a down one is stood up again (StandInDown::KnockedDown, in Update), the others are replaced by a fresh one.
 		bool IsBroken(RE::Actor* a_actor)
 		{
 			return DownRules::StandInBroken(LifeState(a_actor), a_actor->IsDead(false), a_actor->IsDisabled());
@@ -2150,6 +2154,13 @@ namespace RemotePlayers
 				if (values->assistance) {
 					owner->SetActorValue(*values->assistance, StandInCalm::ASSISTANCE);
 				}
+				// Health enough that no one frame's blows put it down: its own (a settler's, about 100 to 190) went in one burst
+				// of an arena robot's fire, so the essential stand-in fell and was stood up again, up to 7 times a minute (rig,
+				// 2026-11-23). Kept full every update (Puppets), it never shows: its name tag is its friend's health, and what a
+				// hit on it sends its friend is the hit's own damage, not what it took off this.
+				if (values->health) {
+					owner->SetActorValue(*values->health, STAND_IN_HEALTH);
+				}
 			}
 			// Their LooksMenu body sliders and overlays, when both games have LooksMenu (LooksMenu keeps them by reference,
 			// not on the base: so on each stand-in).
@@ -3545,19 +3556,33 @@ namespace RemotePlayers
 			}
 			// Down because we laid it down for its downed friend (DownRules::StandInDown) is not broken.
 			const bool laid = actor && remote.standInDown.Laid() && DownRules::IsDownState(LifeState(actor)) && !actor->IsDisabled();
-			if (actor && !laid && IsBroken(actor)) {
-				if (DownRules::IsDownState(LifeState(actor))) {  // the game says dead too while down: only the life state tells
+			// Its essential override kept (a dead one is replaced below, not made essential).
+			const bool dead = actor && DownRules::Dead(LifeState(actor), actor->IsDead(false));
+			if (actor && !dead && !actor->IsDisabled() && Puppets::KeepEssential(actor) && essentialPace.Due(now)) {
+				REX::WARN("RemotePlayers: player {} stand-in {:08X} was no longer essential here (something took its override away); made essential again ({} since the last line, {} in all)",
+					remote.id, actor->GetFormID(), essentialPace.Since(), essentialPace.Count());
+			}
+			// Down here, not by us (a lethal blow on the essential stand-in): it gets up again where it is, or, its friend down too,
+			// lies on as theirs (StandInDown lays it down); replaced only if it won't get up (StandInDown's kReplace, below).
+			const bool knocked = actor && !laid && !actor->IsDisabled() && DownRules::IsDownState(LifeState(actor));
+			if (knocked) {
+				const auto lifeState = LifeState(actor);
+				if (remote.standInDown.KnockedDown(remote.downed, now) == DownRules::StandInDown::Do::kGetUp) {
+					Puppets::SetDown(actor, false);
 					++downedStandIns;
-					REX::INFO("RemotePlayers: player {} stand-in {:08X} was put down here while its friend is {}; placed again", remote.id, actor->GetFormID(), remote.downed ? "down too" : "up");
-				} else {
-					// Killed here despite its protection (an arena's robots, a script), or disabled by something not ours: said, with
-					// who killed it, so a stand-in is never replaced without a word.
-					++brokenStandIns;
-					const auto killer = actor->myKiller.get();
-					REX::WARN("RemotePlayers: player {} stand-in {:08X} {} here (life state {}{}) while its friend is {}; placed again", remote.id, actor->GetFormID(),
-						actor->IsDisabled() ? "was disabled" : "died", LifeState(actor), killer ? std::format(", killed by {}", RefTag::Of(killer.get())) : std::string{ actor->IsDead(false) ? ", killer unknown" : "" },
-						remote.downed ? "down" : "up");
+					if (knockedPace.Due(now)) {
+						REX::INFO("RemotePlayers: player {} stand-in {:08X} knocked down here (life state {}) while its friend is up; stood up again ({} since the last line, {} in all)",
+							remote.id, actor->GetFormID(), lifeState, knockedPace.Since(), knockedPace.Count());
+					}
 				}
+			} else if (actor && !laid && IsBroken(actor)) {
+				// Killed here despite being essential (a script's KillEssential), or disabled by something not ours: said, with who
+				// killed it, so a stand-in is never replaced without a word.
+				++brokenStandIns;
+				const auto killer = actor->myKiller.get();
+				REX::WARN("RemotePlayers: player {} stand-in {:08X} {} here (life state {}{}) while its friend is {}; placed again", remote.id, actor->GetFormID(),
+					actor->IsDisabled() ? "was disabled" : "died", LifeState(actor), killer ? std::format(", killed by {}", RefTag::Of(killer.get())) : std::string{ actor->IsDead(false) ? ", killer unknown" : "" },
+					remote.downed ? "down" : "up");
 				DeleteActor(remote);
 				actor = nullptr;
 			}
@@ -3978,7 +4003,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
-			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} standInsKilled={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, brokenStandIns, respawnWaits, adrift,
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} standInsKnocked={} standInsKilled={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, brokenStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 			if (unseenSaid || unseenRebuilds || unseenReplaced || unseenPlain || unseenKept || seenAgain) {
 				out += std::format(" unseen={}/{}/{}/{}/{}/{}", unseenSaid, unseenRebuilds, unseenReplaced, unseenPlain, unseenKept, seenAgain);

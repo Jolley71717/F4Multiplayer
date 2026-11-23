@@ -149,6 +149,10 @@ namespace Puppets
 	// recovery of its own; it is still put at its target each update, but told no locomotion, aim or draw. Up again, it is
 	// alive again (the engine's get-up) and driven as before. Main thread.
 	void SetDown(RE::Actor* a_actor, bool a_down);
+	// A stand-in is essential through its reference's own override from its placing on (Register), so nothing here kills it
+	// while its friend lives. Made so again if something took that away (a script's SetEssential(false)): true then. Main
+	// thread.
+	bool KeepEssential(RE::Actor* a_actor);
 
 	// Furniture (StandInSeat.h). A held puppet is neither placed nor animated by its target: furniture it is in places and
 	// animates it, and one waiting to get in, or left beside it, stands where it is. Nor is its do-nothing package renewed
