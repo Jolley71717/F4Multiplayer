@@ -447,3 +447,21 @@ TEST("quest filter: Curie's and MacCready's quests, filed under no type, are the
 		CHECK(!QuestFilter::Watched(QuestFilter::Quest{ quest.quest, 0, true, quest.quest == 0x16454E ? "COMCurieQuest" : "COMMacCreadyQuest" }));
 	}
 }
+
+TEST("quest filter: the place fights shared whatever sQuests says are few, sorted, SILENT's, and no faction's or settlement's outcome (QuestFilter::FIGHTS)")
+{
+	for (auto it = std::next(std::begin(QuestFilter::FIGHTS)); it != std::end(QuestFilter::FIGHTS); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::pair{ before.file, before.quest } < std::pair{ it->file, it->quest }));
+	}
+	for (const auto& quest : QuestFilter::FIGHTS) {
+		CHECK(QuestFilter::IsSilent(quest.file, quest.quest));  // shared as SILENT's are, with the story
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsPerGame(quest.file, quest.quest));
+	}
+	CHECK(QuestFilter::IsFight(3, 0x0295C8));   // DLC04GZBattlezone, the RobCo Battlezone's waves
+	CHECK(QuestFilter::IsFight(0, 0x0ABF55));   // DN029FirstWave, the Castle's first mirelurk wave
+	CHECK(!QuestFilter::IsFight(1, 0x032C24));  // DLC03AcadiaDefense: Acadia's defence, a settlement's outcome, stays sQuests = safe's
+	CHECK(!QuestFilter::IsFight(3, 0x035790));  // DLC04MS01SierraAttacks: the same
+	CHECK(!QuestFilter::IsFight(0, 0x0295C8));  // the Battlezone's id in another file
+}
