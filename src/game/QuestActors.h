@@ -299,7 +299,7 @@ namespace QuestActors
 	}
 
 	// How our NPC, not shared yet, is shared now.
-	enum class Report : std::uint8_t
+	enum class ShareAs : std::uint8_t
 	{
 		kWait,   // a friend's live spawn that no NPC of ours is paired with is its twin: not shared, and it pairs with that one
 		kKeyed,  // named with its key (kQuestActor)
@@ -309,12 +309,12 @@ namespace QuestActors
 
 	// a_waitingTwin: a friend's live spawn not paired here is its twin (KeyTwin or SpotTwin). a_keyTaken: a friend's
 	// spawn, live or not, names our key (the server holds it until its owner lets go of it).
-	constexpr Report ReportAs(const Key& a_key, bool a_waitingTwin, bool a_keyTaken)
+	constexpr ShareAs ReportAs(const Key& a_key, bool a_waitingTwin, bool a_keyTaken)
 	{
 		if (a_waitingTwin) {
-			return Report::kWait;
+			return ShareAs::kWait;
 		}
-		return a_key.quest != 0 && !a_keyTaken ? Report::kKeyed : Report::kPlain;
+		return a_key.quest != 0 && !a_keyTaken ? ShareAs::kKeyed : ShareAs::kPlain;
 	}
 
 	// One of our NPCs that could pair with a friend's spawn, as Pick weighs it.

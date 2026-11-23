@@ -1348,12 +1348,12 @@ namespace Spawns
 				c.ready = actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
 				          !NpcSync::IsOurCompanion(actor) && !Leaving(local);
 				c.shared = ours.Shares(local);
-				const bool granted = ours.IdOf(local) != 0;
-				c.yields = granted && QuestActors::Yields(reportedKeyed.contains(local), LocalPlayer(), theirsKeyed, a_copy.spawn.playerId);
+				const bool ownGranted = ours.IdOf(local) != 0;
+				c.yields = ownGranted && QuestActors::Yields(reportedKeyed.contains(local), LocalPlayer(), theirsKeyed, a_copy.spawn.playerId);
 				c.at = SpotOf(actor);
 				// One reported and not answered yet stands for theirs too (it will be refused as its twin, or settled once granted);
 				// one granted that keeps its spawn does not: their game lets go of theirs, and its copy is placed meanwhile.
-				out.oursThere = out.oursThere || (!c.paired && (!c.shared || !granted || c.yields));
+				out.oursThere = out.oursThere || (!c.paired && (!c.shared || !ownGranted || c.yields));
 				refs.push_back(ref);
 				candidates.push_back(c);
 			}
@@ -1996,7 +1996,7 @@ namespace Spawns
 		// A settler names its workbench in the quest's place, with no alias and no twin: the host's game alone has it.
 		auto key = encounter;
 		auto kind = Protocol::SpawnKind::kEncounter;
-		AliasKey plainKey;  // the key of one shared plain because a friend's game shares that alias's already (QuestActors::Report::kPlain)
+		AliasKey plainKey;  // the key of one shared plain because a friend's game shares that alias's already (QuestActors::ShareAs::kPlain)
 		if (settlerBench != 0) {
 			key = { settlerBench, 0 };
 			kind = Protocol::SpawnKind::kSettler;
@@ -2022,7 +2022,7 @@ namespace Spawns
 				}
 			}
 			switch (QuestActors::ReportAs({ canonical.quest, canonical.alias }, waiting, taken)) {
-			case QuestActors::Report::kWait:
+			case QuestActors::ShareAs::kWait:
 				if (twinsNoted.size() >= MAX_BLOCKED_NOTED) {
 					twinsNoted.clear();
 				}
@@ -2033,11 +2033,11 @@ namespace Spawns
 						theirs.Find(twin) ? theirs.Find(twin)->spawn.playerId : 0, twin);
 				}
 				return 0;
-			case QuestActors::Report::kKeyed:
+			case QuestActors::ShareAs::kKeyed:
 				key = canonical;
 				kind = Protocol::SpawnKind::kQuestActor;
 				break;
-			case QuestActors::Report::kPlain:
+			case QuestActors::ShareAs::kPlain:
 				kind = Protocol::SpawnKind::kPlain;
 				plainKey = canonical;
 				break;

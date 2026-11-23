@@ -320,11 +320,11 @@ TEST("quest actors: ours waits for a twin, goes keyed when nobody has its key, e
 	CHECK(Canonical(std::array{ other, min00 }) == other);
 	CHECK(Canonical(std::array{ Key{ 0x001A001C, 22 }, min00 }) == min00);
 	CHECK(Canonical(std::array<Key, 0>{}).quest == 0);
-	CHECK(ReportAs(min00, true, false) == Report::kWait);
-	CHECK(ReportAs({}, true, false) == Report::kWait);  // a spot twin
-	CHECK(ReportAs(min00, false, false) == Report::kKeyed);
-	CHECK(ReportAs(min00, false, true) == Report::kPlain);  // the friend's game shares the alias's (a collection's member past their count)
-	CHECK(ReportAs({}, false, false) == Report::kPlain);
+	CHECK(ReportAs(min00, true, false) == ShareAs::kWait);
+	CHECK(ReportAs({}, true, false) == ShareAs::kWait);  // a spot twin
+	CHECK(ReportAs(min00, false, false) == ShareAs::kKeyed);
+	CHECK(ReportAs(min00, false, true) == ShareAs::kPlain);  // the friend's game shares the alias's (a collection's member past their count)
+	CHECK(ReportAs({}, false, false) == ShareAs::kPlain);
 }
 
 TEST("quest actors: a pairing lasts while ours is there and near, through its death, and ends when their game lets a living one go")
