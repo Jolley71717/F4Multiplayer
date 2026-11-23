@@ -52,16 +52,24 @@ raiders() {
 # place <who>: that game's raider at the marker; PLACED = the new one, held where it stands
 place() {
 	local w=$1 before r; before=$(raiders "$w"); PLACED=""
-	dc "$w" "console $MARKER.placeatme $RAIDER 1" >/dev/null; sleep 2
-	for r in $(raiders "$w"); do grep -qx "$r" <<<"$before" || { PLACED=$r; break; }; done
+	dc "$w" "console $MARKER.placeatme $RAIDER 1" >/dev/null
+	# up to 10 s for it to stand loaded (2 s once missed one); a copy of the friend's placed meanwhile is not ours
+	for i in 1 2 3 4 5; do
+		sleep 2
+		for r in $(raiders "$w" | grep -vxF -f <(printf '%s\n' $(copies_logged "$w") x)); do grep -qx "$r" <<<"$before" || { PLACED=$r; break; }; done
+		[ -n "$PLACED" ] && break
+	done
 	[ -n "$PLACED" ] && dc "$w" "console $PLACED.setrestrained 1" >/dev/null
 }
 fire_until() {
-	local s=$1 t=$2 h0=$3 i h; LANDED=""
+	local s=$1 t=$2 h0=$3 i h c c0; LANDED=""
+	# a hit on a raider the friend's game runs (a paired one) shows in copyHits; its health follows the owner's reports
+	c0=$(field "$(dc $s 'net status')" copyHits)
 	for i in $(seq 1 12); do
 		[ $((i % 4)) -eq 1 ] && { rwalk $s "$t" 300 || true; }
 		dc $s "turnto $t 300 aim" >/dev/null; sleep 0.5; dc $s "click 80" >/dev/null; sleep 1.2
-		h=$(hp $s "$t"); if dead $s "$t" || lower "$h" "$h0"; then LANDED=$i; return 0; fi
+		h=$(hp $s "$t"); c=$(field "$(dc $s 'net status')" copyHits)
+		if dead $s "$t" || lower "$h" "$h0" || lower "$c0" "$c"; then LANDED=$i; return 0; fi
 	done
 	return 1
 }
