@@ -112,8 +112,8 @@ rmark host run; rmark vm run
 say "the host's members switched on (console enable, standing for the quest's script): $MH"
 for r in $MH; do dc host "console $r.enable" >/dev/null; done
 # they come at the players, and a companion or a turret there can kill them before the VM's are on: a dead member is no twin
-# (rightly), so they take far more to kill here
-for r in $MH; do dc host "console $r.setav health 3000" >/dev/null; done
+# (rightly), so they take far more to kill here until the pairs are made; their health is put back before anyone shoots
+declare -A PERM0; for r in $MH; do PERM0[$r]=$(field "$(info host "$r")" permHp); dc host "console $r.setav health 3000" >/dev/null; done
 _up() { local w=$1 r i; shift; for r in "$@"; do i=$(info "$w" "$r"); [ "$(field "$i" 3d)" = true ] && [ "$(field "$i" disabled)" = false ] || return 1; done; }
 scene_live "the host's members stand loaded and switched on" 30 _up host $MH
 _left() { local r d; for r in $MH; do dead host "$r" && continue; d=$(dist_xy "$(xy_of host "$r")" "$MXY"); [ -n "$d" ] && [ "$d" -lt 300 ] && return 1; done; return 0; }
@@ -124,6 +124,9 @@ say "the VM's members switched on: $MV"
 for r in $MV; do dc vm "console $r.enable" >/dev/null; done
 scene_live "the VM's members stand loaded and switched on" 30 _up vm $MV
 sleep 15   # shared or held, copies placed or discarded, pairs made (once a second)
+# the host's members' health as it was (healed, then the maximum back), so a hit is the same share in both games
+for r in $MH; do [ -n "${PERM0[$r]}" ] && ! dead host "$r" && { dc host "console $r.restoreav health 100000" >/dev/null; dc host "console $r.setav health ${PERM0[$r]}" >/dev/null; }; done
+sleep 3
 say "questActors: host [$(qa_of host)] vm [$(qa_of vm)]"
 SH=""; for r in $MV; do SH="$SH $r:owner=$(owner_of vm "$r"),paired_to=$(paired_to vm "$r")"; done
 say "the VM's members as the session has them (owner $HID = paired with the host's, $VID = shared by the VM):$SH"
