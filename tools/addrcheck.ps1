@@ -505,6 +505,24 @@ if ($null -ne $react -and $null -ne $enterCombat) {
 	}
 }
 
+# The hit-effect refresh, whose queued call EffectTasks::Install hooks (src/game/EffectTask.h): the task queue's unpack calls
+# it for message 0x0F at +0x92C (the plugin checks this call itself at load); the message's queueing (2229195) keeps the
+# effect as a bare pointer (mov [rsp+28h],rbx with no lock inc); the refresh calls the controller at +0x10 (lea rcx,[r15+10h])
+# at +0xF3; the controller's own vtable (ID 336901) is ActiveEffectReferenceEffectController's.
+$refresh = Resolve 2226006
+Report ($refresh -eq 0xB74950) ('the hit-effect refresh ID 2226006 is +{0:X}' -f $refresh)
+$unpack = Resolve 2229323
+if ($null -ne $refresh -and $null -ne $unpack) {
+	$at = $unpack + 0x92C
+	$call = BytesAt $at 5
+	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $refresh) ('2229323+0x92C (+{0:X}): the task queue''s unpack calls the hit-effect refresh' -f $at)
+	Report (HexMatches (BytesAt ($refresh + 0xF3) 4) '49 8D 4F 10') 'the hit-effect refresh hands the controller at +0x10 to its update'
+	$queue = Resolve 2229195
+	if ($null -ne $queue) {
+		Report (HexMatches (BytesAt ($queue + 0x35) 13) 'C7 44 24 20 0F 00 00 00 48 89 5C 24 28') 'message 0x0F is queued with the effect as a bare pointer'
+	}
+}
+
 # The inventory list's destructor, whose one call of RemoveAllAgents ExitInventory::Install guards (src/game/ExitInventory.h):
 # at +0x7C it loads the inventory interface's singleton (mov rcx,[rip+disp32]) and at +0x87 calls RemoveAllAgents with
 # it; RemoveAllAgents takes its lock and then reads the agent array's size through this (+0xC8) at +0x27, where the

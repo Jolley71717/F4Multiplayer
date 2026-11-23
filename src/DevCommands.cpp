@@ -9,6 +9,7 @@
 
 #include <random>
 
+#include "game/EffectTasks.h"
 #include "game/CopyWatch.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
@@ -3425,6 +3426,7 @@ namespace DevCommands
 			if (const auto actor = ref->As<RE::Actor>()) {
 				Puppets::Unregister(actor, actor->GetFormID());
 			}
+			EffectTasks::Retire(ref);  // an actor's effects go with its AI process (EffectTask.h)
 			ref->Disable();
 			ref->SetDelete(true);
 			return "ok";
@@ -5263,6 +5265,7 @@ namespace DevCommands
 				}
 				const auto now = std::chrono::steady_clock::now();
 				if (poisonId != ref->GetFormID() || !ref->IsDisabled()) {
+					EffectTasks::Retire(ref);
 					ref->Disable();
 					poisonId = ref->GetFormID();
 					poisonDisabledAt = now;
