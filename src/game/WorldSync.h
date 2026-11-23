@@ -81,9 +81,9 @@ namespace WorldSync
 	// end of its health it goes down and gets up, so going down is never reported as a death, and a death heard
 	// of for it waits until it can die here.
 	[[nodiscard]] bool IsEssential(RE::Actor* a_actor);
-	// Its health has no end here: a maximum that is no finite number above 0 (an NPC a script or the console made immortal
-	// with an infinite health). Nothing fells it in this game, so a friend's damage on it is refused (DamageHold) and a death
-	// heard of for it waits, as an essential one's does, until its health has an end again.
+	// Its health has no end here: a maximum that is no finite number (an NPC a script or the console made immortal with an
+	// infinite health). Nothing fells it in this game, so a friend's damage on it is refused (DamageHold) and a death heard
+	// of for one our game runs waits, as an essential one's does, until its health has an end again.
 	[[nodiscard]] bool HealthWithoutEnd(RE::Actor* a_actor);
 	// Kills it with the console's `kill` (the engine's death path: animation, ragdoll, the quests' and scripts' death
 	// events), which names no killer: no experience, crime or kill of our player's. A protected one (only the player may

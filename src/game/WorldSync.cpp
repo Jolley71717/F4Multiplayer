@@ -508,9 +508,10 @@ namespace WorldSync
 				}
 				return false;
 			}
-			// Its health has no end here (an infinite maximum: a script or the console made it immortal): nothing fells it in
-			// our game, so it is held the same way until its health has an end again.
-			if (HealthWithoutEnd(actor)) {
+			// Its health has no end here (an infinite maximum: a script or the console made it immortal) and our game runs it
+			// (or nobody does): nothing fells it in our game, so it is held the same way until its health has an end again. One
+			// a friend's game runs died there for real: it dies here too, whatever our copy's maximum.
+			if (const auto runner = NpcSync::Owner(a_refId); (runner == 0 || runner == NpcSync::LocalPlayer()) && HealthWithoutEnd(actor)) {
 				if (essentialHeld.insert(a_refId).second) {
 					++essentialHolds;
 					REX::INFO("WorldSync: {:08X}'s health has no end here; its death waits until it can die here", a_refId);
@@ -3107,7 +3108,7 @@ namespace WorldSync
 	bool HealthWithoutEnd(RE::Actor* a_actor)
 	{
 		const auto info = HealthInfo();
-		return a_actor && info && !Protocol::SharableMaximum(static_cast<RE::ActorValueOwner&>(*a_actor).GetPermanentActorValue(*info));
+		return a_actor && info && !std::isfinite(static_cast<RE::ActorValueOwner&>(*a_actor).GetPermanentActorValue(*info));
 	}
 
 	bool IsEssential(RE::Actor* a_actor)
