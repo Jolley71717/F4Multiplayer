@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T05:13:18+00:00",
+ "updated": "2026-11-23T05:44:52+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1566,7 +1566,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Reproducing on the rig (0.21.1); first run: arena not shared by default, friend's robots stay ghosts in their pods"
+   "note": "Not reproduced on the rig against 0.21.1 (shared arena, both directions); two code holes found that could explain it; needs a player log or a narrower repro"
   },
   {
    "id": "d618",
@@ -4154,6 +4154,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 477
+  },
+  {
+   "id": "yf7u",
+   "title": "Nuka-World RobCo Battlezone under the default sQuests = story: a wave started in one game leaves the other game's robots asleep ghosts, so the friend can't hurt the host's wave (and the host's robots sleep through a friend's wave)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found on the rig 2026-11-22 during the Battlezone repro"
   },
   {
    "id": "ygna",
