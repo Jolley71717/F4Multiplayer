@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T19:29:47+00:00",
+ "updated": "2026-11-23T19:54:34+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3185,6 +3185,14 @@
    "note": ""
   },
   {
+   "id": "qg5n",
+   "title": "A quest enemy switched on after the friend's twin of it died is shared plain beside it: an extra enemy for the friend",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found on the rig while testing quest pairing"
+  },
+  {
    "id": "qk3t",
    "title": "Enemy turrets: one player sees turrets firing at the host, who takes no damage",
    "kind": "bug",
@@ -3741,7 +3749,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 3,
-   "note": "Found in review; fixed in the same PR as the non-finite floats",
+   "note": "Fix in PR 562 with the float checks; rig re-run queued",
    "pr": 562
   },
   {
