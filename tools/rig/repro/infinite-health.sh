@@ -13,7 +13,8 @@
 #   2. The host's game gives its raider an infinite health (console <ref>.setav health 1e45 written out, past a float's range):
 #      its permanent health then reads inf. The VM's copy is read 8 s on.
 #   3. The VM shoots its copy (real clicks, up to 24, until one lands in its game).
-#   4. At once, the VM's game kills its copy (console kill, a blow beyond its health). The host's raider is read 8 s on.
+#   4. Right after each click, the VM's game kills its copy (console kill, a blow beyond its health). The host's raider is
+#      read 8 s after the click that landed.
 # REPRO: YES when the VM's copy is set to no health (or dies) after the host's raider's maximum went infinite, or when the VM's
 # landed hit, or the copy's death, fells the host's raider. NO when the copy keeps its health and the host's raider stands
 # after the hit and the copy's death, and its game heard of that death. VOID when the scene could not be made (no raider
@@ -81,32 +82,34 @@ rsince vm inf | grep -E "health|$C|refus" | tail -6 | sed 's/^/  vm| /' | tee -a
 BAD=""
 if dead vm "$C" || zeroish "$CV1"; then BAD="$BAD the VM's copy was set to no health ($CV1) once the host's raider's maximum went infinite;"; fi
 
-# 3. the VM shoots its copy
+# 3. the VM shoots its copy, and 4. at once its game kills the copy (console kill: a blow beyond the copy's health, as a
+# grenade there dealt one on the rig). The server takes a friend's death of a spawn only within 10 s of their fight (this
+# hit), and the rig's reads of the VM take seconds each (2026-11-23: a check between the hit and the kill made it 20 s), so
+# the kill goes right after each click, before any read. A copy killed after a shot that missed has no fight behind it: the
+# server drops that death and the VM's game raises its copy again, and the next shot goes.
 if ! dead vm "$C"; then
 	rmark host shot; rmark vm shot
-	h0=$(hp vm "$C"); n0=$(shots_of vm); LANDED=""
-	# a hit on a copy shows in the copyHits count; the copy's own health follows its owner's reports and may not drop at once
+	n0=$(shots_of vm); LANDED=""
+	# a hit on a copy shows in the copyHits count (its health follows its owner's reports and is given back when refused)
 	ch0=$(field "$(dc vm 'net status')" copyHits)
 	# up to 24, walking in again every 4 (150 u, then 80 u from the 13th: a line that missed from one spot may not from another)
 	for i in $(seq 1 24); do
 		[ $((i % 4)) -eq 1 ] && { rwalk vm "$C" $([ $i -gt 12 ] && echo 80 || echo 150) || true; }
 		dc vm "turnto $C 300 aim" >/dev/null; sleep 0.5; dc vm "click 80" >/dev/null; sleep 1.2
-		h=$(hp vm "$C"); ch=$(field "$(dc vm 'net status')" copyHits)
-		if dead vm "$C" || lower "$h" "$h0" || lower "$ch0" "$ch"; then LANDED=$i; break; fi
+		dc vm "console $C.kill" >/dev/null
+		ch=$(field "$(dc vm 'net status')" copyHits)
+		if lower "$ch0" "$ch"; then LANDED=$i; break; fi
+		sleep 5   # raised again (no fight behind that death)
 	done
 	n1=$(shots_of vm)
 	[ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the VM's clicks fired nothing (shots=$n0 before, $n1 after)"
 	[ -n "$LANDED" ] || verdict VOID "none of the VM's 24 shots at its copy $C landed (shots=$n0 -> $n1)"
-	# 4. at once, the copy dies in the VM's game (console kill: a blow beyond the copy's health, as a grenade there dealt one on
-	# the rig). The server takes a friend's death of a spawn only within 10 s of their fight (this hit), so no read comes first.
-	rmark host death
-	if dead vm "$C"; then KILLED="the hit felled the copy"; else dc vm "console $C.kill" >/dev/null; KILLED="the VM's game killed its copy (console kill)"; fi
 	sleep 8
-	say "[vm shoots] shot $LANDED landed on the copy $C (at $h0 before it); $KILLED; the host's raider $R 8 s on: health $(hp host "$R")$(dead host "$R" && echo ' (dead)')"
+	say "[vm shoots] shot $LANDED landed on the copy $C, and the VM's game killed the copy right after (console kill); the host's raider $R 8 s on: health $(hp host "$R")$(dead host "$R" && echo ' (dead)')"
 	rsince host shot | grep -E "damage on|Spawns: .*($R|no end)" | tail -8 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
 	rsince vm shot | grep -E "CopyWatch|refus|$C" | tail -6 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
 	REFUSED=$(rsince host shot | grep -cE "damage on $R .*refused")
-	KEPT=$(rsince host death | grep -cE "Spawns: player [0-9]+'s copy of our $R .*has no end here")
+	KEPT=$(rsince host shot | grep -cE "Spawns: player [0-9]+'s copy of our $R .*has no end here")
 	dead host "$R" && BAD="$BAD the VM's hit or its copy's death felled the host's raider, whose health is infinite there (hit refused there: $REFUSED);"
 else
 	say "[vm shoots] skipped: the copy is dead already"
