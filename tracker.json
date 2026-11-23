@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T04:50:12+00:00",
+ "updated": "2026-11-23T05:13:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -170,7 +170,7 @@
    "title": "Direct trail launch: castingSource is 0 where the engine's own launch uses 4",
    "kind": "bug",
    "priority": 4,
-   "stage": 1,
+   "stage": 7,
    "note": "Being fixed in PR 468 (shot trails over the wire)"
   },
   {
@@ -290,7 +290,7 @@
    "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged (PR 532): a friend's companion in power armor is shown in it on the friend's game; ships in the next release.",
    "pr": 532
   },
@@ -680,7 +680,7 @@
    "title": "Shared settlement: a host-built turret that fights may be offered as a plain spawn too, leaving friends a second copy beside the workshop copy (from code reading, unverified)",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
+   "stage": 7,
    "note": "Being built for 0.19.0"
   },
   {
@@ -1165,7 +1165,7 @@
    "title": "Pip-Boy badge (PR 173): MenuBadges::Frame runs during loading screens and its static nodes are released only at DLL unload",
    "kind": "bug",
    "priority": 4,
-   "stage": 1,
+   "stage": 7,
    "note": "Being fixed in the stand-in Pip-Boy PR 173"
   },
   {
@@ -1491,7 +1491,7 @@
    "title": "A player's stand-in speaks generic settler lines (not the player's voice) at random times",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged: stand-ins say no settler lines"
   },
   {
@@ -1811,14 +1811,6 @@
    "title": "Shared workshop: a friend's move of the host's piece across a cell's edge is refused and the piece put back",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "ezvl",
-   "title": "Pip-Boy badge over a friend (PR 173) never hangs: the Pip-Boy model is refused for having collision",
-   "kind": "bug",
-   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -2738,7 +2730,7 @@
    "title": "Linux coverage CI fails once a header passes 10000 lines: gcovr 7.0 can't parse gcov block lines of 5-digit line numbers",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 7,
    "note": ""
   },
   {
@@ -2835,7 +2827,7 @@
    "title": "A friend's inert laser beam registers (0-damage) hits on a player in power armor",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 7,
    "note": ""
   },
   {
@@ -3170,14 +3162,6 @@
    "title": "A charged weapon's wind-up isn't shown on a friend's stand-in (laser musket crank, Gauss charge)",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "qhnz",
-   "title": "Gate 0.21.1-rc1: host p99 frame time 4-8.4 ms in 8 of 16 steps",
-   "kind": "bug",
-   "priority": 1,
    "stage": 0,
    "note": ""
   },
@@ -3719,7 +3703,7 @@
    "title": "Localization gaps: name tags, compass marker names, the session-file notices, conversation fallback, key names and Steam status still English in code",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 550
   },
@@ -4039,7 +4023,7 @@
    "title": "PR 173's menu badge source tests assume LF line ends: 2 fail on an eol=crlf checkout",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 7,
    "note": ""
   },
   {
@@ -4049,14 +4033,6 @@
    "priority": 2,
    "stage": 7,
    "note": "Fixed and shipped."
-  },
-  {
-   "id": "xoni",
-   "title": "startsOwned set on a friend's settlement job doesn't stick: reads false 1-2 s after RadiantSync sets it (Defend job, radiant-min)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": "Queued"
   },
   {
    "id": "xr9k",
@@ -4319,7 +4295,7 @@
    "title": "The game runs on behind another window from the moment a host or join starts",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 549
   },
@@ -4440,7 +4416,7 @@
    "title": "Shared settlement: a machinegun or heavy turret built before the session is not shown to friends (the built walk judges its runtime base; from code reading, unverified)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 7,
    "note": ""
   }
  ]
