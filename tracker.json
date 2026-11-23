@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T15:22:07+00:00",
+ "updated": "2026-11-23T15:23:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2939,6 +2939,14 @@
    "stage": 7,
    "note": "PR open: slow-mo stays local; optional group slow-mo for the host; in review",
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
+  },
+  {
+   "id": "nzni",
+   "title": "Copies of NPCs woken by a quest that isn't shared stay asleep ghosts in the other game (generic fix needs a protocol change)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued for a minor release (needs a protocol change)"
   },
   {
    "id": "o0vv",
