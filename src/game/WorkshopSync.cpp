@@ -420,8 +420,8 @@ namespace WorkshopSync
 		bool Push(const Protocol::WorkshopItem& a_item)
 		{
 			// A place, angles or scale the engine hands us as no finite number: friends' games refuse the report. A piece placed
-			// or moved so is not reported (where it went is not known; one that settles is reported again, WorkshopSettle);
-			// one scrapped is, its transform cleared, as that it is gone is what matters.
+			// or moved so is not reported (where it went is not known, and nothing reports it later: the settle watch starts with a
+			// report); one scrapped is, its transform cleared, as that it is gone is what matters.
 			auto item = a_item;
 			if (!Protocol::SaneTransform(item)) {
 				if (item.op != Protocol::WorkshopOp::kScrapped) {

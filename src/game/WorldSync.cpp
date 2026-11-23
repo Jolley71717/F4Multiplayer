@@ -2516,7 +2516,9 @@ namespace WorldSync
 				out.actor = LoadedActor(out.local);
 				facts.loaded = out.actor != nullptr;
 				facts.deadHere = out.actor && out.actor->IsDead(false);
-				facts.hasHealth = out.actor && out.info && static_cast<RE::ActorValueOwner&>(*out.actor).GetPermanentActorValue(*out.info) > 0.0f;
+				// A finite maximum above 0: one set to no end (an NPC made immortal by an infinite health) would take a friend's
+				// share of it as an infinite blow and fall to any hit, where in its own game nothing fells it.
+				facts.hasHealth = out.actor && out.info && Protocol::SharableMaximum(static_cast<RE::ActorValueOwner&>(*out.actor).GetPermanentActorValue(*out.info));
 			}
 			return out;
 		}
