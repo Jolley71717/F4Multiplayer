@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -221,6 +222,44 @@ namespace Protocol
 	[[nodiscard]] inline bool InWorld(float a_v)
 	{
 		return std::isfinite(a_v) && a_v >= -MAX_COORDINATE && a_v <= MAX_COORDINATE;
+	}
+
+	// Every float a game reads from its own state is checked with these before it goes on the wire. The engine can hand
+	// us an infinite value or no number at all (a broken actor value, a physics blow-up, a console command), and a
+	// friend's game either refuses the message, the sender then sending it again and again, or worse, takes it. A sender
+	// skips the report when the next one will do (a position, a health share), or sends it with the bad value cleared
+	// when the message says more than that value (a death, a hit, an item).
+	template <class... T>
+	[[nodiscard]] inline bool Finite(T... a_v)
+		requires(sizeof...(T) > 0 && (std::is_arithmetic_v<T> && ...))
+	{
+		return (std::isfinite(static_cast<double>(a_v)) && ...);
+	}
+	[[nodiscard]] inline bool Finite(std::span<const float> a_v)
+	{
+		return std::ranges::all_of(a_v, [](float a_x) { return std::isfinite(a_x); });
+	}
+	// a_v, or a_cleared when it is no finite number.
+	[[nodiscard]] inline float FiniteOr(float a_v, float a_cleared)
+	{
+		return std::isfinite(a_v) ? a_v : a_cleared;
+	}
+
+	// A health maximum a share can be taken of: a finite number above 0.
+	[[nodiscard]] inline bool SharableMaximum(float a_maximum)
+	{
+		return std::isfinite(a_maximum) && a_maximum > 0.0f;
+	}
+
+	// The share of its maximum an actor's health (or the damage it took) is, 0..1, for a report: none when the maximum
+	// is not a finite number above 0, or the health is no finite number. An infinite maximum would make every share 0
+	// and set a friend's copy to no health; a share from no number is one their game refuses.
+	[[nodiscard]] inline std::optional<float> HealthFraction(float a_health, float a_maximum)
+	{
+		if (!SharableMaximum(a_maximum) || !std::isfinite(a_health)) {
+			return std::nullopt;
+		}
+		return std::clamp(a_health / a_maximum, 0.0f, 1.0f);
 	}
 
 	// Runtime-created references (0xFF......) differ per game, and the player is per game.
@@ -1549,6 +1588,14 @@ namespace Protocol
 
 		bool operator==(const WorkshopItem&) const = default;
 	};
+
+	// A workshop item's place, angles and scale as a report may carry them (the decoder refuses any other): a position
+	// inside the world, finite angles, a scale above 0 and at most 100.
+	[[nodiscard]] inline bool SaneTransform(const WorkshopItem& a_item)
+	{
+		return InWorld(a_item.position[0]) && InWorld(a_item.position[1]) && InWorld(a_item.position[2]) && Finite(a_item.rotation) && std::isfinite(a_item.scale) &&
+		       a_item.scale > 0.0f && a_item.scale <= 100.0f;
+	}
 
 	// One of the sender's own workshop pieces (a reference their game made: something they built), and whether their
 	// game powers it now.

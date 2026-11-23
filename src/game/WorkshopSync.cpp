@@ -255,6 +255,8 @@ namespace WorkshopSync
 		// settlement, sent at once, went past the server's event budget, and it dropped the excess.
 		SendPacer::Queue<Outgoing>                          outgoing{ SendPacer::WORKSHOP_PER_SECOND, SendPacer::WORKSHOP_QUEUED };  // under outLock
 		std::uint32_t                                       dropped = 0;  // reports dropped with the queue full (under outLock)
+		std::atomic<std::uint32_t>                          unsoundRequests{ 0 };  // our requests not sent: numbers the server would refuse (PushShared)
+		std::atomic<std::uint32_t>                          unsoundItems{ 0 };     // our reports not sent: a place, angles or scale friends refuse (Push)
 		bool                                                droppedWarned = false;  // since the queue last ran empty (under outLock)
 		std::map<Key, Copy>                                 copies;
 		WorkshopApply::Twins<Key>                           twins;  // reports another friend's copy stands for (WorkshopApply::TwinOf)
@@ -414,13 +416,28 @@ namespace WorkshopSync
 			lastAuditFrame.reset();
 		}
 
-		// False if it's dropped (too many waiting to be sent).
+		// False if it is not sent: dropped (too many waiting to be sent), or numbers no friend takes.
 		bool Push(const Protocol::WorkshopItem& a_item)
 		{
-			const auto worldScrap = a_item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(a_item.refId) ? a_item.refId : 0;
+			// A place, angles or scale the engine hands us as no finite number: friends' games refuse the report. A piece placed
+			// or moved so is not reported (where it went is not known; one that settles is reported again, WorkshopSettle);
+			// one scrapped is, its transform cleared, as that it is gone is what matters.
+			auto item = a_item;
+			if (!Protocol::SaneTransform(item)) {
+				if (item.op != Protocol::WorkshopOp::kScrapped) {
+					if (unsoundItems++ == 0) {
+						REX::WARN("WorkshopSync: our {:08X} (base {:08X}) is not reported: its place, angles or scale are no numbers friends' games take", item.refId, item.base);
+					}
+					return false;
+				}
+				std::ranges::fill(item.position, 0.0f);
+				std::ranges::fill(item.rotation, 0.0f);
+				item.scale = 1.0f;
+			}
+			const auto worldScrap = item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(item.refId) ? item.refId : 0;
 			{
 				std::scoped_lock l{ outLock };
-				if (!outgoing.Push({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap })) {
+				if (!outgoing.Push({ Protocol::Encode(item, Protocol::MessageType::kReportWorkshopItem), worldScrap })) {
 					++dropped;
 					if (!std::exchange(droppedWarned, true)) {
 						REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.Size());
@@ -433,7 +450,7 @@ namespace WorkshopSync
 			{
 				std::scoped_lock r{ reportedLock };
 				if (reportedInbox.size() < MAX_REPORTED_WAITING) {
-					reportedInbox.push_back(a_item.refId);
+					reportedInbox.push_back(item.refId);
 				} else {
 					first = reportedUnheard++ == 0;
 				}
@@ -4915,6 +4932,19 @@ namespace WorkshopSync
 			}
 		}
 
+		// Our request to the host's game. One the server would refuse (a place, angle or scale the engine handed us as no
+		// finite number) is not sent: it goes as one never answered, as one dropped with the queue full does.
+		void PushShared(const Protocol::WorkshopRequest& a_request)
+		{
+			if (!Protocol::IsValid(a_request)) {
+				if (unsoundRequests++ == 0) {
+					REX::WARN("WorkshopSync: a request ({} at workbench {:08X}) is not sent: its numbers are none the server takes", static_cast<int>(a_request.op), a_request.workshop);
+				}
+				return;
+			}
+			PushShared(Protocol::Encode(a_request, Protocol::MessageType::kReportWorkshopRequest));
+		}
+
 		// The ends of a wire: the references its power links name that are no wire.
 		std::vector<RE::NiPointer<RE::TESObjectREFR>> EndsOf(const RE::TESObjectREFR& a_wire)
 		{
@@ -5397,7 +5427,7 @@ namespace WorkshopSync
 				request.workshop = benchId;
 				request.wireFrom = from->second;
 				request.wireTo = to->second;
-				PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+				PushShared(request);
 				++wiresAsked;
 				REX::INFO("WorkshopSync: wire {:08X} between copies of player {}'s {:08X} and {:08X} taken off and asked of the host as request {}", a_item->GetFormID(), from->first,
 					from->second, to->second, *seq);
@@ -5433,7 +5463,7 @@ namespace WorkshopSync
 					a_item->GetFormID(), base->GetFormID(), benchId, *seq);
 				return true;
 			}
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			++requestsSent;
 			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {}", a_item->GetFormID(), base->GetFormID(), benchId, *seq);
 			return true;
@@ -5454,7 +5484,7 @@ namespace WorkshopSync
 			moved.position = { ref->data.location.x, ref->data.location.y, ref->data.location.z };
 			moved.rotation = { ref->data.angle.x, ref->data.angle.y, ref->data.angle.z };
 			moved.scale = ref->refScale / 100.0f;
-			PushShared(Protocol::Encode(Protocol::IsValid(moved) ? moved : request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(Protocol::IsValid(moved) ? moved : request);
 			++requestsSent;
 			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {} ({})", a_held.piece, request.base, request.workshop, request.seq, a_why);
 		}
@@ -5514,7 +5544,7 @@ namespace WorkshopSync
 			request.op = Protocol::WorkshopRequestOp::kScrap;
 			request.workshop = benchId;
 			request.target = key->second;
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			scrapsAsked.fetch_add(1);
 			REX::INFO("WorkshopSync: the scrap of our copy {:08X} of player {}'s {:08X} at workbench {:08X} asked of the host as request {} (nothing scrapped here)", id, key->first,
 				key->second, benchId, *seq);
@@ -5582,7 +5612,7 @@ namespace WorkshopSync
 			request.op = a_op;
 			request.workshop = a_bench;
 			request.target = id;
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			(store ? storesAsked : scrapsAsked).fetch_add(1);
 			worldAsked.fetch_add(1);
 			REX::INFO("WorkshopSync: the {} of the settlement's own {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {} (nothing {} here)", store ? "store" : "scrap", id,
@@ -5694,7 +5724,7 @@ namespace WorkshopSync
 			request.op = Protocol::WorkshopRequestOp::kStore;
 			request.workshop = benchId;
 			request.target = key->second;
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			storesAsked.fetch_add(1);
 			REX::INFO("WorkshopSync: the store of our copy {:08X} of player {}'s {:08X} at workbench {:08X} asked of the host as request {} (nothing stored here)", id, key->first,
 				key->second, benchId, *seq);
@@ -5719,7 +5749,7 @@ namespace WorkshopSync
 			std::copy(std::begin(a_to.position), std::end(a_to.position), request.position.begin());
 			std::copy(std::begin(a_to.rotation), std::end(a_to.rotation), request.rotation.begin());
 			movesWaiting[*seq] = MoveAsked{ a_from, a_to };
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			++movesAsked;
 			REX::INFO("WorkshopSync: the move of our copy {:08X} of player {}'s {:08X} at workbench {:08X} from {} to {} asked of the host as request {}", id, a_key.first, a_key.second, a_bench,
 				PlaceText(a_from), PlaceText(a_to), *seq);
@@ -5895,7 +5925,7 @@ namespace WorkshopSync
 			request.op = Protocol::WorkshopRequestOp::kRepair;
 			request.workshop = benchId;
 			request.target = key->second;
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			++repairsAsked;
 			REX::INFO("WorkshopSync: the repair of our copy {:08X} of player {}'s {:08X} at workbench {:08X} asked of the host as request {} (nothing repaired here)", id, key->first,
 				key->second, benchId, *seq);
@@ -8243,7 +8273,7 @@ namespace WorkshopSync
 				return true;
 			}
 			request.seq = *seq;
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			++assignsAsked;
 			REX::INFO("WorkshopSync: our player's job for the settler {:08X} (the session's {:08X}) at the host's {:08X} (ours {:08X}), workbench {:08X}, asked of the host as request {} (nothing assigned here)",
 				settlerId, session, request.target, targetId, given.bench, *seq);
@@ -8386,7 +8416,7 @@ namespace WorkshopSync
 				return true;
 			}
 			request.seq = *seq;
-			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			PushShared(request);
 			++transfersAsked;
 			REX::INFO("WorkshopSync: our player's {} for the settler {:08X} (the session's {:08X}) at workbench {:08X} to location {:08X} asked of the host as request {} (nothing sent here)",
 				Protocol::OpName(request.op), settlerId, session, picked.bench, location, *seq);
@@ -9692,7 +9722,7 @@ namespace WorkshopSync
 		request.workshop = benchId;
 		request.wireFrom = from->second;
 		request.wireTo = to->second;
-		PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+		PushShared(request);
 		++wiresAsked;
 		return std::format("requested seq={} wire between player {}'s {:08X} and {:08X} at workbench {:08X}", *seq, from->first, from->second, to->second, benchId);
 	}

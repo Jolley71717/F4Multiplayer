@@ -153,7 +153,7 @@ namespace SpawnBook
 		case Block::kNoBase:
 			return "no base the friend's game can place it from";
 		case Block::kNoPlace:
-			return "not in a cell or a worldspace";
+			return "not in a cell or a worldspace, or at no finite spot";
 		default:
 			return "none";
 		}

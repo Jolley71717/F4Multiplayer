@@ -1204,6 +1204,13 @@ namespace QuestSync
 					msg.globals.clear();
 					return msg;
 				}
+				// One that is no finite number would have friends' games refuse the stage itself: it goes without its globals, as
+				// for one this game lacks.
+				if (!Protocol::Finite(global->value)) {
+					REX::WARN("QuestSync: {:08X} stage {} carries {:08X}, whose value is no number; reported without its globals (friends won't set it)", id, a_stage, globalId);
+					msg.globals.clear();
+					return msg;
+				}
 				msg.globals.push_back({ globalId, global->value });
 				listed += std::format("{}{:08X}={}", listed.empty() ? "" : ", ", globalId, global->value);
 			}

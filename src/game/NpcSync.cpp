@@ -946,7 +946,11 @@ namespace NpcSync
 				if (actor->IsSneaking()) {
 					state.flags |= Protocol::kSneaking;
 				}
-				states.push_back(state);
+				// One whose position, heading or speed the engine hands us as no finite number (or far outside any world) is
+				// left out of this send: friends' games refuse a whole list for one such state, every NPC's in it with it.
+				if (state.IsFinite()) {
+					states.push_back(state);
+				}
 			}
 			fastNpcs = fast;
 			SendList(states, [](const std::vector<Protocol::ActorState>& a) { return Protocol::Encode(a, Protocol::MessageType::kActorStates); }, false);
@@ -1616,6 +1620,9 @@ namespace NpcSync
 			state.y = at.y;
 			state.z = at.z;
 			state.heading = heading;
+			if (!state.IsFinite()) {
+				return std::nullopt;  // not sent, as an NPC's state that is no number is not (SendOwnedStates)
+			}
 			sentFrames[a_id] = { at, heading, a_now };
 			++frameStates;
 			return state;

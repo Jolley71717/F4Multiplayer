@@ -182,6 +182,12 @@ namespace RackDisplays
 			if ((spot.cell == 0 && spot.worldspace == 0) || !RackShare::SameSpace(spot, rackSpot)) {
 				return std::nullopt;
 			}
+			// A place or angle the engine hands us as no finite number: friends' games refuse the whole list for it, and as such
+			// a value never equals itself, the list would be found changed and sent again at every scan.
+			if (!Protocol::InWorld(spot.x) || !Protocol::InWorld(spot.y) || !Protocol::InWorld(spot.z) || !Protocol::Finite(rackSpot.x, rackSpot.y, rackSpot.z) ||
+				!Protocol::Finite(a_ref->data.angle.x, a_ref->data.angle.y, a_ref->data.angle.z)) {
+				return std::nullopt;
+			}
 			RackWeapon entry;
 			entry.key = a_ref->GetFormID();
 			entry.item = std::move(*item);

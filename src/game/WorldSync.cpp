@@ -329,8 +329,13 @@ namespace WorldSync
 			outgoing.push_back(std::move(a_packet));
 		}
 
-		void ReportDead(const Protocol::ActorDeath& a_death)
+		void ReportDead(Protocol::ActorDeath a_death)
 		{
+			// Where the corpse lies, when the engine hands us no finite number for it, is told as unknown (all zero): the
+			// server refuses a death with such a spot, and the death is what matters.
+			if (!Protocol::InWorld(a_death.x) || !Protocol::InWorld(a_death.y) || !Protocol::InWorld(a_death.z)) {
+				a_death.x = a_death.y = a_death.z = 0.0f;
+			}
 			Queue(Protocol::Encode(a_death, Protocol::MessageType::kReportDeath));
 			++reported;
 		}
@@ -952,16 +957,17 @@ namespace WorldSync
 				}
 				const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float maximum = values.GetPermanentActorValue(a_info);
-				if (maximum <= 0.0f) {
+				// A maximum that is not a finite number above 0, or a health that is no number, has no share to tell: an
+				// infinite maximum would make it 0 and set friends' copies to no health. The NPC is left out (and dropped
+				// from the book) until its numbers are sound again.
+				const auto fraction = Protocol::HealthFraction(values.GetActorValue(a_info), maximum);
+				if (!fraction) {
 					continue;
 				}
 				seen.insert(wire);
-				const float fraction = std::clamp(values.GetActorValue(a_info) / maximum, 0.0f, 1.0f);
-				// A maximum that is no number is not said (0): the report is the fraction's, and a friend's game refuses none
-				// for it. One that moved while the fraction stood (a console command on an unhurt NPC) is due as well.
-				const float said = std::isfinite(maximum) ? maximum : 0.0f;
-				if (healthShare.Due(wire, fraction, a_now, said)) {
-					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, said }, Protocol::MessageType::kReportHealth));
+				// One whose maximum moved while the fraction stood (a console command on an unhurt NPC) is due as well.
+				if (healthShare.Due(wire, *fraction, a_now, maximum)) {
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, *fraction, 0, 0, maximum }, Protocol::MessageType::kReportHealth));
 				}
 			}
 			healthShare.Prune([&](std::uint32_t a_wire) { return seen.contains(a_wire); }, a_now);
@@ -1027,7 +1033,10 @@ namespace WorldSync
 				const auto victim = target->As<RE::Actor>();
 				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker) || Protocol::IsSpawnRef(attacker))) {
 					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
-						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
+						// An infinite blow (a console or script kill) still lands: sent as the largest number, which the server
+						// holds to its cap per hit. One that is no number fails the test and is not sent.
+						const float damage = (std::min)(a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage,
+							std::numeric_limits<float>::max());
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
 							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker, a_event.hitData.flags.any(RE::HitData::Flag::kExplosion), CopyWatch::SourceOf(a_event) });
@@ -3267,11 +3276,10 @@ namespace WorldSync
 				}
 				const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float maximum = values.GetPermanentActorValue(*info);
-				if (maximum > 0.0f) {
-					const float fraction = values.GetActorValue(*info) / maximum;
-					const float said = std::isfinite(maximum) ? maximum : 0.0f;  // no number: not said, the report still goes
-					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, said }, Protocol::MessageType::kReportHealth));
-					healthShare.Sent(wire, fraction, Clock::now(), said);
+				// None when the maximum is not a finite number above 0 or the health is no number (ShareHealth).
+				if (const auto fraction = Protocol::HealthFraction(values.GetActorValue(*info), maximum)) {
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, *fraction, 0, 0, maximum }, Protocol::MessageType::kReportHealth));
+					healthShare.Sent(wire, *fraction, Clock::now(), maximum);
 				}
 			}
 		}
