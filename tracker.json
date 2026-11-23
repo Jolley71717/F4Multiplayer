@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T17:01:22+00:00",
+ "updated": "2026-11-23T17:39:32+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -4190,8 +4190,8 @@
    "title": "Nuka-World RobCo Battlezone under the default sQuests = story: a wave started in one game leaves the other game's robots asleep ghosts, so the friend can't hurt the host's wave (and the host's robots sleep through a friend's wave)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix built (PR 564); testing on the rig",
+   "stage": 5,
+   "note": "Fixed on main (PR 564); goes out in the next release",
    "pr": 564
   },
   {
