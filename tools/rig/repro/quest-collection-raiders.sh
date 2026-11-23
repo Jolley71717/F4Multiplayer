@@ -6,20 +6,21 @@
 # runtime ids. 0.21.1-rc keyed the collection's hostile members with the collection's alias, as it keys a single alias's: the game
 # that shared its members first owned the alias, the friend's game held all of its own members back as their twins, and nothing
 # pairs a collection's members, so the friend's raiders were shared with nobody: the other player never saw them and could not
-# hurt them, and a hit on them stayed in the friend's game (an audit of PR 552). In 0.21.0, and with the fix, a collection's
-# members are plain spawns: each game shares its own, and each has copies of the friend's.
+# hurt them, and a hit on them stayed in the friend's game (an audit of PR 552). In 0.21.0 and 0.21.1 a collection's members are
+# plain spawns: each game shares its own beside its copies of the friend's, so each player sees the raiders twice. With the fix
+# a collection's members are keyed and paired: the VM's members stand for the host's (paired, no copies beside them).
 #   1. Both games run the quest (console startquest MS09Mission01 in a game where it is not running, said), both players go to the
 #      marker (console player.moveto 0019A7F6, said), each with a 10mm and its rounds (console additem), and walk (the pad) about
 #      1000 u from it. Each game's collection members are found there (runtime raiders near the marker, in a quest alias, still
 #      switched off, not the leader): at least two in each game, else VOID.
 #   2. The host's members are switched on first (console <ref>.enable in the host's game, standing for the quest's script), so the
 #      host's game shares them first; once they have left the marker (they come at the players), the VM's are switched on.
-#   3. The VM shoots one of its own members (real clicks, up to 12, until one lands in its game): the host's copy of it must take
-#      the hit (lower health, or dead). Then the host shoots its copy of another of the VM's members: the VM's member must take it.
-# REPRO: YES when a direction's hit stays in the shooter's game: the host's game has no copy of the VM's raiders at all (the VM's
-# were shared with nobody: the bug), or its copy did not change. NO when both directions' hits reach the other game. VOID when the
-# scene could not be made (members not found or not switched on, the VM's raiders shared but every copy withheld by the same-spot
-# rule, no shot landing in 12, a click that fired nothing).
+#   3. The VM shoots one of its paired members (real clicks, up to 12, until one lands in its game): one of the host's members must
+#      take the hit (lower health, or dead). Then the host shoots one of its own members: one of the VM's paired members must take it.
+# REPRO: YES when a game holds copies of the friend's members beside its own (doubled), when a VM member is paired with none,
+# or when a landed hit stays in the shooter's game. NO when the VM's members are paired with no copies and both directions' hits
+# reach the other game. VOID when the scene could not be made (members not found or not switched on, no shot landing in 12, a
+# click that fired nothing).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 QUEST=${QUEST:-000503B8}          # Special Delivery (MS09Mission01)
@@ -36,6 +37,10 @@ hp() { field "$(info "$1" "$2")" hp; }
 dead() { [ "$(field "$(info "$1" "$2")" dead)" = true ]; }
 xy_of() { local i; i=$(info "$1" "$2"); echo "$(field "$i" x) $(field "$i" y)"; }
 owner_of() { field "$(dc "$1" "ghosts $2")" owner; }
+# paired_to <who> <ref>: the player whose spawn that game's own NPC is paired with, from its log (the last pair or unpair line
+# naming it: "<ref>, our twin of player N's ... is paired with it", "<ref>, our quest's creature paired with player N's ..., is
+# our game's alone again"), empty when none. dev mirror and ghosts read the session's id, which a paired NPC does not carry.
+paired_to() { local l; l=$(rlog "$1" | grep -aE "Spawns: $2, our (twin of player [0-9]+'s|quest's creature paired with player)" | tail -1); grep -q 'is paired with it' <<<"$l" && grep -oE 'our twin of player [0-9]+' <<<"$l" | grep -oE '[0-9]+$'; }
 running() { local f; f=$(field "$(dc "$1" "stages $QUEST")" flags); [ -n "$f" ] && (( 16#$f & 1 )); }
 shots_of() { dc "$1" "net status" | grep -oE ' shots=[0-9]+' | head -1 | cut -d= -f2; }
 qa_of() { dc "$1" "net status" | grep -oE 'questActors: [^;]*' | head -1 | cut -c1-120; }
@@ -106,27 +111,39 @@ rmark host run; rmark vm run
 # 2. the host's members on first, then the VM's once the host's have left the marker
 say "the host's members switched on (console enable, standing for the quest's script): $MH"
 for r in $MH; do dc host "console $r.enable" >/dev/null; done
+# they come at the players, and a companion or a turret there can kill them before the VM's are on: a dead member is no twin
+# (rightly), so they take far more to kill here until the pairs are made; their health is put back before anyone shoots
+declare -A PERM0; for r in $MH; do PERM0[$r]=$(field "$(info host "$r")" permHp); dc host "console $r.setav health 3000" >/dev/null; done
 _up() { local w=$1 r i; shift; for r in "$@"; do i=$(info "$w" "$r"); [ "$(field "$i" 3d)" = true ] && [ "$(field "$i" disabled)" = false ] || return 1; done; }
 scene_live "the host's members stand loaded and switched on" 30 _up host $MH
 _left() { local r d; for r in $MH; do dead host "$r" && continue; d=$(dist_xy "$(xy_of host "$r")" "$MXY"); [ -n "$d" ] && [ "$d" -lt 300 ] && return 1; done; return 0; }
 wait_for 40 _left && say "the host's members have left the marker" || say "the host's members are still near the marker after 40 s (going on)"
+GONE=""; for r in $MH; do dead host "$r" && GONE="$GONE $r"; done
+[ -z "$GONE" ] || verdict VOID "the host's members [$GONE ] died in its game before the VM's were switched on (a dead one is no twin)"
 say "the VM's members switched on: $MV"
 for r in $MV; do dc vm "console $r.enable" >/dev/null; done
 scene_live "the VM's members stand loaded and switched on" 30 _up vm $MV
-sleep 12   # shared, and copies placed
+sleep 15   # shared or held, copies placed or discarded, pairs made (once a second)
+# the host's members' health as it was (healed, then the maximum back), so a hit is the same share in both games
+for r in $MH; do [ -n "${PERM0[$r]}" ] && ! dead host "$r" && { dc host "console $r.restoreav health 100000" >/dev/null; dc host "console $r.setav health ${PERM0[$r]}" >/dev/null; }; done
+sleep 3
 say "questActors: host [$(qa_of host)] vm [$(qa_of vm)]"
-SH=""; for r in $MV; do SH="$SH $r:owner=$(owner_of vm "$r")"; done
-say "the VM's members as the session has them (owner $VID = shared by the VM, 0 = shared with nobody):$SH"
-CH=$(copies host "$VID" | tr '\n' ' ')
-say "the host's copies of the VM's raiders: [$CH]; the VM's copies of the host's: [$(copies vm "$HID" | tr '\n' ' ')]"
-rsince host run | grep -E "Spawns: .*(player $VID's|alias 16|stands where)" | tail -12 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
-rsince vm run | grep -E "Spawns: .*(alias 16|is not shared|player $HID's)" | tail -12 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
-NOSHARE=$(for r in $MV; do [ "$(owner_of vm "$r")" = "$VID" ] || echo "$r"; done | tr '\n' ' ')
-if [ -z "$(echo $CH)" ] && [ -z "$(echo $NOSHARE)" ]; then
-	verdict VOID "the VM's members are shared, but the host's game placed no copy of any (its own raiders on their spots: the same-spot rule), so no hit could be tested"
-fi
+SH=""; for r in $MV; do SH="$SH $r:owner=$(owner_of vm "$r"),paired_to=$(paired_to vm "$r")"; done
+say "the VM's members as the session has them (owner $HID = paired with the host's, $VID = shared by the VM):$SH"
+CH=$(copies host "$VID" | tr '\n' ' '); CV=$(copies vm "$HID" | grep -vxF -f <(printf '%s\n' $MV) | tr '\n' ' ')
+say "the host's copies of the VM's raiders: [$CH]; the VM's copies of the host's raiders (not its own members): [$CV]"
+rsince host run | grep -E "Spawns: .*(player $VID's|alias 16|twin|stands where)" | tail -12 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
+rsince vm run | grep -E "Spawns: .*(alias 16|twin|is not shared|player $HID's)" | tail -12 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
+BAD=""
+[ -n "$(echo $CH)" ] && BAD="$BAD the host's game holds copies of the VM's members [$CH] beside its own [$MH] (doubled);"
+[ -n "$(echo $CV)" ] && BAD="$BAD the VM's game holds copies of the host's members [$CV] beside its own [$MV] (doubled);"
+PAIRED=$(for r in $MV; do [ "$(paired_to vm "$r")" = "$HID" ] && echo "$r"; done | tr '\n' ' ')
+[ -n "$BAD" ] && { rkeep host quest-collection-raiders; rkeep vm quest-collection-raiders; verdict YES "a quest collection's members are each game's own, shared beside the friend's:$BAD"; }
+[ -n "$(echo $PAIRED)" ] || { rkeep host quest-collection-raiders; rkeep vm quest-collection-raiders; verdict YES "no copies, but none of the VM's members [$MV] is paired with a host's (owners:$SH)"; }
+# every member paired: one left over is the VM's own, shared beside the host's (the host shows four raiders for three)
+UNP=$(for r in $MV; do grep -qw "$r" <<<"$PAIRED" || echo "$r"; done | tr '\n' ' ')
+[ -n "$(echo $UNP)" ] && BAD="$BAD the VM's members [$UNP] are paired with none of the host's (owners:$SH);"
 
-BAD=""; DONE=0
 # fire_until <shooter> <target> <hp before>: real clicks until one lands, up to 12; LANDED = the shot that did, empty if none. The
 # shooter walks (the pad) to within 250 u first and again after every 4 that missed: the raiders keep moving on the hillside, and
 # all 10 of a first fix run's shots from 350 u missed (2026-11-22)
@@ -140,55 +157,50 @@ fire_until() {
 	return 1
 }
 
-# 3a. the VM shoots one of its own members
-V1=""; for r in $MV; do dead vm "$r" || { V1=$r; break; }; done
-[ -n "$V1" ] || verdict VOID "none of the VM's members is alive"
+# 3. the VM shoots one of its paired members: one of the host's members must take it; then the host shoots one of its own: one of
+# the VM's members must take it
+DONE=0
+V1=""; for r in $PAIRED; do dead vm "$r" || { V1=$r; break; }; done
+[ -n "$V1" ] || verdict VOID "none of the VM's paired members is alive"
+ALIVE_H=$(for r in $MH; do dead host "$r" || echo "$r"; done | tr '\n' ' ')
 rmark host vm; rmark vm vm
-H0=$(hp vm "$V1"); C1=""; [ -n "$(echo $CH)" ] && C1=$(nearest host "$(xy_of vm "$V1")" $CH)
-C10=""; [ -n "$C1" ] && C10=$(hp host "$C1"); S1=$(snap host $CH)
-say "[vm shoots] its member $V1 at $H0 health (owner $(owner_of vm "$V1")); the host's copy of it: ${C1:-none} ${C10:+at $C10 health}; host copies: $(hps host $CH)"
-[ -n "$C1" ] && { step_aside host "$C1" 400 || true; }
+H0=$(hp vm "$V1"); S1=$(snap host $ALIVE_H)
+say "[vm shoots] its member $V1 (paired) at $H0 health; the host's members: $(hps host $ALIVE_H)"
+step_aside host "$(nearest host "$(xy_of vm "$V1")" $ALIVE_H)" 400 || true   # the host's member nearest where the VM's target stands: ids differ per game
 n0=$(shots_of vm); fire_until vm "$V1" "$H0"; n1=$(shots_of vm)
 [ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the VM's clicks fired nothing (shots=$n0 before, $n1 after)"
 [ -n "$LANDED" ] || verdict VOID "none of the VM's 12 shots at $V1 landed (shots=$n0 -> $n1)"
 sleep 5
-say "[vm shoots] shot $LANDED landed: the VM's $V1 $H0 -> $(hp vm "$V1") (dead=$(dead vm "$V1" && echo true || echo false)); host copies now: $(hps host $CH)"
+say "[vm shoots] shot $LANDED landed: the VM's $V1 $H0 -> $(hp vm "$V1"); the host's members now: $(hps host $ALIVE_H)"
 rsince vm vm | grep -E "CopyWatch: hit|damage on|Spawns: .*$V1" | tail -6 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
-rsince host vm | grep -E "CopyWatch|damage on|health|Spawns: .*player $VID's" | tail -6 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
-if [ -z "$C1" ]; then
-	BAD="$BAD the VM's landed shot on its raider $V1 could reach no raider in the host's game (it has no copy of any of the VM's raiders; the VM's members not shared:${NOSHARE:- none});"
-elif D=$(dropped host "$S1" | tr '\n' ' '); [ -n "$(echo $D)" ]; then
-	say "[vm shoots] the hit reached the host's game (its copies that took it: $D; the one nearest the VM's raider: $C1)"; DONE=$((DONE + 1))
+rsince host vm | grep -E "CopyWatch|damage on|health" | tail -6 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
+if D=$(dropped host "$S1" | tr '\n' ' '); [ -n "$(echo $D)" ]; then
+	say "[vm shoots] the hit reached the host's game (its members that took it: $D)"; DONE=$((DONE + 1))
 else
-	BAD="$BAD the VM's landed shot on its raider $V1 left the host's copy $C1 at $(hp host "$C1") (from $C10);"
+	BAD="$BAD the VM's landed shot on its paired member $V1 left every one of the host's members as it was;"
 fi
 
-# 3b. the host shoots its copy of another of the VM's members
-CH=$(copies host "$VID" | tr '\n' ' ')
-if [ -z "$(echo $CH)" ]; then
-	BAD="$BAD the host's game has no copy of any of the VM's raiders to shoot (the VM's members not shared:${NOSHARE:- none});"
+ALIVE_H=$(for r in $MH; do dead host "$r" || echo "$r"; done | tr '\n' ' ')
+ALIVE_V=$(for r in $PAIRED; do dead vm "$r" || echo "$r"; done | tr '\n' ' ')
+[ -n "$(echo $ALIVE_H)" ] && [ -n "$(echo $ALIVE_V)" ] || verdict VOID "no live member left for the host's turn (host [$ALIVE_H], VM paired [$ALIVE_V])"
+H2=$(nearest host "$(pos_of host)" $ALIVE_H)
+rmark host host; rmark vm host
+H20=$(hp host "$H2"); S2=$(snap vm $ALIVE_V)
+say "[host shoots] its own member $H2 at $H20 health; the VM's paired members: $(hps vm $ALIVE_V)"
+step_aside vm "$(nearest vm "$(xy_of host "$H2")" $ALIVE_V)" 400 || true
+n0=$(shots_of host); fire_until host "$H2" "$H20"; n1=$(shots_of host)
+[ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the host's clicks fired nothing (shots=$n0 before, $n1 after)"
+[ -n "$LANDED" ] || verdict VOID "none of the host's 12 shots at $H2 landed (shots=$n0 -> $n1)"
+sleep 5
+say "[host shoots] shot $LANDED landed: the host's $H2 $H20 -> $(hp host "$H2"); the VM's paired members now: $(hps vm $ALIVE_V)"
+rsince host host | grep -E "CopyWatch: hit|damage on|Spawns: .*$H2" | tail -6 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
+rsince vm host | grep -E "CopyWatch|damage|health" | tail -6 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
+if D=$(dropped vm "$S2" | tr '\n' ' '); [ -n "$(echo $D)" ]; then
+	say "[host shoots] the hit reached the VM's game (its members that took it: $D)"; DONE=$((DONE + 1))
 else
-	C2=$(nearest host "$(pos_of host)" $CH); ALIVE=$(for r in $MV; do dead vm "$r" || echo "$r"; done | tr '\n' ' ')
-	[ -n "$(echo $ALIVE)" ] || verdict VOID "none of the VM's members is alive for the host's turn"
-	V2=$(nearest vm "$(xy_of host "$C2")" $ALIVE)
-	rmark host host; rmark vm host
-	C20=$(hp host "$C2"); V20=$(hp vm "$V2"); S2=$(snap vm $ALIVE)
-	say "[host shoots] its copy $C2 (of the VM's raider nearest it: $V2) at $C20 health; the VM's $V2 at $V20; VM members: $(hps vm $ALIVE)"
-	step_aside vm "$V2" 400 || true
-	n0=$(shots_of host); fire_until host "$C2" "$C20"; n1=$(shots_of host)
-	[ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the host's clicks fired nothing (shots=$n0 before, $n1 after)"
-	[ -n "$LANDED" ] || verdict VOID "none of the host's 12 shots at $C2 landed (shots=$n0 -> $n1)"
-	sleep 5
-	say "[host shoots] shot $LANDED landed: the host's copy $C2 $C20 -> $(hp host "$C2"); the VM's members now: $(hps vm $ALIVE)"
-	rsince host host | grep -E "CopyWatch: hit|damage on|Spawns: .*$C2" | tail -6 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
-	rsince vm host | grep -E "CopyWatch|damage|health" | tail -6 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
-	if D=$(dropped vm "$S2" | tr '\n' ' '); [ -n "$(echo $D)" ]; then
-		say "[host shoots] the hit reached the VM's game (its raiders that took it: $D; the one nearest the copy: $V2)"; DONE=$((DONE + 1))
-	else
-		BAD="$BAD the host's landed shot on its copy $C2 left every one of the VM's members as it was ($V2 at $(hp vm "$V2"), from $V20);"
-	fi
+	BAD="$BAD the host's landed shot on its member $H2 left every one of the VM's paired members as it was;"
 fi
 say "questActors at the end: host [$(qa_of host)] vm [$(qa_of vm)]"
 rkeep host quest-collection-raiders; rkeep vm quest-collection-raiders
-[ -n "$BAD" ] && verdict YES "a hit on a quest collection's raider stayed in the shooter's game:$BAD"
-verdict NO "each landed shot ($DONE direction(s): vm, host) on the VM's collection raiders reached the other game too"
+[ -n "$BAD" ] && verdict YES "a quest collection's paired members did not share a hit:$BAD"
+verdict NO "each game's members pair with the friend's (no copies beside them), and each landed shot ($DONE direction(s): vm, host) reached the other game"

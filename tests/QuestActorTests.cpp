@@ -66,17 +66,13 @@ namespace
 	{
 		return std::ranges::any_of(a_owners, [&](const auto& a_owner) { return a_owner.refId == a_ref && a_owner.playerId == a_player; });
 	}
-
-	PairFacts Pairable()
-	{
-		return { .keyed = true, .questPairs = true, .ours = true, .creature = true, .oursAt = At(1100.0f), .theirsAt = At(1000.0f), .player = At(1500.0f) };
-	}
 }
 
 TEST("quest actors: a quest pairs its creatures only while the session shares it")
 {
 	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC }));
 	CHECK(!QuestPairs({ .shared = false, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC }));  // sQuests = story, or alone
+	CHECK(QuestPairs({ .shared = false, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC }, true));  // ... but an enemy pairs: only the fight is shared
 	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));    // a side quest
 	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));
 	for (const std::int8_t type : std::array<std::int8_t, 6>{ 1, 2, 3, 4, 5, 8 }) {  // the main quest's, the factions', an add-on's story: never, even shared...
@@ -152,6 +148,8 @@ TEST("quest actors: a creature its alias created is named with the alias; a talk
 	CHECK(!Keyed(GunRun(), FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 25));      // Barney: our player talks to him, his scenes are each game's
 	CHECK(!Keyed(GunRun(), 0, MIRELURK_RACE, ANY_RACE_FORM, 26));             // filled by conditions: the plugin's, mirrored already
 	CHECK(!Keyed(GunRun(), 1, MIRELURK_RACE, ANY_RACE_FORM, 26));             // forced
+	CHECK(Keyed(GunRun(), 1, MIRELURK_RACE, ANY_RACE_FORM, 26, true));        // ... but a runtime enemy the quest's script forced into it is
+	CHECK(Keyed(GunRun(), 0, HUMAN_RACE, ANY_RACE_FORM, 26, true));           // ... whatever the fill
 	CHECK(!Keyed(GunRun(), FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 0x10000));  // past what the wire holds
 	auto main = GunRun();
 	main.type = 1;
@@ -184,8 +182,9 @@ TEST("quest actors: an enemy is paired only under the quest's other guards, and 
 {
 	const Quest min00{ .shared = true, .official = true, .flags = 0xAD21, .type = 4 };
 	auto        quest = min00;
-	quest.shared = false;  // the session doesn't share it (sQuests off, or alone)
-	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest.shared = false;  // the session doesn't share it (sQuests = story, sStory = own): the fight is shared all the same
+	CHECK(Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	CHECK(!Keyed(quest, FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 20));  // ... a calm creature of it is not
 	quest = min00;
 	quest.official = false;  // a mod's
 	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
@@ -201,7 +200,7 @@ TEST("quest actors: an enemy is paired only under the quest's other guards, and 
 	quest = min00;
 	quest.perGame = true;
 	CHECK(!Keyed(quest, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 20, true));
-	CHECK(!Keyed(min00, 0, HUMAN_RACE, ANY_RACE_FORM, 5, true));                    // a placed raider the alias found: mirrored already
+	CHECK(Keyed(min00, 0, HUMAN_RACE, ANY_RACE_FORM, 5, true));                     // a runtime raider its script put in the alias (a placed one is never asked)
 	CHECK(!Keyed(min00, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 0x10000, true));    // past what the wire holds
 	CHECK(!Keyed(min00, FILL_CREATED, VERTIBIRD_FLAGS, VERTIBIRD_RACE, 20, true));   // a hostile vertibird: still never
 }
@@ -213,38 +212,158 @@ TEST("quest actors: a vertibird a shared quest's alias created is not named with
 	CHECK(Keyed(GunRun(), FILL_CREATED, VERTIBIRD_FLAGS, ANY_RACE_FORM, 26));  // the same flags in another race still pair
 }
 
-TEST("quest actors: ours from the same alias is paired with a friend's spawn near it, alive, and nobody's yet")
+TEST("quest actors: of our twins of a friend's spawn, the nearest ready one that nobody's spawn holds pairs with it")
 {
-	const float range = SpawnBook::PLACE_RANGE;
-	CHECK(Pairs(Pairable(), range));
-	auto facts = Pairable();
-	facts.keyed = false;  // a spawn like any other
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.over = true;  // dead, or let go of
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.questPairs = false;  // our run of it stopped, or never started
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.ours = false;  // the alias holds none of ours (dead, unloaded, a puppet)
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.creature = false;
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.shared = true;  // ours already: the server granted it to us
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.oursAt = At(1000.0f + PAIR_RANGE + 1.0f);
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.oursAt = At(1000.0f, 0x00000099);  // in another space
-	CHECK(!Pairs(facts, range));
-	facts = Pairable();
-	facts.player = At(1000.0f + range + 1.0f);  // our player far from it: not loaded for us to fight
-	facts.oursAt = At(1000.0f);
-	CHECK(!Pairs(facts, range));
+	const Candidate ready{ .twin = true, .ready = true, .at = At(1100.0f) };
+	CHECK(Pick(std::array{ ready }, At(1000.0f)) == 0);
+	auto c = ready;
+	c.twin = false;  // not its twin (another alias, another NPC, or too far from where theirs was shared)
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 1);
+	c = ready;
+	c.ready = false;  // dead, switched off, unloaded, a puppet or our companion
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 1);
+	c = ready;
+	c.paired = true;  // paired with another friend's spawn already: one to one
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 1);
+	c = ready;
+	c.shared = true;  // ours shared, and it keeps its spawn (theirs lets go)
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 1);
+	c.yields = true;  // ... or lets go of it for theirs
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 0);
+	c = ready;
+	c.at = At(1000.0f + PAIR_RANGE + 1.0f);
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 1);
+	c.at = At(1000.0f, 0x00000099);  // in another space
+	CHECK(Pick(std::array{ c }, At(1000.0f)) == 1);
+	// A collection's members: the nearest free one, then the next for the next spawn.
+	auto far = ready;
+	far.at = At(1600.0f);
+	auto taken = ready;
+	taken.at = At(1010.0f);
+	taken.paired = true;
+	CHECK(Pick(std::array{ far, ready, taken }, At(1000.0f)) == 1);
+	CHECK(Pick(std::array{ far, taken }, At(1000.0f)) == 0);
+	// One of the same NPC is taken before a nearer one of its race alone.
+	auto raceOnly = ready;
+	raceOnly.exact = false;
+	CHECK(Pick(std::array{ raceOnly, far }, At(1000.0f)) == 1);
+	CHECK(Pick(std::array{ raceOnly }, At(1000.0f)) == 0);
+}
+
+TEST("quest actors: a friend's spawn of an alias that keys ours is its twin; a loose alias's only of the same NPC nearby")
+{
+	const Own    ours{ .enemy = true, .firstAt = At(1100.0f), .at = At(1100.0f), .base = 0x0002898B, .original = 0x0002898B };
+	const Theirs spawn{ .keyResolves = true, .sharedAt = At(1000.0f), .at = At(1000.0f), .base = 0x0002898B };
+	CHECK(KeyTwin(ours, spawn, true, Match::kAlias));
+	CHECK(!KeyTwin(ours, spawn, false, Match::kAlias));  // the alias does not hold ours, or does not key it
+	auto over = spawn;
+	over.over = true;
+	CHECK(!KeyTwin(ours, over, true, Match::kAlias));
+	// A created single alias pairs whatever each game rolled; a collection or a script's alias only the same NPC nearby.
+	auto other = spawn;
+	other.base = 0x00012345;
+	CHECK(KeyTwin(ours, other, true, Match::kAlias));
+	CHECK(!KeyTwin(ours, other, true, Match::kNear));
+	other.original = 0x0002898B;  // their roll of the same leveled NPC
+	CHECK(KeyTwin(ours, other, true, Match::kNear));
+	auto apart = spawn;
+	apart.at = At(1100.0f + PAIR_RANGE + 1.0f);
+	CHECK(KeyTwin(ours, apart, true, Match::kAlias));
+	CHECK(!KeyTwin(ours, apart, true, Match::kNear));
+	CHECK(!KeyTwin(ours, apart, true, Match::kPlaced));
+	// An alias filled with an NPC made elsewhere: also shared where ours first stood. Two raiders of one leveled list a
+	// quest gathered near each player are no twins.
+	CHECK(KeyTwin(ours, spawn, true, Match::kPlaced));
+	auto gathered = spawn;
+	gathered.sharedAt = At(1100.0f + SPOT_TWIN + 1.0f);
+	gathered.at = At(1100.0f + SPOT_TWIN + 1.0f);
+	CHECK(KeyTwin(ours, gathered, true, Match::kNear));
+	CHECK(!KeyTwin(ours, gathered, true, Match::kPlaced));
+	// One another system runs (an encounter's, held by a quest's alias as well) pairs only through a created single alias.
+	auto system = ours;
+	system.otherSystem = true;
+	CHECK(KeyTwin(system, spawn, true, Match::kAlias));
+	CHECK(!KeyTwin(system, spawn, true, Match::kNear));
+	CHECK(!KeyTwin(system, spawn, true, Match::kPlaced));
+	// A collection's members, each rolled on its own in each game: one of another NPC but the same race stands for theirs.
+	auto rolled = spawn;
+	rolled.base = 0x00012345;
+	rolled.race = 0x00013746;
+	auto human = ours;
+	human.race = 0x00013746;
+	CHECK(KeyTwin(human, rolled, true, Match::kNear));
+	CHECK(!KeyTwin(ours, rolled, true, Match::kNear));  // our race not known
+	auto creature = human;
+	creature.race = 0x0001D4A7;
+	CHECK(!KeyTwin(creature, rolled, true, Match::kNear));
+	CHECK(!KeyTwin(human, rolled, true, Match::kPlaced));  // a placing is matched by its NPC
+	auto rolledFar = rolled;
+	rolledFar.at = At(1100.0f + PAIR_RANGE + 1.0f);
+	CHECK(!KeyTwin(human, rolledFar, true, Match::kNear));
+}
+
+TEST("quest actors: a script's enemy in no alias is the twin of a friend's spawn of the same NPC their game shared where ours first stood")
+{
+	// Far Harbor's gate siege, Kiddie Kingdom's ghouls: placed at the same marker in each game, in no alias that keys them.
+	const Own    ours{ .enemy = true, .firstAt = At(1000.0f), .at = At(2500.0f), .base = 0x0002898B, .original = 0x0002898B };
+	const Theirs spawn{ .sharedAt = At(1300.0f), .at = At(400.0f), .base = 0x0002898B };
+	CHECK(SpotTwin(ours, spawn));
+	auto far = spawn;
+	far.sharedAt = At(1000.0f + SPOT_TWIN + 1.0f);
+	CHECK(!SpotTwin(ours, far));
+	auto elsewhere = spawn;
+	elsewhere.sharedAt = At(1000.0f, 0x00000099);
+	CHECK(!SpotTwin(ours, elsewhere));
+	auto other = spawn;
+	other.base = 0x00012345;  // another NPC
+	CHECK(!SpotTwin(ours, other));
+	auto keyed = spawn;
+	keyed.keyResolves = true;  // its alias keys NPCs here: that alias's own pairs with it
+	CHECK(!SpotTwin(ours, keyed));
+	auto calm = ours;
+	calm.enemy = false;
+	CHECK(!SpotTwin(calm, spawn));
+	auto system = ours;
+	system.otherSystem = true;  // a radiant's, an encounter's, a settlement attack's: their own systems
+	CHECK(!SpotTwin(system, spawn));
+	auto over = spawn;
+	over.over = true;
+	CHECK(!SpotTwin(ours, over));
+	// Ours wandered off before it was shared: no twin of theirs (it could never pair), so it is shared, not held back.
+	auto wandered = ours;
+	wandered.at = At(400.0f + PAIR_RANGE + 1.0f);
+	CHECK(!SpotTwin(wandered, spawn));
+}
+
+TEST("quest actors: of two twins both shared, the plain one lets go for the keyed one, else the higher player id's")
+{
+	CHECK(Yields(false, 1, true, 2));   // ours plain (shared before it was hostile), theirs keyed
+	CHECK(!Yields(true, 2, false, 1));  // ... and their game keeps none
+	CHECK(Yields(true, 2, true, 1));    // two keys (two quests' aliases each game keyed apart): the higher player id lets go
+	CHECK(!Yields(true, 1, true, 2));
+	CHECK(Yields(false, 2, false, 1));  // two plain ones (a script's raider in each game)
+	CHECK(!Yields(false, 1, false, 2));
+	// Exactly one of the two lets go, whatever the pair.
+	for (const bool a : { false, true }) {
+		for (const bool b : { false, true }) {
+			CHECK(Yields(a, 1, b, 2) != Yields(b, 2, a, 1));
+		}
+	}
+}
+
+TEST("quest actors: ours waits for a twin, goes keyed when nobody has its key, else plain; its key is the lowest that holds it")
+{
+	const Key min00{ 0x001A001C, 20 };  // a raider held by two quests' aliases (Min00's, and another of a lower form ID)
+	const Key other{ 0x0001ED3A, 49 };
+	CHECK(Canonical(std::array{ min00, other }) == other);
+	CHECK(Canonical(std::array{ other, min00 }) == other);
+	CHECK(Canonical(std::array{ Key{ 0x001A001C, 22 }, min00 }) == min00);
+	CHECK(Canonical(std::array<Key, 0>{}).quest == 0);
+	CHECK(ReportAs(min00, true, false) == ShareAs::kWait);
+	CHECK(ReportAs({}, true, false) == ShareAs::kWait);  // a spot twin
+	CHECK(ReportAs(min00, false, false) == ShareAs::kKeyed);
+	CHECK(ReportAs(min00, false, true) == ShareAs::kPlain);  // the friend's game shares the alias's (a collection's member past their count)
+	CHECK(ReportAs({}, false, false) == ShareAs::kPlain);
 }
 
 TEST("quest actors: a pairing lasts while ours is there and near, through its death, and ends when their game lets a living one go")
@@ -357,51 +476,65 @@ TEST("quest actors: an external alias is judged by the alias its chain ends at: 
 	const Quest min00{ .shared = true, .official = true, .flags = 0xAD21, .type = 4 };
 	CHECK(KeyFill(FILL_EXTERNAL, FILL_CREATED) == FILL_CREATED);
 	CHECK(Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20, true));
-	// DN092 itself, not shared here: its own created alias does not key the raider.
+	// DN092 itself, not shared here, keys its enemy too now: the raider is held by both quests' aliases, and is reported
+	// under the lowest key (Canonical), which both games pick alike.
 	const Quest dn092{ .shared = false, .official = true, .flags = 0x8501, .type = 6 };
-	CHECK(!Keyed(dn092, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 10, true));
-	// An alias's own fill is its own; an external alias whose chain ends at a placed or found reference, or breaks, is not keyed.
+	CHECK(Keyed(dn092, FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 10, true));
+	// An alias's own fill is its own; an enemy is keyed through an external alias whatever its chain ends at.
 	CHECK(KeyFill(FILL_CREATED, FILL_NONE) == FILL_CREATED);
 	CHECK(KeyFill(0, FILL_CREATED) == 0);
-	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, 1), HUMAN_RACE, ANY_RACE_FORM, 20, true));          // forced: a placed reference
-	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, 0), HUMAN_RACE, ANY_RACE_FORM, 20, true));          // found by its conditions
-	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_NONE), HUMAN_RACE, ANY_RACE_FORM, 20, true));  // a chain that broke
-	// The shared quest's guards still hold: a calm human, or a quest not shared, is not keyed through an external alias.
+	CHECK(Keyed(min00, KeyFill(FILL_EXTERNAL, 1), HUMAN_RACE, ANY_RACE_FORM, 20, true));          // forced
+	CHECK(Keyed(min00, KeyFill(FILL_EXTERNAL, 0), HUMAN_RACE, ANY_RACE_FORM, 20, true));          // found by its conditions
+	CHECK(Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_NONE), HUMAN_RACE, ANY_RACE_FORM, 20, true));  // a chain that broke
+	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, 1), MIRELURK_RACE, ANY_RACE_FORM, 20));            // a calm creature: only a created one
+	// A calm human is not keyed through an external alias; a calm creature of a quest not shared is not either.
 	CHECK(!Keyed(min00, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20));
 	auto quest = min00;
 	quest.shared = false;
-	CHECK(!Keyed(quest, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	CHECK(Keyed(quest, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20, true));
+	quest.type = QUEST_TYPE_MISC;
+	CHECK(!Keyed(quest, KeyFill(FILL_EXTERNAL, FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 20));
 }
 
-TEST("quest actors: a reference collection's members are never keyed, a reference alias's created NPC of the same quest still is")
+TEST("quest actors: a reference collection's members are keyed with the collection, as a reference alias's created NPC is")
 {
 	// Special Delivery (MS09Mission01, a side quest that runs once) creates its raider reinforcements in the collection
 	// RaiderReinforcements (alias 16) and their leader in the reference alias RaiderReinforcementLeader (alias 18), both
-	// "create reference" at the same marker. The leader pairs with the friend's; the members are shared as plain spawns.
+	// "create reference" at the same marker. Both are keyed: the members pair member by member (Pick).
 	const Quest delivery{ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE };
 	CHECK(AliasFill(REF_ALIAS, FILL_CREATED) == FILL_CREATED);
-	CHECK(AliasFill("RefColl", FILL_CREATED) == FILL_NONE);
+	CHECK(AliasFill(COLLECTION_ALIAS, FILL_CREATED) == FILL_CREATED);
 	CHECK(Keyed(delivery, AliasFill(REF_ALIAS, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 18, true));
-	CHECK(!Keyed(delivery, AliasFill("RefColl", FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 16, true));
-	// A creature in one too: Far Harbor's Walk in the Park (DLC03MQ02, side, runs once) creates its mirelurk waves in the
+	CHECK(Keyed(delivery, AliasFill(COLLECTION_ALIAS, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 16, true));
+	// A creature in one too: Far Harbor's Walk in the Park (DLC03MQ02, runs once) creates its mirelurk waves in the
 	// collections Wave01 and Wave02 (aliases 8 and 9).
 	const Quest walk{ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_SIDE };
-	CHECK(!Keyed(walk, AliasFill("RefColl", FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 8));
-	CHECK(!Keyed(walk, AliasFill("RefColl", FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 9, true));
-	CHECK(Keyed(walk, AliasFill(REF_ALIAS, FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 8));  // the same as a reference alias would be
-	// A collection is not keyed through any fill (an external one, or one its script filled), nor is a location alias.
-	CHECK(AliasFill("RefColl", FILL_EXTERNAL) == FILL_NONE);
-	CHECK(AliasFill("RefColl", 0) == FILL_NONE);
+	CHECK(Keyed(walk, AliasFill(COLLECTION_ALIAS, FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 8));
+	CHECK(Keyed(walk, AliasFill(COLLECTION_ALIAS, FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 9, true));
+	// An empty collection the quest's script fills (Far Harbor's gate siege, DLC03MQ02Fight's Enemies_Wave1: PlaceActorAtMe,
+	// then AddRef) keys its enemies, never a calm creature.
+	CHECK(Keyed(walk, AliasFill(COLLECTION_ALIAS, 0), MIRELURK_RACE, ANY_RACE_FORM, 9, true));
+	CHECK(!Keyed(walk, AliasFill(COLLECTION_ALIAS, 0), MIRELURK_RACE, ANY_RACE_FORM, 9));
+	// A location alias holds no NPC.
 	CHECK(AliasFill("Loc", FILL_CREATED) == FILL_NONE);
 	CHECK(AliasFill("", FILL_CREATED) == FILL_NONE);
+	CHECK(KindOf(REF_ALIAS) == AliasKind::kRef && KindOf(COLLECTION_ALIAS) == AliasKind::kCollection && KindOf("Loc") == AliasKind::kOther);
 	// An external reference alias keeps its chain's fill (Min00's raiders, held by DN092's created aliases).
 	CHECK(KeyFill(AliasFill(REF_ALIAS, FILL_EXTERNAL), FILL_CREATED) == FILL_CREATED);
+	// Only a single alias that created its NPC pairs without its NPC and spot being matched; a collection that created its
+	// members matches the NPC near; one filled with an NPC made elsewhere matches the spot it was placed at too.
+	CHECK(MatchOf(AliasKind::kRef, FILL_CREATED) == Match::kAlias);
+	CHECK(MatchOf(AliasKind::kCollection, FILL_CREATED) == Match::kNear);
+	CHECK(MatchOf(AliasKind::kRef, 1) == Match::kPlaced);
+	CHECK(MatchOf(AliasKind::kCollection, 0) == Match::kPlaced);
+	CHECK(MatchOf(AliasKind::kRef, FILL_NONE) == Match::kPlaced);
 }
 
-TEST("quest actors: two games' members of one collection are both granted, as plain spawns; their keyed reports would not be")
+TEST("quest actors: the server refuses a second game's keyed member of a collection, and grants its plain one (ReportAs sends a member past the friend's count plain)")
 {
-	// The members carry no alias (plain): each game shares its own, and the server grants them all, so each player's
-	// game holds the other's members too. Keyed with the collection's alias, the second game's would have been refused.
+	// Plain members: each game shares its own, and the server grants them all, so each player's
+	// game holds the other's members too. Keyed with the collection's alias, the second game's are refused: a game whose
+	// friend shares the alias already holds its own back to pair them, and sends any past the friend's count plain.
 	constexpr std::uint32_t MS09_MISSION01 = 0x000503B8;
 	constexpr std::uint32_t LVL_RAIDER = 0x0002898B;
 	const auto              raider = [](std::uint32_t a_id, float a_x, std::uint32_t a_quest, std::uint16_t a_alias) {
@@ -423,7 +556,7 @@ TEST("quest actors: two games' members of one collection are both granted, as pl
 	REQUIRE(toAlice.size() == 1);
 	CHECK(toAlice[0].refId == SPAWN3 && toAlice[0].playerId == bob && toAlice[0].quest == 0);
 
-	// What 0.21.1-rc did: Alice's members keyed with the collection's alias, and Bob's refused for them.
+	// Alice's members keyed with the collection's alias, and Bob's refused for them.
 	f.fake->Deliver(1, Report(raider(0xFF00AAAA, 1200.0f, MS09_MISSION01, 16)));
 	Clear(f, { 1, 2 });
 	f.fake->Deliver(2, Report(raider(0xFF00BBBB, 1200.0f, MS09_MISSION01, 16)));
