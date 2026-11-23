@@ -180,19 +180,24 @@ namespace Face
 			face.facialHairColor = IdOf(head->facialHairColor);
 			face.faceDetails = IdOf(head->faceDetails);
 		}
-		face.weight[0] = a_npc->morphWeight.x;
-		face.weight[1] = a_npc->morphWeight.y;
-		face.weight[2] = a_npc->morphWeight.z;
+		// A value that is no finite number (a broken save, a mod's slider) is sent as none (0), or its morph or bone left
+		// out: friends' games refuse a whole face for one, and as no such value equals itself, every check found the face
+		// changed and sent it again.
+		face.weight[0] = Protocol::FiniteOr(a_npc->morphWeight.x, 0.0f);
+		face.weight[1] = Protocol::FiniteOr(a_npc->morphWeight.y, 0.0f);
+		face.weight[2] = Protocol::FiniteOr(a_npc->morphWeight.z, 0.0f);
 		if (const auto sliders = a_npc->morphRegionSliderValues) {
 			for (const float v : *sliders) {
 				if (face.sliders.size() < Protocol::MAX_FACE_SLIDERS) {
-					face.sliders.push_back(v);
+					face.sliders.push_back(Protocol::FiniteOr(v, 0.0f));
 				}
 			}
 		}
 		if (const auto morphs = a_npc->morphSliderValues) {
 			for (const auto& [id, v] : *morphs) {
-				face.morphs.push_back({ id, v });
+				if (Protocol::Finite(v)) {
+					face.morphs.push_back({ id, v });
+				}
 			}
 			// In one order whatever the map's: the face is compared each check, and a differing one goes out again.
 			// Sorted before the cut, so a face over the limit loses the same (highest) ids each time.
@@ -213,7 +218,9 @@ namespace Face
 				b.position[0] = t.position.x, b.position[1] = t.position.y, b.position[2] = t.position.z;
 				b.rotation[0] = t.rotation.x, b.rotation[1] = t.rotation.y, b.rotation[2] = t.rotation.z;
 				b.scale[0] = t.scale.x, b.scale[1] = t.scale.y, b.scale[2] = t.scale.z;
-				face.bones.push_back(b);
+				if (Protocol::Finite(b.position) && Protocol::Finite(b.rotation) && Protocol::Finite(b.scale)) {
+					face.bones.push_back(b);
+				}
 			}
 			static std::size_t bonesLeftOut = 0;
 			const auto         left = FaceHeads::SortAndCap(face.bones, Protocol::MAX_FACE_BONES, &Protocol::FaceBone::region);

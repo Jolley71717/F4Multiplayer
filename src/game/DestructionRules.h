@@ -41,10 +41,10 @@ namespace DestructionRules
 	};
 
 	// The engine's percent of a health: rounded up (GetCurrentDestructionStage). None while never damaged (no health:
-	// the engine's -1) is 100.
+	// the engine's -1) is 100, and so is a health that is no finite number (no percent to take of it).
 	[[nodiscard]] inline int Percent(float a_health, std::uint32_t a_maximum)
 	{
-		if (a_health < 0.0f || a_maximum == 0) {
+		if (!std::isfinite(a_health) || a_health < 0.0f || a_maximum == 0) {
 			return 100;
 		}
 		return static_cast<int>(std::ceil(a_health * 100.0f / static_cast<float>(a_maximum)));
@@ -144,7 +144,13 @@ namespace DestructionRules
 		if (passed <= a_known.passed && (!a_copy.destroyed || a_known.destroyed)) {
 			return std::nullopt;
 		}
-		Protocol::Destruction out{ a_ref, (std::max)(a_copy.health, 0.0f), a_copy.destroyed, false };
+		// A health the engine hands us as no finite number is news only as destroyed, told with none left: friends' games
+		// refuse a whole report for one such health, every other object's in it with it.
+		if (!std::isfinite(a_copy.health) && !a_copy.destroyed) {
+			return std::nullopt;
+		}
+		const float health = std::isfinite(a_copy.health) ? std::clamp(a_copy.health, 0.0f, Protocol::MAX_DESTRUCTIBLE_HEALTH) : 0.0f;
+		Protocol::Destruction out{ a_ref, health, a_copy.destroyed, false };
 		for (std::size_t i = a_known.passed; i < passed; ++i) {
 			out.explode = out.explode || a_stages[i].explosion != 0;
 		}

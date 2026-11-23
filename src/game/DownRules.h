@@ -110,13 +110,16 @@ namespace DownRules
 	// The health friends are told (Party's status), in percent of the maximum; 0 is dead. a_isDead is the game's
 	// IsDead, true while the player is on the ground too; a_onGround is Self::IsDown, down or helped and getting
 	// up, and then the real health is told (at least 1). Helped and still on the ground, the player was told as
-	// no longer down with no health: friends read "Host died", and "is back up" never came.
+	// no longer down with no health: friends read "Host died", and "is back up" never came. A maximum that is infinite
+	// or no number, or a health that is no number, has no share to tell: told as full rather than as all but dead (an
+	// infinite maximum made every share 0, told as 1%).
 	inline std::uint8_t StatusHealth(bool a_isDead, bool a_onGround, float a_current, float a_maximum)
 	{
 		if ((a_isDead && !a_onGround) || a_maximum <= 0.0f) {
 			return 0;
 		}
-		return static_cast<std::uint8_t>(std::clamp(std::lround(a_current / a_maximum * 100.0f), 1L, 100L));
+		const auto fraction = Protocol::HealthFraction(a_current, a_maximum);
+		return fraction ? static_cast<std::uint8_t>(std::clamp(std::lround(*fraction * 100.0f), 1L, 100L)) : std::uint8_t{ 100 };
 	}
 
 	// A reference's own essential setting over its base form's (the engine's ExtraEssentialProtected, which a script's

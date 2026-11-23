@@ -376,7 +376,10 @@ namespace Traps
 				const bool takenByUs = activatedByUs.contains(id);
 				const bool settled = settledWorld && TrapRules::Settled(watch.seenSince, *inWorldSince, a_now);
 				if (const auto state = settled ? TrapRules::Change(watch.kind, watch.last, phase, takenByUs, session) : std::nullopt) {
-					Protocol::TrapState report{ 0, id, *state, watch.interior, watch.worldspace, watch.at.x, watch.at.y, watch.at.z };
+					// A spot the engine hands us as no number is told as the world's origin: friends' games refuse the report
+					// with it, and what the trap did matters more (far from their copy, it is taken as a state, not replayed).
+					const bool                spot = Protocol::InWorld(watch.at.x) && Protocol::InWorld(watch.at.y) && Protocol::InWorld(watch.at.z);
+					const Protocol::TrapState report{ 0, id, *state, watch.interior, watch.worldspace, spot ? watch.at.x : 0.0f, spot ? watch.at.y : 0.0f, spot ? watch.at.z : 0.0f };
 					outgoing.push_back(Protocol::Encode(report));
 					TrapRules::Take(known, report, false, a_now);
 					known[id].applied = true;

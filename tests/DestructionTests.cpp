@@ -92,6 +92,27 @@ TEST("destruction rules: a report goes out when a stage the session hasn't seen 
 	CHECK(!DestructionRules::Due(WAGON, CAR, CAR_HEALTH, { 390.0f, false }, { 4, true }));
 }
 
+TEST("destruction rules: a health that is no number is news only as destroyed, told as none left, so a friend's game takes the report")
+{
+	constexpr float NAN_HEALTH = std::numeric_limits<float>::quiet_NaN();
+	constexpr float INF_HEALTH = std::numeric_limits<float>::infinity();
+	const DestructionRules::Known whole{};
+	CHECK(DestructionRules::Percent(NAN_HEALTH, CAR_HEALTH) == 100);
+	CHECK(DestructionRules::Percent(INF_HEALTH, CAR_HEALTH) == 100);
+	CHECK(DestructionRules::Passed(CAR, NAN_HEALTH, CAR_HEALTH) == 0);
+	// Not destroyed: nothing to say (friends' games refused the whole report for it, every other object's with it).
+	CHECK(!DestructionRules::Due(WAGON, CAR, CAR_HEALTH, { NAN_HEALTH, false }, whole));
+	CHECK(!DestructionRules::Due(WAGON, CAR, CAR_HEALTH, { INF_HEALTH, false }, whole));
+	// Destroyed (a script, with its health broken): said, with none left, and taken.
+	const auto destroyed = DestructionRules::Due(WAGON, CAR, CAR_HEALTH, { NAN_HEALTH, true }, whole);
+	REQUIRE(destroyed);
+	CHECK(destroyed->destroyed);
+	CHECK(destroyed->health == 0.0f);
+	const auto heard = Protocol::DecodeDestructions(Protocol::Encode(Protocol::Destructions{ 0, { Report(WAGON, destroyed->health, true) } }, Protocol::MessageType::kReportDestruction));
+	REQUIRE(heard);
+	CHECK(heard->entries.size() == 1);
+}
+
 TEST("destruction rules: a friend's car goes off here once, for the stages our copy passes now")
 {
 	// Ours is whole; theirs burnt down to the hulk after their shots: ours becomes the hulk and sets off both blasts.

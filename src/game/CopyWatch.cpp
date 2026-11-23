@@ -669,12 +669,16 @@ namespace CopyWatch
 					++unseenHits;  // a killing shot no hit event came for
 				}
 				const float maximum = values.GetPermanentActorValue(*info);
-				if (toldDead || maximum <= 0.0f || damageOut.size() >= MAX_INBOX) {
+				if (toldDead || !Protocol::SharableMaximum(maximum) || damageOut.size() >= MAX_INBOX) {
 					continue;
 				}
 				if (const auto sent = book.TakeOurs(id, game)) {
 					lastDamageSent[id] = now;
-					damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
+					// Damage that is no number is not sent (its game would refuse it); it stays in flight unanswered, given up
+					// on as any lost one is.
+					if (const auto share = Protocol::HealthFraction(sent->amount, maximum)) {
+						damageOut.push_back({ id, *share, sent->seq });
+					}
 					++damageSent;
 					damageTotal += sent->amount;
 					// Only a fall booked as ours is counted and logged as one: what else goes is earlier hits' damage.
@@ -773,15 +777,18 @@ namespace CopyWatch
 				}
 				// What our hits took off it, for the game that runs it (WorldSync sends it), numbered, in flight until answered;
 				// at most every CopyHealth::SEND_EVERY for one copy (what lands meanwhile goes with the next). With no maximum
-				// to take a share of there is nothing to send: forgotten, so it doesn't weigh on every report.
-				if (maximum <= 0.0f) {
+				// to take a share of (none, or one that is no finite number) there is nothing to send: forgotten, so it doesn't
+				// weigh on every report.
+				if (!Protocol::SharableMaximum(maximum)) {
 					book.Discard(id);
 				} else if (damageOut.size() < MAX_INBOX) {
 					const auto last = lastDamageSent.find(id);
 					if (last == lastDamageSent.end() || now - last->second >= CopyHealth::SEND_EVERY) {
 						if (const auto sent = book.TakeOurs(id, game)) {
 							lastDamageSent[id] = now;
-							damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
+							if (const auto share = Protocol::HealthFraction(sent->amount, maximum)) {  // none: no number, not sent
+								damageOut.push_back({ id, *share, sent->seq });
+							}
 							++damageSent;
 							damageTotal += sent->amount;
 						}

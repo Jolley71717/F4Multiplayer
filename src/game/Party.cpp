@@ -1550,6 +1550,9 @@ namespace Party
 			return;  // a second press within PingRules::MIN_GAP: the last ping stands
 		}
 		auto ping = AimedPing(player);
+		if (!Protocol::InWorld(ping.x) || !Protocol::InWorld(ping.y) || !Protocol::InWorld(ping.z)) {
+			return;  // a spot the engine handed us as no number: friends' games would refuse it, and the next press may do
+		}
 		outgoing.push_back(Protocol::Encode(ping, Protocol::MessageType::kPing));
 		++pingsSent;
 		ping.playerId = localId;

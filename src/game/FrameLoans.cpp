@@ -751,13 +751,16 @@ namespace FrameLoans
 				back.spawnId = borrowed.spawnId;
 				back.ended = a_ended;
 				if (!a_ended) {
-					if (const auto at = copy ? SpotOf(copy.get()) : std::nullopt) {
+					// A spot the engine hands us as no number is not told (friends' games would refuse the whole return, its
+					// items with it): the frame is given back as one whose copy we can't place.
+					const auto at = copy ? SpotOf(copy.get()) : std::nullopt;
+					if (at && Protocol::InWorld(at->x) && Protocol::InWorld(at->y) && Protocol::InWorld(at->z)) {
 						back.cell = at->cell;
 						back.worldspace = at->worldspace;
 						back.x = at->x;
 						back.y = at->y;
 						back.z = at->z;
-						back.heading = copy->data.angle.z;
+						back.heading = Protocol::FiniteOr(copy->data.angle.z, 0.0f);
 					}
 					back.items = items;
 				}

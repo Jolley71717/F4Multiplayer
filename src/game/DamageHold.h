@@ -46,7 +46,7 @@ namespace DamageHold
 		std::uint32_t owner = 0;           // who the server says runs the NPC, as our game last heard (0: nobody, or not yet)
 		bool          letGo = false;       // ... and 0 because our game let it go lately (NpcSync::LetGoLately): the damage crossed our release
 		bool          loaded = false;      // loaded here with 3D, in a cell
-		bool          hasHealth = false;   // its maximum health is above 0
+		bool          hasHealth = false;   // its maximum health is a finite number above 0 (Protocol::SharableMaximum)
 	};
 
 	enum class Verdict : std::uint8_t

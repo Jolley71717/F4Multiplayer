@@ -1087,6 +1087,11 @@ namespace Session
 			default:
 				break;
 			}
+			// A position, heading or speed the engine hands us as no finite number (or far outside any world) is not sent:
+			// friends' games would refuse it, and the next sample, a twentieth of a second on, will do.
+			if (!state.IsFinite()) {
+				return std::nullopt;
+			}
 			return state;
 		}
 

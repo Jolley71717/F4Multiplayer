@@ -142,6 +142,9 @@ namespace WorldClock
 			return;
 		}
 		nextReport = now + REPORT_INTERVAL;
+		if (!Protocol::Finite(calendar->gameHour->value, calendar->gameDaysPassed->value)) {
+			return;  // a clock that is no number (a script's or the console's): friends' games would refuse it; the next will do
+		}
 		Protocol::WorldTime time;
 		time.gameHour = std::clamp(calendar->gameHour->value, 0.0f, 23.999f);
 		time.daysPassed = (std::max)(calendar->gameDaysPassed->value, 0.0f);

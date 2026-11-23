@@ -266,7 +266,11 @@ namespace Destructibles
 			if (!report) {
 				return;
 			}
-			// Where it stands, for the server to hold against where we are.
+			// Where it stands, for the server to hold against where we are. Not while that is no finite number: the server
+			// refuses a whole report for one such entry, every other object's in it with it. Looked at again next time.
+			if (!Protocol::Finite(a_ref->data.location.x, a_ref->data.location.y, a_ref->data.location.z)) {
+				return;
+			}
 			const auto [cell, worldspace] = SpaceOf(a_ref);
 			report->cell = cell, report->worldspace = worldspace;
 			report->x = a_ref->data.location.x, report->y = a_ref->data.location.y, report->z = a_ref->data.location.z;

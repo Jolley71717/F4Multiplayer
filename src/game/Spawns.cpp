@@ -299,6 +299,13 @@ namespace Spawns
 			return { 0, cell && cell->worldSpace ? cell->worldSpace->GetFormID() : 0, at.x, at.y, at.z };
 		}
 
+		// A spot a spawn report can carry: in a cell or a worldspace, at a position inside the world. The server refuses
+		// any other (a position the engine hands us as no number), and the spawn would be offered again and again.
+		bool Placeable(const RemoteEdits::Spot& a_at)
+		{
+			return (a_at.cell == 0) != (a_at.worldspace == 0) && Protocol::InWorld(a_at.x) && Protocol::InWorld(a_at.y) && Protocol::InWorld(a_at.z);
+		}
+
 		SpawnBook::Base BaseOf(RE::TESForm* a_form)
 		{
 			const auto npc = a_form ? a_form->As<RE::TESNPC>() : nullptr;
@@ -448,6 +455,7 @@ namespace Spawns
 		// own one a friend killed first. Kills made, protections lifted for them, and deaths that never landed.
 		CopyKill::Book pendingKills;
 		std::uint32_t  killsTried = 0, protectionsLifted = 0, killsGivenUp = 0;
+		std::uint32_t  endlessKept = 0;  // deaths of friends' copies of ours, whose health has no end here: it stands (ApplyDeath)
 
 		// The kill itself (the console's, the engine's death path: animation, ragdoll, the quests' and scripts' death
 		// events). A protected one (only the player may kill it) has that lifted for this kill alone: the console's kill
@@ -1241,8 +1249,8 @@ namespace Spawns
 				if (actor && !actor->IsDead(false) && !actor->IsDeleted() && !actor->IsDisabled() && actor->GetParentCell() && actor->Get3D()) {
 					const auto base = BaseToPlace(actor);
 					const auto at = SpotOf(actor);
-					if (base != 0 && (at.cell == 0) != (at.worldspace == 0)) {
-						outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, id, base, at.cell, at.worldspace, at.x, at.y, at.z, actor->data.angle.z, 0, 0, Protocol::SpawnKind::kPlain },
+					if (base != 0 && Placeable(at)) {
+						outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, id, base, at.cell, at.worldspace, at.x, at.y, at.z, Protocol::FiniteOr(actor->data.angle.z, 0.0f), 0, 0, Protocol::SpawnKind::kPlain },
 							Protocol::MessageType::kReportSpawn));
 						++sharedOn;
 						if (sharedOn <= LOGGED) {
@@ -1987,7 +1995,7 @@ namespace Spawns
 			return 0;
 		}
 		const auto base = BaseToPlace(a_actor);
-		if (const auto block = SpawnBook::ShareBlock(base, (at.cell == 0) != (at.worldspace == 0)); block != SpawnBook::Block::kNone) {
+		if (const auto block = SpawnBook::ShareBlock(base, Placeable(at)); block != SpawnBook::Block::kNone) {
 			NoteBlocked(a_actor, local, block,
 				encounter.quest != 0 ? "a random encounter's" :
 				ownedRadiant != 0    ? "a shared radiant's, made by its start" :
@@ -2070,7 +2078,7 @@ namespace Spawns
 			}
 			++encountersShared;
 		}
-		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias, kind }, Protocol::MessageType::kReportSpawn));
+		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, Protocol::FiniteOr(a_actor->data.angle.z, 0.0f), key.quest, key.alias, kind }, Protocol::MessageType::kReportSpawn));
 		++reported;
 		keyedReported += kind == Protocol::SpawnKind::kQuestActor;
 		if (kind == Protocol::SpawnKind::kQuestActor) {
@@ -2114,7 +2122,7 @@ namespace Spawns
 		}
 		const auto base = a_frame->GetObjectReference();
 		const auto at = SpotOf(a_frame);
-		if (!base || !Protocol::IsShareableRef(base->GetFormID()) || (at.cell == 0) == (at.worldspace == 0)) {
+		if (!base || !Protocol::IsShareableRef(base->GetFormID()) || !Placeable(at)) {
 			return 0;
 		}
 		const auto id = ours.Offer(local, Clock::now(), [](std::uint32_t a_id) { return theirs.Knows(a_id); });
@@ -2122,7 +2130,7 @@ namespace Spawns
 			return 0;
 		}
 		ownFrames.insert(local);
-		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base->GetFormID(), at.cell, at.worldspace, at.x, at.y, at.z, a_frame->data.angle.z }, Protocol::MessageType::kReportSpawn));
+		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base->GetFormID(), at.cell, at.worldspace, at.x, at.y, at.z, Protocol::FiniteOr(a_frame->data.angle.z, 0.0f) }, Protocol::MessageType::kReportSpawn));
 		++framesReported;
 		REX::INFO("Spawns: sharing our frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} as {:08X}", local, base->GetFormID(), at.x, at.y, at.z, at.cell ? at.cell : at.worldspace, *id);
 		return 0;  // not until the server grants it
@@ -2445,6 +2453,15 @@ namespace Spawns
 			local = theirs.Died(a_death.refId);
 			copiesKilled += local != 0;
 		} else if ((local = ours.LocalOf(a_death.refId)) != 0) {
+			// A friend's copy of ours fell, while ours has a health with no end here (an infinite maximum: a script or the
+			// console made it immortal). Nothing fells it in our game, and a friend's damage on it is refused (DamageHold):
+			// it stands, as an essential one does.
+			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local); actor && !actor->IsDead(false) && WorldSync::HealthWithoutEnd(actor)) {
+				if (++endlessKept <= LOGGED) {
+					REX::INFO("Spawns: player {}'s copy of our {:08X} (spawn {:08X}) fell, but its health has no end here: it stands", a_death.playerId, local, a_death.refId);
+				}
+				return;
+			}
 			++oursKilled;  // a friend killed their copy of ours: it dies here too
 		}
 		// Killed now if it can be, else once it stands loaded in the world (TryKills, every frame).
