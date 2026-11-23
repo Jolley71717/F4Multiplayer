@@ -1,4 +1,5 @@
 #include "game/SaveGuard.h"
+#include "game/EffectTasks.h"
 #include "game/DeferredDelete.h"
 #include "game/Equipment.h"
 #include "game/FrameLeftovers.h"
@@ -466,6 +467,7 @@ namespace SaveGuard
 			}
 			if (linger == SaveStrays::Linger::kTurnOff) {
 				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id)) {
+					EffectTasks::Retire(ref);
 					ref->Disable();
 				}
 				noted[a_id].on = false;

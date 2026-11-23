@@ -37,6 +37,7 @@
 #include "Config.h"
 #include "MainThread.h"
 #include "Text.h"
+#include "game/EffectTasks.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
@@ -258,6 +259,7 @@ namespace RemotePlayers
 		void Disable(Grave& a_grave, RE::TESObjectREFR* a_ref, Clock::time_point a_now)
 		{
 			Release(a_grave, a_ref);
+			EffectTasks::Retire(a_ref);  // the disable frees its effects with its AI process: a refresh queued for one is skipped (EffectTask.h)
 			a_ref->Disable();
 			a_grave.disabledAt = a_now;
 		}
@@ -375,6 +377,7 @@ namespace RemotePlayers
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
 		std::uint32_t   downedStandIns = 0;  // stand-ins replaced because something here put them down (DownRules::StandInBroken)
+		std::uint32_t   brokenStandIns = 0;  // stand-ins replaced because something here killed or disabled them (DownRules::StandInBroken)
 		std::uint32_t   laidDown = 0;        // stand-ins laid down for their downed friend (DownRules::StandInDown)
 		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
 		std::uint32_t   wouldNotGetUp = 0;   // stand-ins placed again because they stayed down once their friend was up
@@ -3546,6 +3549,14 @@ namespace RemotePlayers
 				if (DownRules::IsDownState(LifeState(actor))) {  // the game says dead too while down: only the life state tells
 					++downedStandIns;
 					REX::INFO("RemotePlayers: player {} stand-in {:08X} was put down here while its friend is {}; placed again", remote.id, actor->GetFormID(), remote.downed ? "down too" : "up");
+				} else {
+					// Killed here despite its protection (an arena's robots, a script), or disabled by something not ours: said, with
+					// who killed it, so a stand-in is never replaced without a word.
+					++brokenStandIns;
+					const auto killer = actor->myKiller.get();
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} {} here (life state {}{}) while its friend is {}; placed again", remote.id, actor->GetFormID(),
+						actor->IsDisabled() ? "was disabled" : "died", LifeState(actor), killer ? std::format(", killed by {}", RefTag::Of(killer.get())) : std::string{ actor->IsDead(false) ? ", killer unknown" : "" },
+						remote.downed ? "down" : "up");
 				}
 				DeleteActor(remote);
 				actor = nullptr;
@@ -3967,7 +3978,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
-			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} standInsKilled={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, brokenStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 			if (unseenSaid || unseenRebuilds || unseenReplaced || unseenPlain || unseenKept || seenAgain) {
 				out += std::format(" unseen={}/{}/{}/{}/{}/{}", unseenSaid, unseenRebuilds, unseenReplaced, unseenPlain, unseenKept, seenAgain);
