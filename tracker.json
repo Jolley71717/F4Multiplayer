@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T05:44:52+00:00",
+ "updated": "2026-11-23T14:44:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -36,8 +36,8 @@
    "title": "Host crash (abort: pure virtual call, off the main thread) in RobCo Battlezone as wave 54's robots fight a friend's stand-in; the stand-in was re-spawned the same second",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "Found on the rig 2026-11-22 during the Battlezone repro"
+   "stage": 1,
+   "note": "Looking into it"
   },
   {
    "id": "04l0",
@@ -4160,8 +4160,8 @@
    "title": "Nuka-World RobCo Battlezone under the default sQuests = story: a wave started in one game leaves the other game's robots asleep ghosts, so the friend can't hurt the host's wave (and the host's robots sleep through a friend's wave)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Found on the rig 2026-11-22 during the Battlezone repro"
+   "stage": 1,
+   "note": "Looking into it"
   },
   {
    "id": "ygna",
