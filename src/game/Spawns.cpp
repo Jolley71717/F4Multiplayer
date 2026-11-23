@@ -430,6 +430,7 @@ namespace Spawns
 		// own one a friend killed first. Kills made, protections lifted for them, and deaths that never landed.
 		CopyKill::Book pendingKills;
 		std::uint32_t  killsTried = 0, protectionsLifted = 0, killsGivenUp = 0;
+		std::uint32_t  endlessKept = 0;  // deaths of friends' copies of ours, whose health has no end here: it stands (ApplyDeath)
 
 		// The kill itself (the console's, the engine's death path: animation, ragdoll, the quests' and scripts' death
 		// events). A protected one (only the player may kill it) has that lifted for this kill alone: the console's kill
@@ -2174,6 +2175,15 @@ namespace Spawns
 			local = theirs.Died(a_death.refId);
 			copiesKilled += local != 0;
 		} else if ((local = ours.LocalOf(a_death.refId)) != 0) {
+			// A friend's copy of ours fell, while ours has a health with no end here (an infinite maximum: a script or the
+			// console made it immortal). Nothing fells it in our game, and a friend's damage on it is refused (DamageHold):
+			// it stands, as an essential one does.
+			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local); actor && !actor->IsDead(false) && WorldSync::HealthWithoutEnd(actor)) {
+				if (++endlessKept <= LOGGED) {
+					REX::INFO("Spawns: player {}'s copy of our {:08X} (spawn {:08X}) fell, but its health has no end here: it stands", a_death.playerId, local, a_death.refId);
+				}
+				return;
+			}
 			++oursKilled;  // a friend killed their copy of ours: it dies here too
 		}
 		// Killed now if it can be, else once it stands loaded in the world (TryKills, every frame).

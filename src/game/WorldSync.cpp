@@ -508,6 +508,15 @@ namespace WorldSync
 				}
 				return false;
 			}
+			// Its health has no end here (an infinite maximum: a script or the console made it immortal): nothing fells it in
+			// our game, so it is held the same way until its health has an end again.
+			if (HealthWithoutEnd(actor)) {
+				if (essentialHeld.insert(a_refId).second) {
+					++essentialHolds;
+					REX::INFO("WorldSync: {:08X}'s health has no end here; its death waits until it can die here", a_refId);
+				}
+				return false;
+			}
 
 			// The console kill goes through the engine's normal death path (death animation,
 			// ragdoll, quest/script death events), exactly as if it happened here.
@@ -3093,6 +3102,12 @@ namespace WorldSync
 	bool MayClaim(std::uint32_t a_refId, bool a_essential)
 	{
 		return dead.MayClaim(a_refId, Clock::now(), a_essential);
+	}
+
+	bool HealthWithoutEnd(RE::Actor* a_actor)
+	{
+		const auto info = HealthInfo();
+		return a_actor && info && !Protocol::SharableMaximum(static_cast<RE::ActorValueOwner&>(*a_actor).GetPermanentActorValue(*info));
 	}
 
 	bool IsEssential(RE::Actor* a_actor)

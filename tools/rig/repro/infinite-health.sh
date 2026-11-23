@@ -3,8 +3,9 @@
 # this way), and the VM's player sees and shoots it. 0.21.1 took the NPC's health share of an infinite maximum as 0 (health /
 # infinity): the VM's copy was set to no health, and a hit from the VM on its copy was applied in the host's game as
 # share * maximum = an infinite blow, felling an NPC nothing fells there. With the fix no share is sent of a maximum that is no
-# finite number above 0 (the copy keeps its health), and the host's game refuses the friend's hit on it (the copy gets the
-# health back).
+# finite number above 0 (the copy keeps its health), the host's game refuses the friend's hit on it (the copy gets the
+# health back), and a death of the copy in the VM's game (a blow bigger than its health, a grenade there) leaves the host's
+# raider standing (2026-11-23: the fix's first run refused the hit, then a grenade felled the copy and the death felled it).
 #   1. Both players go to an open, flat spot (console player.moveto 0019A7F6, to reach the scene). The host places a raider
 #      400 u in front of it (dev spawnenemies 001AE38D 1 400: made at runtime, shared by the session as
 #      an ambush's) and holds it where it stands (console setrestrained 1); the VM's player walks (the pad) beside the host and
@@ -12,9 +13,11 @@
 #   2. The host's game gives its raider an infinite health (console <ref>.setav health 1e45 written out, past a float's range):
 #      its permanent health then reads inf. The VM's copy is read 8 s on.
 #   3. The VM shoots its copy (real clicks, up to 12, until one lands in its game). The host's raider is read 5 s on.
+#   4. The VM's game kills its copy (console kill, a blow beyond its health). The host's raider is read 10 s on.
 # REPRO: YES when the VM's copy is set to no health (or dies) after the host's raider's maximum went infinite, or when the VM's
-# landed hit fells the host's raider. NO when the copy keeps its health and the host's raider stands after the hit. VOID when
-# the scene could not be made (no raider placed, no copy found, the maximum not infinite, no shot landing in 12).
+# landed hit, or the copy's death, fells the host's raider. NO when the copy keeps its health and the host's raider stands
+# after the hit and the copy's death. VOID when the scene could not be made (no raider placed, no copy found, the maximum
+# not infinite, no shot landing in 12).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 RAIDER=${RAIDER:-001AE38D}
@@ -101,7 +104,16 @@ if ! dead vm "$C"; then
 else
 	say "[vm shoots] skipped: the copy is dead already"
 fi
+# 4. the copy dies in the VM's game (console kill: a blow beyond the copy's health, as a grenade there dealt one on the rig)
+if [ -z "$BAD" ] && ! dead host "$R"; then
+	rmark host death
+	if dead vm "$C"; then say "[copy dies] the copy $C is dead already in the VM's game"; else dc vm "console $C.kill" >/dev/null; say "[copy dies] the VM's game killed its copy $C (console kill)"; fi
+	sleep 10
+	say "[copy dies] the host's raider $R 10 s on: health $(hp host "$R")$(dead host "$R" && echo ' (dead)')"
+	rsince host death | grep -E "Spawns: .*($R|no end)" | tail -4 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
+	dead host "$R" && BAD="$BAD the copy's death in the VM's game felled the host's raider, whose health is infinite there;"
+fi
 rkeep host infinite-health; rkeep vm infinite-health
 dc host "console $R.disable" >/dev/null
 [ -n "$BAD" ] && verdict YES "an NPC with an infinite health maximum is broken across the games:$BAD"
-verdict NO "the copy kept its health ($CV1) once the host's raider's maximum went infinite, and the VM's hit left the host's raider standing"
+verdict NO "the copy kept its health ($CV1) once the host's raider's maximum went infinite, and neither the VM's hit nor the copy's death felled the host's raider"
