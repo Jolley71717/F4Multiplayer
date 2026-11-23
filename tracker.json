@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T17:39:32+00:00",
+ "updated": "2026-11-23T17:42:13+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2679,8 +2679,8 @@
    "title": "A friend's stand-in in the host's game is killed by the host's NPCs while the friend is up, and is replaced each time (5 in 10 min at RobCo Battlezone)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Found on the rig while testing the Battlezone crash fix"
+   "stage": 1,
+   "note": "Looking into how stand-ins are kept alive in the host's game"
   },
   {
    "id": "lvem",
