@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T14:44:21+00:00",
+ "updated": "2026-11-23T14:46:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -907,8 +907,8 @@
    "title": "Enemies a quest's script places (PlaceActorAtMe/PlaceAtMe) are made in each game and shared plain: doubled, or invisible to the friend",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.21.2: one pairing mechanism for quest-made enemies"
   },
   {
    "id": "78ri",
@@ -1105,8 +1105,8 @@
    "title": "Enemies a quest's alias creates stay each game's own when the session doesn't share that quest (sQuests = story, sStory = own) or it has no run-once flag",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.21.2: one pairing mechanism for quest-made enemies"
   },
   {
    "id": "957u",
@@ -3024,8 +3024,8 @@
    "title": "Quest enemies in a reference collection that the quest creates are keyed but never paired: a friend's game keeps its own unshared beside copies",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "PR 557 open and rig-tested; needs its code review",
+   "stage": 1,
+   "note": "Taken on for 0.21.2: one pairing mechanism for quest-made enemies",
    "pr": 557
   },
   {
@@ -3652,8 +3652,8 @@
    "title": "A quest enemy's key is read once, at its first share, and from the first alias that passes: one fighting before it turns on our player, or held by two quests' aliases, can stay unpaired",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.21.2: one pairing mechanism for quest-made enemies"
   },
   {
    "id": "u7rb",
@@ -3730,8 +3730,8 @@
    "title": "Health share: an infinite health maximum sends share 0 and sets friends' copies to 0 health; a NaN maximum sends a report the receiver refuses every 250 ms",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.21.2: one pairing mechanism for quest-made enemies"
   },
   {
    "id": "unyl",
