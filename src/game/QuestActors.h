@@ -53,8 +53,8 @@
 //   the friend's members were shared with nobody), then shared plain (0.21.1: doubled, each game counting only its own
 //   kills);
 // - an alias or a collection the quest's script put a runtime enemy into (PlaceActorAtMe, then ForceRefTo or AddRef: Far
-//   Harbor's gate siege, the Mechanist's robots): the alias is filled the same in every game's run, so it keys the enemy
-//   as a created alias does;
+//   Harbor's gate siege, the Mechanist's robots): the alias is filled the same in every game's run, so it keys the enemy,
+//   matched as a script's placing is (the same NPC, shared where ours first stood: Match::kPlaced);
 // - an enemy a script placed into no alias at all (a respawn, a teleporting synth): no key, but placed at the same marker
 //   in each game, so a friend's spawn of the same NPC that their game shared where ours first stood (SPOT_TWIN) is its twin.
 // An enemy's quest need not be one the session shares (sQuests = story, sStory = own): pairing shares only the fight,
@@ -102,12 +102,25 @@ namespace QuestActors
 		return KindOf(a_type) != AliasKind::kOther ? a_fill : FILL_NONE;
 	}
 
-	// Whether a friend's spawn of that alias pairs only with one of ours of the same NPC standing near it (StandsFor,
-	// PAIR_RANGE): a collection holds several, and an alias the quest's script fills could be filled with another NPC
-	// later. A single alias that created its NPC holds that one alone, rolled from the same leveled NPC in every game.
-	constexpr bool LooseAlias(AliasKind a_kind, std::uint16_t a_keyFill)
+	// How a friend's spawn of an alias that keys our NPC is matched with ours (KeyTwin). A single alias that created its
+	// NPC holds that one alone, rolled from the same leveled NPC in every game; a collection holds several, and an alias
+	// the quest's script fills could be filled with another NPC later.
+	enum class Match : std::uint8_t
 	{
-		return a_kind != AliasKind::kRef || a_keyFill != FILL_CREATED;
+		kAlias,   // a single alias that created its NPC: the alias alone
+		kNear,    // a collection that created its members: the same NPC, standing near (StandsFor, PAIR_RANGE)
+		kPlaced,  // an alias filled with an NPC made elsewhere (a script's, forced in, or found by conditions): the same NPC,
+		          // near, and shared by their game where ours first stood (SPOT_TWIN), as a script places it in each game.
+		          // Without the spot, a quest that gathers enemies near the player (one that starts with the game and
+		          // collects hostiles by conditions) would pair two raiders of one leveled list that only stand near.
+	};
+
+	constexpr Match MatchOf(AliasKind a_kind, std::uint16_t a_keyFill)
+	{
+		if (a_keyFill != FILL_CREATED) {
+			return Match::kPlaced;
+		}
+		return a_kind == AliasKind::kRef ? Match::kAlias : Match::kNear;
 	}
 
 	// The fill an alias is judged by: its own, or for one that holds another quest's alias, the fill of the alias its
@@ -267,24 +280,45 @@ namespace QuestActors
 		std::uint32_t     original = 0;      // their roll's leveled NPC (0: not known yet)
 	};
 
-	// A key twin: their spawn names an alias of ours that keys our NPC (a_holds); for a loose alias (LooseAlias) ours is
-	// also of the same NPC and stands near theirs.
-	constexpr bool KeyTwin(const Own& a_own, const Theirs& a_theirs, bool a_holds, bool a_loose)
+	// Ours and theirs are of the same NPC and stand near each other now.
+	inline bool SameNear(const Own& a_own, const Theirs& a_theirs)
+	{
+		return SpawnBook::StandsFor(a_own.base, a_own.original, a_theirs.base, a_theirs.original) &&
+		       RemoteEdits::Within(RemoteEdits::Distance(a_own.at, a_theirs.at), PAIR_RANGE);
+	}
+
+	// Their game shared theirs where ours first stood.
+	inline bool SameSpot(const Own& a_own, const Theirs& a_theirs)
+	{
+		return RemoteEdits::Within(RemoteEdits::Distance(a_own.firstAt, a_theirs.sharedAt), SPOT_TWIN);
+	}
+
+	// A key twin: their spawn names an alias of ours that keys our NPC (a_holds), matched as a_match says. Past a created
+	// single alias, ours is no NPC another system runs (a random encounter's, a radiant's, a settlement attack's, held by
+	// a quest's alias as well): that system shares or holds it.
+	inline bool KeyTwin(const Own& a_own, const Theirs& a_theirs, bool a_holds, Match a_match)
 	{
 		if (a_theirs.over || !a_holds) {
 			return false;
 		}
-		return !a_loose || (SpawnBook::StandsFor(a_own.base, a_own.original, a_theirs.base, a_theirs.original) &&
-		                       RemoteEdits::Within(RemoteEdits::Distance(a_own.at, a_theirs.at), PAIR_RANGE));
+		switch (a_match) {
+		case Match::kAlias:
+			return true;
+		case Match::kNear:
+			return !a_own.otherSystem && SameNear(a_own, a_theirs);
+		case Match::kPlaced:
+			return !a_own.otherSystem && SameNear(a_own, a_theirs) && SameSpot(a_own, a_theirs);
+		}
+		return false;
 	}
 
 	// A spot twin: their spawn names no alias our game keys anything with, ours is an enemy no other system runs, of the
-	// same NPC, and their game shared theirs within SPOT_TWIN of where ours first stood.
+	// same NPC, their game shared theirs within SPOT_TWIN of where ours first stood, and the two stand near each other now
+	// (PAIR_RANGE): one that wandered off before it was shared stays a spawn of its own, shared, rather than one held
+	// back for a twin it could never pair with (Pick pairs only within PAIR_RANGE).
 	inline bool SpotTwin(const Own& a_own, const Theirs& a_theirs)
 	{
-		return !a_theirs.over && !a_theirs.keyResolves && a_own.enemy && !a_own.otherSystem &&
-		       SpawnBook::StandsFor(a_own.base, a_own.original, a_theirs.base, a_theirs.original) &&
-		       RemoteEdits::Within(RemoteEdits::Distance(a_own.firstAt, a_theirs.sharedAt), SPOT_TWIN);
+		return !a_theirs.over && !a_theirs.keyResolves && a_own.enemy && !a_own.otherSystem && SameNear(a_own, a_theirs) && SameSpot(a_own, a_theirs);
 	}
 
 	// Both games shared their twin already: whether ours lets go of its spawn and pairs with theirs. A keyed spawn

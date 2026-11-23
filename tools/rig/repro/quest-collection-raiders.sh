@@ -151,7 +151,7 @@ ALIVE_H=$(for r in $MH; do dead host "$r" || echo "$r"; done | tr '\n' ' ')
 rmark host vm; rmark vm vm
 H0=$(hp vm "$V1"); S1=$(snap host $ALIVE_H)
 say "[vm shoots] its member $V1 (paired) at $H0 health; the host's members: $(hps host $ALIVE_H)"
-step_aside host "$V1" 400 || true
+step_aside host "$(nearest host "$(xy_of vm "$V1")" $ALIVE_H)" 400 || true   # the host's member nearest where the VM's target stands: ids differ per game
 n0=$(shots_of vm); fire_until vm "$V1" "$H0"; n1=$(shots_of vm)
 [ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the VM's clicks fired nothing (shots=$n0 before, $n1 after)"
 [ -n "$LANDED" ] || verdict VOID "none of the VM's 12 shots at $V1 landed (shots=$n0 -> $n1)"
@@ -172,7 +172,7 @@ H2=$(nearest host "$(pos_of host)" $ALIVE_H)
 rmark host host; rmark vm host
 H20=$(hp host "$H2"); S2=$(snap vm $ALIVE_V)
 say "[host shoots] its own member $H2 at $H20 health; the VM's paired members: $(hps vm $ALIVE_V)"
-step_aside vm "$H2" 400 || true
+step_aside vm "$(nearest vm "$(xy_of host "$H2")" $ALIVE_V)" 400 || true
 n0=$(shots_of host); fire_until host "$H2" "$H20"; n1=$(shots_of host)
 [ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the host's clicks fired nothing (shots=$n0 before, $n1 after)"
 [ -n "$LANDED" ] || verdict VOID "none of the host's 12 shots at $H2 landed (shots=$n0 -> $n1)"

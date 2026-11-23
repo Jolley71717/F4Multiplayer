@@ -699,11 +699,11 @@ namespace Spawns
 			return file && AttackBook::Find(file->GetFilename(), a_quest->GetFormID()) != nullptr;
 		}
 
-		// One alias that keys our NPC (QuestActors::Keyed), and whether a friend's spawn of it pairs only with one of the same
-		// NPC standing near (QuestActors::LooseAlias).
+		// One alias that keys our NPC (QuestActors::Keyed), and how a friend's spawn of it is matched with ours
+		// (QuestActors::MatchOf).
 		struct HeldKey : QuestActors::Key
 		{
-			bool loose = false;
+			QuestActors::Match match = QuestActors::Match::kAlias;
 		};
 
 		struct HeldKeys
@@ -742,7 +742,7 @@ namespace Spawns
 					HeldKey key;
 					key.quest = entry.quest->GetFormID();
 					key.alias = static_cast<std::uint16_t>(entry.alias->aliasID);
-					key.loose = QuestActors::LooseAlias(kind, fill);
+					key.match = QuestActors::MatchOf(kind, fill);
 					out.keys.push_back(key);
 				}
 			}
@@ -827,7 +827,7 @@ namespace Spawns
 			const auto facts = TheirFacts(a_id, a_copy);
 			if (kind == Protocol::SpawnKind::kQuestActor && a_copy.spawn.quest != 0) {
 				if (const auto held = a_keys.Find(a_copy.spawn.quest, a_copy.spawn.alias)) {
-					return QuestActors::KeyTwin(a_own, facts, true, held->loose);
+					return QuestActors::KeyTwin(a_own, facts, true, held->match);
 				}
 			}
 			// A spawn whose alias keys NPCs here is that alias's to pair (it waits for ours there): never a spot twin.
@@ -1340,8 +1340,9 @@ namespace Spawns
 				const auto keys = KeysOf(actor, enemy);
 				QuestActors::Candidate c{ .twin = IsTwinOf(OwnFacts(actor, enemy, keys.otherSystem), keys, a_id, a_copy), .paired = pairedHere };
 				// A calm NPC of a quest whose calm creatures pair stands for their spawn as before (no copy beside it), though
-				// it pairs only once it is a creature or an enemy here (Keyed).
-				const bool standsFor = c.twin || (alias.quest && alias.kind == QuestActors::AliasKind::kRef && QuestActors::QuestPairs(questFacts, enemy));
+				// it pairs only once it is a creature or an enemy here (Keyed). An enemy that is no twin of theirs (another NPC,
+				// or standing elsewhere) does not: a copy of theirs is placed beside it.
+				const bool standsFor = c.twin || (!enemy && alias.quest && alias.kind == QuestActors::AliasKind::kRef && QuestActors::QuestPairs(questFacts, false));
 				if (!standsFor) {
 					continue;
 				}

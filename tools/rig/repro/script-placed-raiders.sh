@@ -124,7 +124,7 @@ for turn in "$P $RP $S $RS" "$S $RS $P $RP"; do
 	rmark host $sh; rmark vm $sh
 	h0=$(hp "$sh" "$t"); oh0=$(hp "$o" "$ot")
 	say "[$sh shoots] its $t at $h0 health; the $o's $ot at $oh0"
-	step_aside "$o" "$t" 400 || true
+	step_aside "$o" "$ot" 400 || true   # its own game's raider: ids differ per game
 	n0=$(shots_of "$sh"); fire_until "$sh" "$t" "$h0"; n1=$(shots_of "$sh")
 	[ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the $sh's clicks fired nothing (shots=$n0 before, $n1 after)"
 	[ -n "$LANDED" ] || verdict VOID "none of the $sh's 12 shots at $t landed (shots=$n0 -> $n1)"

@@ -249,22 +249,37 @@ TEST("quest actors: a friend's spawn of an alias that keys ours is its twin; a l
 {
 	const Own    ours{ .enemy = true, .firstAt = At(1100.0f), .at = At(1100.0f), .base = 0x0002898B, .original = 0x0002898B };
 	const Theirs spawn{ .keyResolves = true, .sharedAt = At(1000.0f), .at = At(1000.0f), .base = 0x0002898B };
-	CHECK(KeyTwin(ours, spawn, true, false));
-	CHECK(!KeyTwin(ours, spawn, false, false));  // the alias does not hold ours, or does not key it
+	CHECK(KeyTwin(ours, spawn, true, Match::kAlias));
+	CHECK(!KeyTwin(ours, spawn, false, Match::kAlias));  // the alias does not hold ours, or does not key it
 	auto over = spawn;
 	over.over = true;
-	CHECK(!KeyTwin(ours, over, true, false));
+	CHECK(!KeyTwin(ours, over, true, Match::kAlias));
 	// A created single alias pairs whatever each game rolled; a collection or a script's alias only the same NPC nearby.
 	auto other = spawn;
 	other.base = 0x00012345;
-	CHECK(KeyTwin(ours, other, true, false));
-	CHECK(!KeyTwin(ours, other, true, true));
+	CHECK(KeyTwin(ours, other, true, Match::kAlias));
+	CHECK(!KeyTwin(ours, other, true, Match::kNear));
 	other.original = 0x0002898B;  // their roll of the same leveled NPC
-	CHECK(KeyTwin(ours, other, true, true));
+	CHECK(KeyTwin(ours, other, true, Match::kNear));
 	auto apart = spawn;
 	apart.at = At(1100.0f + PAIR_RANGE + 1.0f);
-	CHECK(KeyTwin(ours, apart, true, false));
-	CHECK(!KeyTwin(ours, apart, true, true));
+	CHECK(KeyTwin(ours, apart, true, Match::kAlias));
+	CHECK(!KeyTwin(ours, apart, true, Match::kNear));
+	CHECK(!KeyTwin(ours, apart, true, Match::kPlaced));
+	// An alias filled with an NPC made elsewhere: also shared where ours first stood. Two raiders of one leveled list a
+	// quest gathered near each player are no twins.
+	CHECK(KeyTwin(ours, spawn, true, Match::kPlaced));
+	auto gathered = spawn;
+	gathered.sharedAt = At(1100.0f + SPOT_TWIN + 1.0f);
+	gathered.at = At(1100.0f + SPOT_TWIN + 1.0f);
+	CHECK(KeyTwin(ours, gathered, true, Match::kNear));
+	CHECK(!KeyTwin(ours, gathered, true, Match::kPlaced));
+	// One another system runs (an encounter's, held by a quest's alias as well) pairs only through a created single alias.
+	auto system = ours;
+	system.otherSystem = true;
+	CHECK(KeyTwin(system, spawn, true, Match::kAlias));
+	CHECK(!KeyTwin(system, spawn, true, Match::kNear));
+	CHECK(!KeyTwin(system, spawn, true, Match::kPlaced));
 }
 
 TEST("quest actors: a script's enemy in no alias is the twin of a friend's spawn of the same NPC their game shared where ours first stood")
@@ -294,6 +309,10 @@ TEST("quest actors: a script's enemy in no alias is the twin of a friend's spawn
 	auto over = spawn;
 	over.over = true;
 	CHECK(!SpotTwin(ours, over));
+	// Ours wandered off before it was shared: no twin of theirs (it could never pair), so it is shared, not held back.
+	auto wandered = ours;
+	wandered.at = At(400.0f + PAIR_RANGE + 1.0f);
+	CHECK(!SpotTwin(wandered, spawn));
 }
 
 TEST("quest actors: of two twins both shared, the plain one lets go for the keyed one, else the higher player id's")
@@ -482,11 +501,13 @@ TEST("quest actors: a reference collection's members are keyed with the collecti
 	CHECK(KindOf(REF_ALIAS) == AliasKind::kRef && KindOf(COLLECTION_ALIAS) == AliasKind::kCollection && KindOf("Loc") == AliasKind::kOther);
 	// An external reference alias keeps its chain's fill (Min00's raiders, held by DN092's created aliases).
 	CHECK(KeyFill(AliasFill(REF_ALIAS, FILL_EXTERNAL), FILL_CREATED) == FILL_CREATED);
-	// Only a single alias that created its NPC pairs without its NPC and spot being matched (LooseAlias).
-	CHECK(!LooseAlias(AliasKind::kRef, FILL_CREATED));
-	CHECK(LooseAlias(AliasKind::kRef, 1));
-	CHECK(LooseAlias(AliasKind::kCollection, FILL_CREATED));
-	CHECK(LooseAlias(AliasKind::kCollection, 0));
+	// Only a single alias that created its NPC pairs without its NPC and spot being matched; a collection that created its
+	// members matches the NPC near; one filled with an NPC made elsewhere matches the spot it was placed at too.
+	CHECK(MatchOf(AliasKind::kRef, FILL_CREATED) == Match::kAlias);
+	CHECK(MatchOf(AliasKind::kCollection, FILL_CREATED) == Match::kNear);
+	CHECK(MatchOf(AliasKind::kRef, 1) == Match::kPlaced);
+	CHECK(MatchOf(AliasKind::kCollection, 0) == Match::kPlaced);
+	CHECK(MatchOf(AliasKind::kRef, FILL_NONE) == Match::kPlaced);
 }
 
 TEST("quest actors: the server refuses a second game's keyed member of a collection, and grants its plain one (ReportAs sends a member past the friend's count plain)")

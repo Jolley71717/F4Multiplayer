@@ -985,13 +985,34 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   them, and only its own run counted their deaths. Hit: Special Delivery (MS09Mission01's RaiderReinforcements), Boston
   After Dark (RRM01's RVRaiders and RaidersEnRoute) and the Constitution (MS11's GenericMerc and GenericScavenger), human
   enemies keyed since the enemy rule; and Far Harbor's Walk in the Park (DLC03MQ02's mirelurk waves Wave01 and Wave02),
-  creatures keyed since quest creatures were first paired (protocol 61). A collection's members are never keyed
-  (`QuestActors::AliasFill`: any alias kind but "Ref" keys nothing): shared as plain spawns, as in 0.21.0, each game has
-  its own and copies of the friend's once theirs stand apart from its own (`NPC_SAME_SPOT`), doubled but seen and hit by
-  both players. A single created alias of the same quest (Special Delivery's RaiderReinforcementLeader) still pairs.
-  Pairing a collection's members one by one (by base and spot) is for a later release. The rig's
-  `tools/rig/repro/quest-collection-raiders.sh` (Special Delivery's three reinforcements: YES on 0.21.1-rc2's code, the
-  friend's members shared with nobody; NO with the fix, a hit either way reaching the other game).
+  creatures keyed since quest creatures were first paired (protocol 61). 0.21.1 keyed no collection's members
+  (`QuestActors::AliasFill`): shared as plain spawns, as in 0.21.0, each game had its own and copies of the friend's,
+  doubled but seen and hit by both players.
+- *Twins: every enemy a quest makes in each game, paired (src/game/QuestActors.h, 0.21.2, no new wire).* Each game runs a
+  quest's scripts itself, so an enemy the quest makes is made in each game: by a created alias, by a collection that
+  creates its members, by a script that places it (PlaceActorAtMe) and forces it into an alias or a collection, or by a
+  script that places it into no alias at all. Each is ONE enemy in the session: our game's own is the twin of a friend's
+  spawn and is paired with it (`theirs.Placed`, NpcSync mirrors theirs onto ours) rather than shared beside it. A key
+  twin: their spawn names an alias that keys our NPC (`QuestActors::KeyTwin`), matched by how the alias was filled
+  (`QuestActors::MatchOf`): a created single alias by the alias alone, as before; a created collection by the same NPC
+  (`SpawnBook::StandsFor`) standing within `PAIR_RANGE`, nearest first, one to one; an alias filled with an NPC made
+  elsewhere also by the spot their game shared theirs at, within `SPOT_TWIN` (512) of where our game first saw ours
+  (`firstSeen`). A spot twin (`QuestActors::SpotTwin`): their spawn names no alias that keys anything here, ours is an
+  enemy no other system runs (no random encounter's, radiant's, PER_GAME quest's or settlement attack's alias holds it),
+  the same NPC, shared within `SPOT_TWIN` of where ours first stood, and standing within `PAIR_RANGE` of theirs. An
+  enemy's quest need not be one the session shares (`sQuests = story`, `sStory = own`): pairing shares the fight, never a
+  stage; any alias fill keys an enemy (the quest's other guards hold: running, once, official, no radiant, not
+  PER_GAME). The key is read afresh at every scan while our NPC is not shared, and is the lowest (quest, alias) that keys
+  it (`QuestActors::Canonical`), so both games name the same one. Before it is shared (`QuestActors::ReportAs`): a
+  friend's live, unpaired twin holds ours back (`twinsHeld=`) to pair with it; else keyed, unless a friend's spawn names
+  the key already (the server would refuse it: plain, `keyTakenPlain=`). Both shared already (one turned hostile after it
+  was shared plain, two keys keyed apart, a script's raider placed in both games at once): the lower ranked lets go of
+  its own (`QuestActors::Yields`: plain below keyed, then the higher player id; `yields=`), waits up to 10 s for the
+  release, and pairs. Both games read the same ranks off the wire, so exactly one lets go. A game of an older build never
+  lets go: at worst both are shown, as in 0.21.1. `net status`: spawns questActors gains `spotPairs= yields=
+  keyTakenPlain=`. Rig: `tools/rig/repro/quest-collection-raiders.sh` (Special Delivery's reinforcements: doubled on
+  0.21.1, paired with the fix, a hit either way reaching the other game) and `tools/rig/repro/script-placed-raiders.sh
+  [after|together]` (a raider placed at one marker in each game, in turn or at once).
 - *Random encounters shared calm (src/game/Encounters.h, protocol 63).* The game that rolled a random encounter owns it,
   and its actors are shared as spawns from the moment they stand, calm or not: a man held at gunpoint and called a
   synth (RESceneLC01, whose accusor only aims), travellers, a trader, a settler asking for help. Up to 0.13.2 a
