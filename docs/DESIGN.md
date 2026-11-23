@@ -4358,7 +4358,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   `ExtraDataList::OverrideEssential`), so a lethal blow from anything here (an NPC, an explosion, a fall,
   a trap, a kill move, a script's `Kill`) only puts it down, and it is stood up again at once, its health
   restored (`DownRules::StandInDown::KnockedDown`, tested; "knocked down here ... stood up again",
-  `standInsKnocked=`); still down 4 s later it is replaced, standing. Only its friend's own game says
+  `standInsKnocked=`); still down 4 s later it is replaced, standing. And it has 10000 health, kept full every update, so one frame's blows rarely put it down at all (a settler's 100 to 190 went in one burst of an arena robot's fire, up to 7 falls a minute). Only its friend's own game says
   whether they die. The hit itself lands as before, so what a stand-in's hit sends its friend is
   unchanged. Before 0.21.2 the essential flag was set on the actor alone in our update, which the engine
   works out again from the override or the base every frame and inside every kill: RobCo Battlezone's
