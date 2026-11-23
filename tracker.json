@@ -1,16 +1,7 @@
 {
- "release": "0.21.0",
- "known_issues": [
-  "A character in power armor that is not a player (Piper, say) shows to a friend only as a flag; the frame itself is not shown yet.",
-  "If both players go into Kellogg's memory at once, the second one's scenes can run ahead.",
-  "A few quests that the game starts only from an event where they happen (the Mechanist's lair move, for one) don't start in a friend's game far away. Their later stages are still shared.",
-  "The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).",
-  "If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.",
-  "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
-  "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
-  "Players whose mods change the leveled lists differently can still see different enemies."
- ],
- "updated": "2026-11-22T23:06:54+00:00",
+ "release": "0.21.1",
+ "known_issues": [],
+ "updated": "2026-11-23T04:11:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -564,8 +555,8 @@
    "title": "A friend's shots don't register in the Concord museum",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Fixed: a friend's shots land on quest-made enemies (Concord's raiders); in 0.21.1",
+   "stage": 7,
+   "note": "Shipped in 0.21.1 (2026-11-22)",
    "pr": 552
   },
   {
@@ -2775,8 +2766,8 @@
    "title": "Gate: grenade check fails when a fight's blasts use up the 30-line explosion log first",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Shipped in 0.21.1"
   },
   {
    "id": "ml6p",
@@ -3033,8 +3024,9 @@
    "title": "Quest enemies in a reference collection that the quest creates are keyed but never paired: a friend's game keeps its own unshared beside copies",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "PR 557 open and rig-tested; needs its code review"
+   "stage": 5,
+   "note": "PR 557 open and rig-tested; needs its code review",
+   "pr": 557
   },
   {
    "id": "p8zd",
