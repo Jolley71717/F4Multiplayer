@@ -96,10 +96,11 @@ namespace DownRules
 		return !IsDownState(a_lifeState) && (a_isDead || a_lifeState == LIFE_DYING || a_lifeState == LIFE_DEAD);
 	}
 
-	// A friend's stand-in that is dead, switched off, or down is replaced by a fresh one. It is essential and
-	// kept at full health every update, but one hit bigger than its whole health (a grenade, a shotgun at
-	// close range) still put it down here; with its AI off nothing stands it up again, so it sat on the
-	// ground aiming its gun while its friend stood and fought. A friend who is down themselves is shown down by
+	// A friend's stand-in that is dead, switched off, or down is broken. It is essential (its reference's own override,
+	// Puppets) and kept at full health every update, but one hit bigger than its whole health (a grenade, a shotgun at
+	// close range) still puts it down here; with its AI off nothing stood it up again, so it sat on the ground aiming its
+	// gun while its friend stood and fought. Down, it is told to get up (StandInDown::KnockedDown) and replaced only if it
+	// stays down; dead or switched off, it is replaced by a fresh one. A friend who is down themselves is shown down by
 	// StandInDown, which lays the stand-in down itself; that one is not broken (see StandInDown::Laid).
 	constexpr bool StandInBroken(std::int32_t a_lifeState, bool a_dead, bool a_disabled)
 	{
@@ -1284,12 +1285,28 @@ namespace DownRules
 			return Do::kNone;
 		}
 
+		// Put down here by something of this game (a lethal blow on the essential stand-in: an NPC, an explosion, a fall)
+		// while its friend is up: told to get up now, as when its friend gets up, and placed again only if it is still down
+		// GET_UP_LIMIT later (Frame's kReplace). A stand-in was replaced at once before, a fresh one sometimes downed or
+		// killed again within 2 s. Its friend down too: nothing, Frame lays it down as theirs (kNone).
+		Do KnockedDown(bool a_friendDown, Clock::time_point a_now)
+		{
+			if (a_friendDown || phase != Phase::kUp) {
+				return Do::kNone;
+			}
+			phase = Phase::kGettingUp;
+			gotUpAt = a_now;
+			++knockedDown;
+			return Do::kGetUp;
+		}
+
 		// Its down life state is ours (laid down, or told to get up and not up yet): it is not broken for it (StandInBroken).
 		[[nodiscard]] bool Laid() const { return phase != Phase::kUp; }
 		[[nodiscard]] bool Lying() const { return phase == Phase::kLying; }
 
 		std::uint32_t lieDowns = 0;  // times laid down
 		std::uint32_t stoodUp = 0;   // of those, found up again while its friend was still down
+		std::uint32_t knockedDown = 0;  // put down here while its friend was up, and told to get up (KnockedDown)
 
 	private:
 		enum class Phase

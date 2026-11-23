@@ -15,6 +15,7 @@
 #include "game/GraphInfo.h"
 #include "game/HeldCopy.h"
 #include "game/Hud.h"
+#include "game/LogPace.h"
 #include "game/MenuBadges.h"
 #include "game/MoveSync.h"
 #include "game/NetSim.h"
@@ -376,7 +377,8 @@ namespace RemotePlayers
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
-		std::uint32_t   downedStandIns = 0;  // stand-ins replaced because something here put them down (DownRules::StandInBroken)
+		std::uint32_t   downedStandIns = 0;  // stand-ins knocked down here while their friend was up, and stood up again (StandInDown::KnockedDown)
+		LogPace::Pace   knockedPace;         // ... their log line
 		std::uint32_t   brokenStandIns = 0;  // stand-ins replaced because something here killed or disabled them (DownRules::StandInBroken)
 		std::uint32_t   laidDown = 0;        // stand-ins laid down for their downed friend (DownRules::StandInDown)
 		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
@@ -3545,19 +3547,27 @@ namespace RemotePlayers
 			}
 			// Down because we laid it down for its downed friend (DownRules::StandInDown) is not broken.
 			const bool laid = actor && remote.standInDown.Laid() && DownRules::IsDownState(LifeState(actor)) && !actor->IsDisabled();
-			if (actor && !laid && IsBroken(actor)) {
-				if (DownRules::IsDownState(LifeState(actor))) {  // the game says dead too while down: only the life state tells
+			// Down here, not by us (a lethal blow on the essential stand-in): it gets up again where it is, or, its friend down too,
+			// lies on as theirs (StandInDown lays it down); replaced only if it won't get up (StandInDown's kReplace, below).
+			const bool knocked = actor && !laid && !actor->IsDisabled() && DownRules::IsDownState(LifeState(actor));
+			if (knocked) {
+				const auto lifeState = LifeState(actor);
+				if (remote.standInDown.KnockedDown(remote.downed, now) == DownRules::StandInDown::Do::kGetUp) {
+					Puppets::SetDown(actor, false);
 					++downedStandIns;
-					REX::INFO("RemotePlayers: player {} stand-in {:08X} was put down here while its friend is {}; placed again", remote.id, actor->GetFormID(), remote.downed ? "down too" : "up");
-				} else {
-					// Killed here despite its protection (an arena's robots, a script), or disabled by something not ours: said, with
-					// who killed it, so a stand-in is never replaced without a word.
-					++brokenStandIns;
-					const auto killer = actor->myKiller.get();
-					REX::WARN("RemotePlayers: player {} stand-in {:08X} {} here (life state {}{}) while its friend is {}; placed again", remote.id, actor->GetFormID(),
-						actor->IsDisabled() ? "was disabled" : "died", LifeState(actor), killer ? std::format(", killed by {}", RefTag::Of(killer.get())) : std::string{ actor->IsDead(false) ? ", killer unknown" : "" },
-						remote.downed ? "down" : "up");
+					if (knockedPace.Due(now)) {
+						REX::INFO("RemotePlayers: player {} stand-in {:08X} knocked down here (life state {}) while its friend is up; stood up again ({} since the last line, {} in all)",
+							remote.id, actor->GetFormID(), lifeState, knockedPace.Since(), knockedPace.Count());
+					}
 				}
+			} else if (actor && !laid && IsBroken(actor)) {
+				// Killed here despite being essential (a script's KillEssential), or disabled by something not ours: said, with who
+				// killed it, so a stand-in is never replaced without a word.
+				++brokenStandIns;
+				const auto killer = actor->myKiller.get();
+				REX::WARN("RemotePlayers: player {} stand-in {:08X} {} here (life state {}{}) while its friend is {}; placed again", remote.id, actor->GetFormID(),
+					actor->IsDisabled() ? "was disabled" : "died", LifeState(actor), killer ? std::format(", killed by {}", RefTag::Of(killer.get())) : std::string{ actor->IsDead(false) ? ", killer unknown" : "" },
+					remote.downed ? "down" : "up");
 				DeleteActor(remote);
 				actor = nullptr;
 			}
@@ -3978,7 +3988,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
-			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} standInsKilled={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, brokenStandIns, respawnWaits, adrift,
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} standInsKnocked={} standInsKilled={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, brokenStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 			if (unseenSaid || unseenRebuilds || unseenReplaced || unseenPlain || unseenKept || seenAgain) {
 				out += std::format(" unseen={}/{}/{}/{}/{}/{}", unseenSaid, unseenRebuilds, unseenReplaced, unseenPlain, unseenKept, seenAgain);

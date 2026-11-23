@@ -1700,6 +1700,54 @@ TEST("downed rules: a downed friend's stand-in that will not get up is placed ag
 	CHECK(DownRules::StandInBroken(DownRules::LIFE_ESSENTIAL_DOWN, false, false));
 }
 
+TEST("downed rules: a stand-in knocked down here while its friend is up gets up, and is placed again only if it stays down")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	CHECK(down.Frame(false, true, false, now) == Do::kNone);
+	// A lethal blow here put the essential stand-in down: told to get up, and its down state is ours (not broken) meanwhile.
+	now += FRAME;
+	CHECK(down.KnockedDown(false, now) == Do::kGetUp);
+	CHECK(down.Laid());
+	CHECK(down.knockedDown == 1);
+	// Told once: asked again while it gets up, nothing.
+	CHECK(down.KnockedDown(false, now) == Do::kNone);
+	// Up the next frame: it is up, and a later blow is handled the same way.
+	now += FRAME;
+	CHECK(down.Frame(false, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+	now += FRAME;
+	CHECK(down.KnockedDown(false, now) == Do::kGetUp);
+	CHECK(down.knockedDown == 2);
+	// This time it stays down: placed again GET_UP_LIMIT on, not before.
+	now += DownRules::StandInDown::GET_UP_LIMIT - FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kNone);
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kReplace);
+	CHECK(!down.Laid());
+}
+
+TEST("downed rules: a stand-in knocked down here while its friend is down too lies on as theirs")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	CHECK(down.KnockedDown(true, now) == Do::kNone);
+	CHECK(!down.Laid());
+	CHECK(down.knockedDown == 0);
+	// The friend's down lays it down as theirs once it can.
+	CHECK(down.Frame(true, true, true, now) == Do::kLieDown);
+	CHECK(down.Lying());
+	// Laid down already: a knock is nothing.
+	now += FRAME;
+	CHECK(down.KnockedDown(false, now) == Do::kNone);
+	// Knocked while getting up for its friend, then the friend down again: it lies down again.
+	CHECK(down.Frame(false, true, true, now) == Do::kGetUp);
+	now += FRAME;
+	CHECK(down.Frame(true, true, true, now) == Do::kLieDown);
+}
+
 TEST("downed rules: a welcome back into the same session keeps the revives used and the cooldown; another session starts them over")
 {
 	constexpr std::uint64_t SESSION = 0x0000000100000000ull, OTHER = 0x0000000200000000ull;

@@ -4353,14 +4353,25 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   and `player.kill`; essential stays off until they are dead or the game stands them up, and the
   kill is repeated every 2 s while they are still alive and down. The rules are in
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
-  the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
-  replaced, so it never sits on the ground while its friend is up. A friend who is down is shown down
+  the player up when it's loaded. A stand-in never dies in our game while its friend lives: it is
+  essential through its reference's own override from the moment it is placed (`Puppets::MakeEssential`,
+  `ExtraDataList::OverrideEssential`), so a lethal blow from anything here (an NPC, an explosion, a fall,
+  a trap, a kill move, a script's `Kill`) only puts it down, and it is stood up again at once, its health
+  restored (`DownRules::StandInDown::KnockedDown`, tested; "knocked down here ... stood up again",
+  `standInsKnocked=`); still down 4 s later it is replaced, standing. Only its friend's own game says
+  whether they die. The hit itself lands as before, so what a stand-in's hit sends its friend is
+  unchanged. Before 0.21.2 the essential flag was set on the actor alone in our update, which the engine
+  works out again from the override or the base every frame and inside every kill: RobCo Battlezone's
+  robots killed stand-ins 13 times in three rig runs (2026-11-23), each one replaced (a fresh one killed
+  again within 2 s), and a stand-in put down was replaced at once. One that is dead after all (a
+  script's `KillEssential`) or disabled by something not ours is still replaced, with a warning naming
+  its killer (`standInsKilled=`). A friend who is down is shown down
   (`DownRules::StandInDown`, tested; `Puppets::SetDown`): their stand-in's life state goes to
   `kEssentialDown` with `kNoBleedoutRecovery`, which plays its own graph's downed pose (in a power armor
   frame too, once its switch into the frame is done), and it is still put at their spot each update but
   told no locomotion, aim or draw, so the revive range is measured where they lie. The reference's own
-  essential override is set while it lies (`ExtraDataList::OverrideEssential`; "overridden not essential"
-  once up): the engine's per-actor update in ProcessLists recomputes the essential flag every frame from
+  essential override matters while it lies too (kept essential once up: it was "not essential" then before 0.21.2,
+  which left such a stand-in killable): the engine's per-actor update in ProcessLists recomputes the essential flag every frame from
   that override or the base, a settler shared with world NPCs, and stands a non-essential actor in
   `kEssentialDown` up (rig 2026-10-20: up 20 ms after each lie-down without it). Up again, its life
   state goes back to alive (the engine's get-up); still down 4 s later it is replaced, standing. Found up

@@ -693,6 +693,25 @@ namespace Puppets
 		// ExtraDataList::OverrideEssential(bool) (+2929C0): the reference's own essential setting, over its base's (see SetDown).
 		constexpr REL::ID OVERRIDE_ESSENTIAL{ 2190653 };
 
+		// A stand-in is essential through its reference's own override, from the moment it is placed for as long as it is
+		// ours. The engine works the essential flag out again from that override, else from the base form (a settler the
+		// world's own settlers share, never essential), every frame (ProcessLists) and once more inside every kill
+		// (Actor::KillImpl, before it asks CanKillMe), so the kEssential SuppressBehavior sets in our update was gone by the
+		// time many hits landed: the RobCo Battlezone's robots killed stand-ins 13 times in three rig runs (2026-11-23), a
+		// fresh one again within 2 s, each placed again. Essential, a lethal blow from anything here (an NPC, an explosion, a
+		// fall, a trap, a kill move, a script's Kill) only puts it down, and RemotePlayers stands it up at once
+		// (DownRules::StandInDown::KnockedDown): its friend's own game says whether they die. The hit itself still lands as
+		// before (its HitData and hit event), so what a hit on a stand-in sends its friend is unchanged. Never saved: a
+		// stand-in is kept out of saves (SaveGuard). Main thread.
+		void MakeEssential(RE::Actor* a_actor)
+		{
+			static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideEssential{ OVERRIDE_ESSENTIAL };
+			if (a_actor->extraList) {
+				overrideEssential(a_actor->extraList.get(), true);
+			}
+			a_actor->boolFlags.set(RE::Actor::BOOL_FLAGS::kEssential);
+		}
+
 		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
 		std::atomic<std::uint64_t> graphsSetUp{ 0 };
 
@@ -1115,6 +1134,9 @@ namespace Puppets
 		}
 		const auto originalFlags = a_actor->boolFlags.underlying() & SUPPRESSED_BEHAVIOR;
 		SuppressBehavior(a_actor, a_kind);
+		if (a_kind == Kind::kPlayer) {
+			MakeEssential(a_actor);
+		}
 		SetAttackDamage(a_actor, 0.0f);
 		a_actor->InitiateDoNothingPackage();
 
@@ -1296,17 +1318,17 @@ namespace Puppets
 		// sets the essential and protected flags anew from that override or the base every frame, then stands an actor in
 		// essential-down that is neither back up at once (SetLifeState alive). The kEssential that SuppressBehavior sets
 		// was gone by then: laid down, the stand-in got up 20 ms later, every time (rig, 2026-10-20). Its base is a settler
-		// the world's own settlers share, never made essential itself.
-		static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideEssential{ OVERRIDE_ESSENTIAL };
-		if (a_actor->extraList) {
-			overrideEssential(a_actor->extraList.get(), a_down);
-		}
+		// the world's own settlers share, never made essential itself. The override stays essential as it gets up too
+		// (MakeEssential): it used to be set to "not essential" then, which left a stand-in that had once lain down for its
+		// downed friend killable by anything here.
+		MakeEssential(a_actor);
 		using BoolFlag = RE::Actor::BOOL_FLAGS;
 		if (a_down) {
-			a_actor->boolFlags.set(BoolFlag::kEssential);
 			a_actor->boolFlags.set(BoolFlag::kNoBleedoutRecovery);
 			a_actor->SetLifeState(RE::ACTOR_LIFE_STATE::kEssentialDown);
 		} else {
+			// Its health back first: stood up at none, the engine would put it down again at once.
+			KeepHealthy(a_actor);
 			a_actor->boolFlags.reset(BoolFlag::kNoBleedoutRecovery);
 			a_actor->SetLifeState(RE::ACTOR_LIFE_STATE::kAlive);
 		}
