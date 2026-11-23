@@ -111,10 +111,15 @@ rmark host run; rmark vm run
 # 2. the host's members on first, then the VM's once the host's have left the marker
 say "the host's members switched on (console enable, standing for the quest's script): $MH"
 for r in $MH; do dc host "console $r.enable" >/dev/null; done
+# they come at the players, and a companion or a turret there can kill them before the VM's are on: a dead member is no twin
+# (rightly), so they take far more to kill here
+for r in $MH; do dc host "console $r.setav health 3000" >/dev/null; done
 _up() { local w=$1 r i; shift; for r in "$@"; do i=$(info "$w" "$r"); [ "$(field "$i" 3d)" = true ] && [ "$(field "$i" disabled)" = false ] || return 1; done; }
 scene_live "the host's members stand loaded and switched on" 30 _up host $MH
 _left() { local r d; for r in $MH; do dead host "$r" && continue; d=$(dist_xy "$(xy_of host "$r")" "$MXY"); [ -n "$d" ] && [ "$d" -lt 300 ] && return 1; done; return 0; }
 wait_for 40 _left && say "the host's members have left the marker" || say "the host's members are still near the marker after 40 s (going on)"
+GONE=""; for r in $MH; do dead host "$r" && GONE="$GONE $r"; done
+[ -z "$GONE" ] || verdict VOID "the host's members [$GONE ] died in its game before the VM's were switched on (a dead one is no twin)"
 say "the VM's members switched on: $MV"
 for r in $MV; do dc vm "console $r.enable" >/dev/null; done
 scene_live "the VM's members stand loaded and switched on" 30 _up vm $MV

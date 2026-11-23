@@ -37,6 +37,8 @@ owner_of() { field "$(dc "$1" "ghosts $2")" owner; }
 # naming it: "<ref>, our twin of player N's ... is paired with it", "<ref>, our quest's creature paired with player N's ..., is
 # our game's alone again"), empty when none. dev mirror and ghosts read the session's id, which a paired NPC does not carry.
 paired_to() { local l; l=$(rlog "$1" | grep -aE "Spawns: $2, our (twin of player [0-9]+'s|quest's creature paired with player)" | tail -1); grep -q 'is paired with it' <<<"$l" && grep -oE 'our twin of player [0-9]+' <<<"$l" | grep -oE '[0-9]+$'; }
+# copies_logged <who>: the copies of a friend's spawns that game placed since the run's mark
+copies_logged() { rsince "$1" run | grep -aoE "Spawns: placed FF[0-9A-F]{6} .* as our copy of player" | awk '{print $3}'; }
 shots_of() { dc "$1" "net status" | grep -oE ' shots=[0-9]+' | head -1 | cut -d= -f2; }
 lower() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a != "" && b != "" && a + 0 < b - 0.5) }'; }
 # raiders <who>: the runtime (0xFF) NPCs named like a raider within 600 u of the marker in that game, switched on
@@ -96,9 +98,10 @@ else
 	BH=$(raiders host); BV=$(raiders vm)
 	# both at once; wait for these two alone (the run cap and the idle watch run in the background too: a bare wait sat until the cap)
 	dc host "console $MARKER.placeatme $RAIDER 1" >/dev/null & p1=$!; dc vm "console $MARKER.placeatme $RAIDER 1" >/dev/null & p2=$!; wait $p1 $p2
-	sleep 1   # placed, not yet copied by the friend's game (a copy waits for the share, a second or more): a new one run by the friend is a copy
-	RH=$(for r in $(raiders host | grep -vxF -f <(printf '%s\n' $BH x)); do [ "$(owner_of host "$r")" = "$VID" ] || echo "$r"; done | head -1)
-	RV=$(for r in $(raiders vm | grep -vxF -f <(printf '%s\n' $BV x)); do [ "$(owner_of vm "$r")" = "$HID" ] || echo "$r"; done | head -1)
+	sleep 1   # placed; a copy of the friend's comes a second or more after its share. Copies are known by the log's "placed <ref> ... as our
+	# copy" line, not by the owner: our own raider, paired with the friend's at once, carries the friend's id too
+	RH=$(raiders host | grep -vxF -f <(printf '%s\n' $BH $(copies_logged host) x) | head -1)
+	RV=$(raiders vm | grep -vxF -f <(printf '%s\n' $BV $(copies_logged vm) x) | head -1)
 	[ -n "$RH" ] && dc host "console $RH.setrestrained 1" >/dev/null; [ -n "$RV" ] && dc vm "console $RV.setrestrained 1" >/dev/null
 	say "both raiders placed at once: host's [$RH], VM's [$RV]"
 fi
