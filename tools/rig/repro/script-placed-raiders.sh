@@ -33,6 +33,10 @@ hp() { field "$(info "$1" "$2")" hp; }
 dead() { [ "$(field "$(info "$1" "$2")" dead)" = true ]; }
 xy_of() { local i; i=$(info "$1" "$2"); echo "$(field "$i" x) $(field "$i" y)"; }
 owner_of() { field "$(dc "$1" "ghosts $2")" owner; }
+# paired_to <who> <ref>: the player whose spawn that game's own NPC is paired with, from its log (the last pair or unpair line
+# naming it: "<ref>, our twin of player N's ... is paired with it", "<ref>, our quest's creature paired with player N's ..., is
+# our game's alone again"), empty when none. dev mirror and ghosts read the session's id, which a paired NPC does not carry.
+paired_to() { local l; l=$(rlog "$1" | grep -aE "Spawns: $2, our (twin of player [0-9]+'s|quest's creature paired with player)" | tail -1); grep -q 'is paired with it' <<<"$l" && grep -oE 'our twin of player [0-9]+' <<<"$l" | grep -oE '[0-9]+$'; }
 shots_of() { dc "$1" "net status" | grep -oE ' shots=[0-9]+' | head -1 | cut -d= -f2; }
 lower() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a != "" && b != "" && a + 0 < b - 0.5) }'; }
 # raiders <who>: the runtime (0xFF) NPCs named like a raider within 600 u of the marker in that game, switched on
@@ -90,7 +94,8 @@ if [ "$MODE" = after ]; then
 	place vm; RV=$PLACED; say "the VM's raider placed 10 s later: [$RV]"
 else
 	BH=$(raiders host); BV=$(raiders vm)
-	dc host "console $MARKER.placeatme $RAIDER 1" >/dev/null & dc vm "console $MARKER.placeatme $RAIDER 1" >/dev/null & wait
+	# both at once; wait for these two alone (the run cap and the idle watch run in the background too: a bare wait sat until the cap)
+	dc host "console $MARKER.placeatme $RAIDER 1" >/dev/null & p1=$!; dc vm "console $MARKER.placeatme $RAIDER 1" >/dev/null & p2=$!; wait $p1 $p2
 	sleep 1   # placed, not yet copied by the friend's game (a copy waits for the share, a second or more): a new one run by the friend is a copy
 	RH=$(for r in $(raiders host | grep -vxF -f <(printf '%s\n' $BH x)); do [ "$(owner_of host "$r")" = "$VID" ] || echo "$r"; done | head -1)
 	RV=$(for r in $(raiders vm | grep -vxF -f <(printf '%s\n' $BV x)); do [ "$(owner_of vm "$r")" = "$HID" ] || echo "$r"; done | head -1)
@@ -99,7 +104,7 @@ else
 fi
 [ -n "$RH" ] && [ -n "$RV" ] || verdict VOID "a game placed no raider (host [$RH], VM [$RV])"
 sleep 15   # shared or held, copies placed or discarded, pairs made (once a second)
-OH=$(owner_of host "$RH"); OV=$(owner_of vm "$RV")
+OH=$(paired_to host "$RH"); OV=$(paired_to vm "$RV")
 say "owners as the session has them: the host's $RH owner=$OH, the VM's $RV owner=$OV (the friend's id = paired with the friend's)"
 CH=$(for r in $(raiders host); do [ "$r" = "$RH" ] && continue; [ "$(owner_of host "$r")" = "$VID" ] && ! dead host "$r" && echo "$r"; done | tr '\n' ' ')
 CV=$(for r in $(raiders vm); do [ "$r" = "$RV" ] && continue; [ "$(owner_of vm "$r")" = "$HID" ] && ! dead vm "$r" && echo "$r"; done | tr '\n' ' ')

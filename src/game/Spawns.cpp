@@ -781,15 +781,17 @@ namespace Spawns
 		QuestActors::Own OwnFacts(RE::Actor* a_actor, bool a_enemy, bool a_otherSystem)
 		{
 			return { .enemy = a_enemy, .otherSystem = a_otherSystem, .firstAt = FirstSpotOf(a_actor), .at = SpotOf(a_actor), .base = BaseToPlace(a_actor),
-				.original = LeveledOriginal(a_actor) };
+				.original = LeveledOriginal(a_actor), .race = RaceForm(a_actor) };
 		}
 
 		// A friend's spawn as matched (QuestActors::Theirs), but for keyResolves (KeyAliasHere, asked last: it reads quests).
 		QuestActors::Theirs TheirFacts(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy)
 		{
 			const auto roll = NpcSync::RollOf(a_id);
+			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_copy.spawn.base);
+			const auto race = npc ? npc->GetFormRace() : nullptr;
 			return { .over = a_copy.dead || a_copy.gone, .sharedAt = { a_copy.spawn.cell, a_copy.spawn.worldspace, a_copy.spawn.x, a_copy.spawn.y, a_copy.spawn.z }, .at = a_copy.at,
-				.base = a_copy.spawn.base, .original = roll ? roll->originalBase : 0 };
+				.base = a_copy.spawn.base, .original = roll ? roll->originalBase : 0, .race = race ? race->GetFormID() : 0 };
 		}
 
 		// The quest and alias a friend's keyed spawn names, when our game runs that quest as one whose enemies pair
@@ -1338,7 +1340,8 @@ namespace Spawns
 				}
 				const bool enemy = EnemyOfOurs(actor);
 				const auto keys = KeysOf(actor, enemy);
-				QuestActors::Candidate c{ .twin = IsTwinOf(OwnFacts(actor, enemy, keys.otherSystem), keys, a_id, a_copy), .paired = pairedHere };
+				const auto own = OwnFacts(actor, enemy, keys.otherSystem);
+				QuestActors::Candidate c{ .twin = IsTwinOf(own, keys, a_id, a_copy), .paired = pairedHere, .exact = QuestActors::SameNpc(own, TheirFacts(a_id, a_copy)) };
 				// A calm NPC of a quest whose calm creatures pair stands for their spawn as before (no copy beside it), though
 				// it pairs only once it is a creature or an enemy here (Keyed). An enemy that is no twin of theirs (another NPC,
 				// or standing elsewhere) does not: a copy of theirs is placed beside it.

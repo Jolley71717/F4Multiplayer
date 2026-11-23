@@ -267,6 +267,7 @@ namespace QuestActors
 		RemoteEdits::Spot at;                    // where it stands
 		std::uint32_t     base = 0;              // what a copy of it would be placed from (Spawns' BaseToPlace)
 		std::uint32_t     original = 0;          // the leveled NPC it was placed as (0: none)
+		std::uint32_t     race = 0;              // its race (0: none)
 	};
 
 	// What a friend's spawn is, as matched.
@@ -278,13 +279,31 @@ namespace QuestActors
 		RemoteEdits::Spot at;                // where their game has it now
 		std::uint32_t     base = 0;
 		std::uint32_t     original = 0;      // their roll's leveled NPC (0: not known yet)
+		std::uint32_t     race = 0;          // the race of their base as our game has it (0: not known)
 	};
+
+	// Ours and theirs are of the same NPC (placed from the same base, or rolled from the same leveled NPC).
+	inline bool SameNpc(const Own& a_own, const Theirs& a_theirs)
+	{
+		return SpawnBook::StandsFor(a_own.base, a_own.original, a_theirs.base, a_theirs.original);
+	}
+
+	// Ours and theirs stand near each other now.
+	inline bool Near(const Own& a_own, const Theirs& a_theirs)
+	{
+		return RemoteEdits::Within(RemoteEdits::Distance(a_own.at, a_theirs.at), PAIR_RANGE);
+	}
 
 	// Ours and theirs are of the same NPC and stand near each other now.
 	inline bool SameNear(const Own& a_own, const Theirs& a_theirs)
 	{
-		return SpawnBook::StandsFor(a_own.base, a_own.original, a_theirs.base, a_theirs.original) &&
-		       RemoteEdits::Within(RemoteEdits::Distance(a_own.at, a_theirs.at), PAIR_RANGE);
+		return SameNpc(a_own, a_theirs) && Near(a_own, a_theirs);
+	}
+
+	// Ours and theirs are of one race (both known).
+	constexpr bool SameRace(const Own& a_own, const Theirs& a_theirs)
+	{
+		return a_own.race != 0 && a_own.race == a_theirs.race;
 	}
 
 	// Their game shared theirs where ours first stood.
@@ -305,7 +324,11 @@ namespace QuestActors
 		case Match::kAlias:
 			return true;
 		case Match::kNear:
-			return !a_own.otherSystem && SameNear(a_own, a_theirs);
+			// Each game rolls each member of a collection on its own, so the two games' members need not be of the same NPCs
+			// (Special Delivery's three raiders, two of three paired by NPC on the rig, 2026-11-23): one of the same race stands
+			// for theirs when none of the same NPC is left (Pick takes the same NPC first), as a created single alias pairs
+			// whatever each game rolled.
+			return !a_own.otherSystem && (SameNpc(a_own, a_theirs) || SameRace(a_own, a_theirs)) && Near(a_own, a_theirs);
 		case Match::kPlaced:
 			return !a_own.otherSystem && SameNear(a_own, a_theirs) && SameSpot(a_own, a_theirs);
 		}
@@ -359,22 +382,28 @@ namespace QuestActors
 		bool              paired = false;   // paired with another friend's spawn already
 		bool              shared = false;   // our game shares it (or reported it and awaits the answer)
 		bool              yields = false;   // ... and lets it go for theirs (Yields)
+		bool              exact = true;     // of the same NPC as theirs (SameNpc), not only of its race: taken first
 		RemoteEdits::Spot at;
 	};
 
 	// The one of a_candidates that pairs with a friend's spawn standing at a_theirsAt: of the twins that are ready and not
-	// paired, shared by nobody or letting go for theirs, the nearest within PAIR_RANGE. None: a_candidates.size().
+	// paired, shared by nobody or letting go for theirs, within PAIR_RANGE: the nearest of the same NPC, else the nearest. None:
+	// a_candidates.size().
 	template <class Candidates>
 	std::size_t Pick(const Candidates& a_candidates, const RemoteEdits::Spot& a_theirsAt)
 	{
 		std::size_t best = std::size(a_candidates);
+		bool        bestExact = false;
 		float       nearest = 0.0f;
 		std::size_t i = 0;
 		for (const Candidate& c : a_candidates) {
 			const float d = RemoteEdits::Distance(c.at, a_theirsAt);
-			if (c.twin && c.ready && !c.paired && (!c.shared || c.yields) && RemoteEdits::Within(d, PAIR_RANGE) && (best == std::size(a_candidates) || d < nearest)) {
-				best = i;
-				nearest = d;
+			if (c.twin && c.ready && !c.paired && (!c.shared || c.yields) && RemoteEdits::Within(d, PAIR_RANGE)) {
+				if (best == std::size(a_candidates) || (c.exact && !bestExact) || (c.exact == bestExact && d < nearest)) {
+					best = i;
+					bestExact = c.exact;
+					nearest = d;
+				}
 			}
 			++i;
 		}

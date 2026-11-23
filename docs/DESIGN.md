@@ -995,7 +995,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   spawn and is paired with it (`theirs.Placed`, NpcSync mirrors theirs onto ours) rather than shared beside it. A key
   twin: their spawn names an alias that keys our NPC (`QuestActors::KeyTwin`), matched by how the alias was filled
   (`QuestActors::MatchOf`): a created single alias by the alias alone, as before; a created collection by the same NPC
-  (`SpawnBook::StandsFor`) standing within `PAIR_RANGE`, nearest first, one to one; an alias filled with an NPC made
+  (`SpawnBook::StandsFor`), or one of its race when none of the same NPC is left (each game rolls each member on its own:
+  on the rig, Special Delivery's third raider found none of its NPC to pair with), standing within `PAIR_RANGE`, the same NPC
+  first, then the nearest, one to one; an alias filled with an NPC made
   elsewhere also by the spot their game shared theirs at, within `SPOT_TWIN` (512) of where our game first saw ours
   (`firstSeen`). A spot twin (`QuestActors::SpotTwin`): their spawn names no alias that keys anything here, ours is an
   enemy no other system runs (no random encounter's, radiant's, PER_GAME quest's or settlement attack's alias holds it),

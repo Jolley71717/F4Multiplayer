@@ -243,6 +243,11 @@ TEST("quest actors: of our twins of a friend's spawn, the nearest ready one that
 	taken.paired = true;
 	CHECK(Pick(std::array{ far, ready, taken }, At(1000.0f)) == 1);
 	CHECK(Pick(std::array{ far, taken }, At(1000.0f)) == 0);
+	// One of the same NPC is taken before a nearer one of its race alone.
+	auto raceOnly = ready;
+	raceOnly.exact = false;
+	CHECK(Pick(std::array{ raceOnly, far }, At(1000.0f)) == 1);
+	CHECK(Pick(std::array{ raceOnly }, At(1000.0f)) == 0);
 }
 
 TEST("quest actors: a friend's spawn of an alias that keys ours is its twin; a loose alias's only of the same NPC nearby")
@@ -280,6 +285,21 @@ TEST("quest actors: a friend's spawn of an alias that keys ours is its twin; a l
 	CHECK(KeyTwin(system, spawn, true, Match::kAlias));
 	CHECK(!KeyTwin(system, spawn, true, Match::kNear));
 	CHECK(!KeyTwin(system, spawn, true, Match::kPlaced));
+	// A collection's members, each rolled on its own in each game: one of another NPC but the same race stands for theirs.
+	auto rolled = spawn;
+	rolled.base = 0x00012345;
+	rolled.race = 0x00013746;
+	auto human = ours;
+	human.race = 0x00013746;
+	CHECK(KeyTwin(human, rolled, true, Match::kNear));
+	CHECK(!KeyTwin(ours, rolled, true, Match::kNear));  // our race not known
+	auto creature = human;
+	creature.race = 0x0001D4A7;
+	CHECK(!KeyTwin(creature, rolled, true, Match::kNear));
+	CHECK(!KeyTwin(human, rolled, true, Match::kPlaced));  // a placing is matched by its NPC
+	auto rolledFar = rolled;
+	rolledFar.at = At(1100.0f + PAIR_RANGE + 1.0f);
+	CHECK(!KeyTwin(human, rolledFar, true, Match::kNear));
 }
 
 TEST("quest actors: a script's enemy in no alias is the twin of a friend's spawn of the same NPC their game shared where ours first stood")

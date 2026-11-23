@@ -17,7 +17,7 @@
 #      host's game shares them first; once they have left the marker (they come at the players), the VM's are switched on.
 #   3. The VM shoots one of its paired members (real clicks, up to 12, until one lands in its game): one of the host's members must
 #      take the hit (lower health, or dead). Then the host shoots one of its own members: one of the VM's paired members must take it.
-# REPRO: YES when a game holds copies of the friend's members beside its own (doubled), when none of the VM's members is paired,
+# REPRO: YES when a game holds copies of the friend's members beside its own (doubled), when a VM member is paired with none,
 # or when a landed hit stays in the shooter's game. NO when the VM's members are paired with no copies and both directions' hits
 # reach the other game. VOID when the scene could not be made (members not found or not switched on, no shot landing in 12, a
 # click that fired nothing).
@@ -37,6 +37,10 @@ hp() { field "$(info "$1" "$2")" hp; }
 dead() { [ "$(field "$(info "$1" "$2")" dead)" = true ]; }
 xy_of() { local i; i=$(info "$1" "$2"); echo "$(field "$i" x) $(field "$i" y)"; }
 owner_of() { field "$(dc "$1" "ghosts $2")" owner; }
+# paired_to <who> <ref>: the player whose spawn that game's own NPC is paired with, from its log (the last pair or unpair line
+# naming it: "<ref>, our twin of player N's ... is paired with it", "<ref>, our quest's creature paired with player N's ..., is
+# our game's alone again"), empty when none. dev mirror and ghosts read the session's id, which a paired NPC does not carry.
+paired_to() { local l; l=$(rlog "$1" | grep -aE "Spawns: $2, our (twin of player [0-9]+'s|quest's creature paired with player)" | tail -1); grep -q 'is paired with it' <<<"$l" && grep -oE 'our twin of player [0-9]+' <<<"$l" | grep -oE '[0-9]+$'; }
 running() { local f; f=$(field "$(dc "$1" "stages $QUEST")" flags); [ -n "$f" ] && (( 16#$f & 1 )); }
 shots_of() { dc "$1" "net status" | grep -oE ' shots=[0-9]+' | head -1 | cut -d= -f2; }
 qa_of() { dc "$1" "net status" | grep -oE 'questActors: [^;]*' | head -1 | cut -c1-120; }
@@ -116,7 +120,7 @@ for r in $MV; do dc vm "console $r.enable" >/dev/null; done
 scene_live "the VM's members stand loaded and switched on" 30 _up vm $MV
 sleep 15   # shared or held, copies placed or discarded, pairs made (once a second)
 say "questActors: host [$(qa_of host)] vm [$(qa_of vm)]"
-SH=""; for r in $MV; do SH="$SH $r:owner=$(owner_of vm "$r")"; done
+SH=""; for r in $MV; do SH="$SH $r:owner=$(owner_of vm "$r"),paired_to=$(paired_to vm "$r")"; done
 say "the VM's members as the session has them (owner $HID = paired with the host's, $VID = shared by the VM):$SH"
 CH=$(copies host "$VID" | tr '\n' ' '); CV=$(copies vm "$HID" | grep -vxF -f <(printf '%s\n' $MV) | tr '\n' ' ')
 say "the host's copies of the VM's raiders: [$CH]; the VM's copies of the host's raiders (not its own members): [$CV]"
@@ -125,9 +129,12 @@ rsince vm run | grep -E "Spawns: .*(alias 16|twin|is not shared|player $HID's)" 
 BAD=""
 [ -n "$(echo $CH)" ] && BAD="$BAD the host's game holds copies of the VM's members [$CH] beside its own [$MH] (doubled);"
 [ -n "$(echo $CV)" ] && BAD="$BAD the VM's game holds copies of the host's members [$CV] beside its own [$MV] (doubled);"
-PAIRED=$(for r in $MV; do [ "$(owner_of vm "$r")" = "$HID" ] && echo "$r"; done | tr '\n' ' ')
+PAIRED=$(for r in $MV; do [ "$(paired_to vm "$r")" = "$HID" ] && echo "$r"; done | tr '\n' ' ')
 [ -n "$BAD" ] && { rkeep host quest-collection-raiders; rkeep vm quest-collection-raiders; verdict YES "a quest collection's members are each game's own, shared beside the friend's:$BAD"; }
-[ -n "$(echo $PAIRED)" ] || verdict YES "no copies, but none of the VM's members [$MV] is paired with a host's (owners:$SH)"
+[ -n "$(echo $PAIRED)" ] || { rkeep host quest-collection-raiders; rkeep vm quest-collection-raiders; verdict YES "no copies, but none of the VM's members [$MV] is paired with a host's (owners:$SH)"; }
+# every member paired: one left over is the VM's own, shared beside the host's (the host shows four raiders for three)
+UNP=$(for r in $MV; do grep -qw "$r" <<<"$PAIRED" || echo "$r"; done | tr '\n' ' ')
+[ -n "$(echo $UNP)" ] && BAD="$BAD the VM's members [$UNP] are paired with none of the host's (owners:$SH);"
 
 # fire_until <shooter> <target> <hp before>: real clicks until one lands, up to 12; LANDED = the shot that did, empty if none. The
 # shooter walks (the pad) to within 250 u first and again after every 4 that missed: the raiders keep moving on the hillside, and
