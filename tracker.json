@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T04:39:00+00:00",
+ "updated": "2026-11-23T04:50:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -30,6 +30,14 @@
    "stage": 7,
    "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 333
+  },
+  {
+   "id": "02ni",
+   "title": "Host crash (abort: pure virtual call, off the main thread) in RobCo Battlezone as wave 54's robots fight a friend's stand-in; the stand-in was re-spawned the same second",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "Found on the rig 2026-11-22 during the Battlezone repro"
   },
   {
    "id": "04l0",
@@ -1558,7 +1566,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Taken on again 2026-11-22: reproducing on the rig"
+   "note": "Reproducing on the rig (0.21.1); first run: arena not shared by default, friend's robots stay ghosts in their pods"
   },
   {
    "id": "d618",
