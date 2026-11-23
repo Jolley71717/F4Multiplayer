@@ -12,12 +12,12 @@
 #      its game's copy of the raider is found (a raider near, run by the host's game).
 #   2. The host's game gives its raider an infinite health (console <ref>.setav health 1e45 written out, past a float's range):
 #      its permanent health then reads inf. The VM's copy is read 8 s on.
-#   3. The VM shoots its copy (real clicks, up to 12, until one lands in its game).
+#   3. The VM shoots its copy (real clicks, up to 24, until one lands in its game).
 #   4. At once, the VM's game kills its copy (console kill, a blow beyond its health). The host's raider is read 8 s on.
 # REPRO: YES when the VM's copy is set to no health (or dies) after the host's raider's maximum went infinite, or when the VM's
 # landed hit, or the copy's death, fells the host's raider. NO when the copy keeps its health and the host's raider stands
 # after the hit and the copy's death, and its game heard of that death. VOID when the scene could not be made (no raider
-# placed, no copy found, the maximum not infinite, no shot landing in 12) or the death never reached the host's game.
+# placed, no copy found, the maximum not infinite, no shot landing in 24) or the death never reached the host's game.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 RAIDER=${RAIDER:-001AE38D}
@@ -87,15 +87,16 @@ if ! dead vm "$C"; then
 	h0=$(hp vm "$C"); n0=$(shots_of vm); LANDED=""
 	# a hit on a copy shows in the copyHits count; the copy's own health follows its owner's reports and may not drop at once
 	ch0=$(field "$(dc vm 'net status')" copyHits)
-	for i in $(seq 1 12); do
-		[ $((i % 4)) -eq 1 ] && { rwalk vm "$C" 150 || true; }
+	# up to 24, walking in again every 4 (150 u, then 80 u from the 13th: a line that missed from one spot may not from another)
+	for i in $(seq 1 24); do
+		[ $((i % 4)) -eq 1 ] && { rwalk vm "$C" $([ $i -gt 12 ] && echo 80 || echo 150) || true; }
 		dc vm "turnto $C 300 aim" >/dev/null; sleep 0.5; dc vm "click 80" >/dev/null; sleep 1.2
 		h=$(hp vm "$C"); ch=$(field "$(dc vm 'net status')" copyHits)
 		if dead vm "$C" || lower "$h" "$h0" || lower "$ch0" "$ch"; then LANDED=$i; break; fi
 	done
 	n1=$(shots_of vm)
 	[ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the VM's clicks fired nothing (shots=$n0 before, $n1 after)"
-	[ -n "$LANDED" ] || verdict VOID "none of the VM's 12 shots at its copy $C landed (shots=$n0 -> $n1)"
+	[ -n "$LANDED" ] || verdict VOID "none of the VM's 24 shots at its copy $C landed (shots=$n0 -> $n1)"
 	# 4. at once, the copy dies in the VM's game (console kill: a blow beyond the copy's health, as a grenade there dealt one on
 	# the rig). The server takes a friend's death of a spawn only within 10 s of their fight (this hit), so no read comes first.
 	rmark host death
