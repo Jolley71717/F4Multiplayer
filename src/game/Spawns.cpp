@@ -36,6 +36,8 @@
 #include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
+#include "AttackBook.h"
+
 #include <mutex>
 
 namespace Spawns
@@ -79,8 +81,30 @@ namespace Spawns
 		std::unordered_map<std::uint32_t, PairLook> pairLooked;
 		constexpr auto                              PAIR_LOOK = std::chrono::seconds(1);
 		std::uint32_t                               pairs = 0, unpairs = 0, keyedReported = 0, twinsHeld = 0, rollsRestored = 0;
+		std::uint32_t                               yields = 0, spotPairs = 0, keyTakenPlain = 0;
 		std::unordered_map<std::uint32_t, Protocol::NpcIdentity> pairedOwn;  // by spawn id: ours as our game made it, before pairing
 		std::unordered_set<std::uint32_t>           twinsNoted;  // our NPCs held back as twins, each counted once
+		// Where our game first saw each of its own runtime NPCs standing (QuestActors::SpotTwin), by its id, with its handle
+		// (the id alone could name another NPC later). Pruned of those gone as it fills.
+		struct FirstSeen
+		{
+			RE::ObjectRefHandle handle;
+			RemoteEdits::Spot   at;
+		};
+		constexpr std::size_t                         MAX_FIRST_SEEN = 512;
+		std::unordered_map<std::uint32_t, FirstSeen> firstSeen;
+		// Our NPCs our game shares that let go of their spawn for a friend's twin (QuestActors::Yields), by id: the friend's
+		// spawn id and since when. Share gives no spawn id for them, so NpcSync releases it; once the server has dropped it
+		// they pair. Given up after YIELD_WAIT.
+		struct Yield
+		{
+			std::uint32_t     theirs = 0;
+			Clock::time_point since{};
+		};
+		std::unordered_map<std::uint32_t, Yield> yielding;
+		constexpr auto                           YIELD_WAIT = std::chrono::seconds(10);
+		// Our NPCs reported keyed (kQuestActor), by id: a twin's rank (QuestActors::Yields). Pruned of those no longer shared.
+		std::unordered_set<std::uint32_t> reportedKeyed;
 
 		// Random encounters (Encounters.h): our runs and their actors, friends' encounter spawns in the server's order, and
 		// the runs of ours we stopped for a friend's. By spawn id, the number each friend's spawn arrived as (Book::Next);
@@ -625,10 +649,16 @@ namespace Spawns
 			return a_address && gameQuests.contains(a_address);
 		}
 
-		// The fill a reference alias is judged by (QuestActors::KeyFill): its own, or for an external alias that of the alias
-		// its chain ends at (another quest's: Min00's wave raiders are DN092's created ones), FILL_NONE when the chain breaks.
-		// A reference collection's is FILL_NONE (QuestActors::AliasFill): its members are never keyed, as none pairs.
-		static_assert(QuestActors::REF_ALIAS == RE::BGSRefAlias::TYPE && QuestActors::AliasFill(RE::BGSRefCollectionAlias::TYPE, QuestActors::FILL_CREATED) == QuestActors::FILL_NONE);
+		QuestActors::AliasKind KindOfAlias(const RE::BGSBaseAlias* a_alias)
+		{
+			const char* kind = a_alias ? a_alias->QType().c_str() : nullptr;
+			return QuestActors::KindOf(kind ? std::string_view{ kind } : std::string_view{});
+		}
+
+		// The fill a reference alias or a collection is judged by (QuestActors::KeyFill): its own, or for an external alias
+		// that of the alias its chain ends at (another quest's: Min00's wave raiders are DN092's created ones), FILL_NONE when
+		// the chain breaks or for any other kind of alias.
+		static_assert(QuestActors::REF_ALIAS == RE::BGSRefAlias::TYPE && QuestActors::COLLECTION_ALIAS == RE::BGSRefCollectionAlias::TYPE);
 		std::uint16_t FillOf(const RE::BGSBaseAlias* a_alias)
 		{
 			const char* kind = a_alias->QType().c_str();
@@ -655,38 +685,160 @@ namespace Spawns
 			return QuestActors::KeyFill(a_alias->fillType, QuestActors::FILL_NONE);
 		}
 
-		// The quest alias that created our NPC, when that quest's creatures are paired across games (QuestActors::Keyed).
-		AliasKey KeyOf(RE::Actor* a_actor)
+		bool          IsEncounterQuest(const RE::TESQuest* a_quest);
+		std::uint32_t LeveledOriginal(RE::Actor* a_actor);
+
+		// Whether another system runs what a quest's aliases hold (QuestActors::Own::otherSystem): a radiant's (RadiantSync),
+		// a random encounter's (Encounters), a settlement attack's (SettlementAttacks), or one each game runs alone.
+		bool OtherSystem(const RE::TESQuest* a_quest, const QuestActors::Quest& a_facts)
 		{
+			if (a_facts.radiant || a_facts.perGame || IsEncounterQuest(a_quest)) {
+				return true;
+			}
+			const auto file = a_quest->GetFile(0);
+			return file && AttackBook::Find(file->GetFilename(), a_quest->GetFormID()) != nullptr;
+		}
+
+		// One alias that keys our NPC (QuestActors::Keyed), and whether a friend's spawn of it pairs only with one of the same
+		// NPC standing near (QuestActors::LooseAlias).
+		struct HeldKey : QuestActors::Key
+		{
+			bool loose = false;
+		};
+
+		struct HeldKeys
+		{
+			std::vector<HeldKey> keys;
+			bool                 otherSystem = false;  // an alias of a quest another system runs holds it (OtherSystem)
+
+			[[nodiscard]] const HeldKey* Find(std::uint32_t a_quest, std::uint16_t a_alias) const
+			{
+				const auto it = std::ranges::find_if(keys, [&](const HeldKey& a_key) { return a_key.quest == a_quest && a_key.alias == a_alias; });
+				return it != keys.end() ? &*it : nullptr;
+			}
+		};
+
+		// Every alias that keys our NPC (QuestActors::Keyed: a_enemy, hostile to our player), read afresh at each ask: an
+		// NPC's aliases change as its quest goes on.
+		HeldKeys KeysOf(RE::Actor* a_actor, bool a_enemy)
+		{
+			HeldKeys   out;
 			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
 			if (!aliases) {
-				return {};
+				return out;
 			}
 			const auto               race = RaceFlags(a_actor);
 			const auto               raceForm = RaceForm(a_actor);
-			const bool               enemy = EnemyOfOurs(a_actor);
 			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 			for (const auto& entry : aliases->aliasArray) {
-				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest &&
-					QuestActors::Keyed(QuestFactsOf(entry.quest), FillOf(entry.alias), race, raceForm, entry.alias->aliasID, enemy)) {
-					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
+				if (!entry.quest || !entry.alias || entry.alias->owningQuest != entry.quest) {
+					continue;
+				}
+				const auto facts = QuestFactsOf(entry.quest);
+				out.otherSystem = out.otherSystem || OtherSystem(entry.quest, facts);
+				const auto kind = KindOfAlias(entry.alias);
+				const auto fill = FillOf(entry.alias);
+				if (kind != QuestActors::AliasKind::kOther && QuestActors::Keyed(facts, fill, race, raceForm, entry.alias->aliasID, a_enemy)) {
+					HeldKey key;
+					key.quest = entry.quest->GetFormID();
+					key.alias = static_cast<std::uint16_t>(entry.alias->aliasID);
+					key.loose = QuestActors::LooseAlias(kind, fill);
+					out.keys.push_back(key);
 				}
 			}
-			return {};
+			return out;
 		}
 
-		// Whether a friend's live spawn names that alias (QuestActors::Twin).
-		bool HasTwin(const AliasKey& a_key)
+		// Where our game first saw our NPC standing (firstSeen), or where it stands when it was never seen before.
+		RemoteEdits::Spot FirstSpotOf(RE::Actor* a_actor)
 		{
-			if (a_key.quest == 0) {
-				return false;
+			const auto it = firstSeen.find(a_actor->GetFormID());
+			return it != firstSeen.end() && it->second.handle.get().get() == a_actor ? it->second.at : SpotOf(a_actor);
+		}
+
+		// Our NPC's first sight noted (FirstSpotOf): once, while it stands loaded (Share asks for each as it scans them).
+		void NoteFirstSeen(RE::Actor* a_actor, const RemoteEdits::Spot& a_at)
+		{
+			const auto local = a_actor->GetFormID();
+			if (const auto it = firstSeen.find(local); it != firstSeen.end()) {
+				if (it->second.handle.get().get() == a_actor) {
+					return;
+				}
+				firstSeen.erase(it);  // the id was another NPC's
 			}
-			for (const auto id : theirs.Ids()) {
-				if (const auto copy = theirs.Find(id); copy && QuestActors::Twin(copy->spawn, copy->dead || copy->gone, a_key.quest, a_key.alias)) {
-					return true;
+			if (firstSeen.size() >= MAX_FIRST_SEEN) {
+				std::erase_if(firstSeen, [](const auto& a_entry) {
+					const auto ref = a_entry.second.handle.get();
+					return !ref || ref->IsDeleted() || ref->GetFormID() != a_entry.first;
+				});
+				if (firstSeen.size() >= MAX_FIRST_SEEN) {
+					firstSeen.clear();
 				}
 			}
-			return false;
+			firstSeen.emplace(local, FirstSeen{ a_actor->GetHandle(), a_at });
+		}
+
+		QuestActors::Own OwnFacts(RE::Actor* a_actor, bool a_enemy, bool a_otherSystem)
+		{
+			return { .enemy = a_enemy, .otherSystem = a_otherSystem, .firstAt = FirstSpotOf(a_actor), .at = SpotOf(a_actor), .base = BaseToPlace(a_actor),
+				.original = LeveledOriginal(a_actor) };
+		}
+
+		// A friend's spawn as matched (QuestActors::Theirs), but for keyResolves (KeyAliasHere, asked last: it reads quests).
+		QuestActors::Theirs TheirFacts(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy)
+		{
+			const auto roll = NpcSync::RollOf(a_id);
+			return { .over = a_copy.dead || a_copy.gone, .sharedAt = { a_copy.spawn.cell, a_copy.spawn.worldspace, a_copy.spawn.x, a_copy.spawn.y, a_copy.spawn.z }, .at = a_copy.at,
+				.base = a_copy.spawn.base, .original = roll ? roll->originalBase : 0 };
+		}
+
+		// The quest and alias a friend's keyed spawn names, when our game runs that quest as one whose enemies pair
+		// (QuestActors::QuestPairs) and the alias holds NPCs (a reference alias or a collection). Nulls otherwise.
+		struct AliasHere
+		{
+			RE::TESQuest*           quest = nullptr;
+			const RE::BGSBaseAlias* alias = nullptr;
+			QuestActors::AliasKind  kind = QuestActors::AliasKind::kOther;
+		};
+
+		AliasHere KeyAliasHere(const Protocol::Spawn& a_spawn)
+		{
+			if (a_spawn.kind != Protocol::SpawnKind::kQuestActor || a_spawn.quest == 0) {
+				return {};
+			}
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_spawn.quest);
+			if (!quest || !QuestActors::QuestPairs(QuestFactsOf(quest), true)) {
+				return {};
+			}
+			const auto alias = std::ranges::find_if(quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == a_spawn.alias; });
+			const auto kind = alias != quest->aliases.end() ? KindOfAlias(*alias) : QuestActors::AliasKind::kOther;
+			return kind != QuestActors::AliasKind::kOther ? AliasHere{ quest, *alias, kind } : AliasHere{};
+		}
+
+		// Whether a friend's spawn is our NPC's twin (QuestActors::KeyTwin or SpotTwin): the same quest enemy, made once in
+		// each game. Only a friend's live spawn of an NPC (plain or a quest actor; never an encounter's actor, a settler or one
+		// our game has no reference of).
+		bool IsTwinOf(const QuestActors::Own& a_own, const HeldKeys& a_keys, std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy)
+		{
+			const auto kind = a_copy.spawn.kind;
+			if (a_copy.dead || a_copy.gone || !Protocol::IsSpawnRef(a_id) || (kind != Protocol::SpawnKind::kPlain && kind != Protocol::SpawnKind::kQuestActor)) {
+				return false;
+			}
+			const auto facts = TheirFacts(a_id, a_copy);
+			if (kind == Protocol::SpawnKind::kQuestActor && a_copy.spawn.quest != 0) {
+				if (const auto held = a_keys.Find(a_copy.spawn.quest, a_copy.spawn.alias)) {
+					return QuestActors::KeyTwin(a_own, facts, true, held->loose);
+				}
+			}
+			// A spawn whose alias keys NPCs here is that alias's to pair (it waits for ours there): never a spot twin.
+			return QuestActors::SpotTwin(a_own, facts) && !KeyAliasHere(a_copy.spawn).quest;
+		}
+
+		// The key our NPC is reported under (QuestActors::Canonical), or none.
+		AliasKey KeyOf(const HeldKeys& a_keys)
+		{
+			const auto key = QuestActors::Canonical(a_keys.keys);
+			return { key.quest, key.alias };
 		}
 
 		// ---- Random encounters (Encounters.h) ----------------------------------------------------------------------------
@@ -1101,60 +1253,117 @@ namespace Spawns
 			std::erase_if(calmOffered, [&](std::uint32_t a_id) { return !offeredEncounter.contains(a_id); });
 		}
 
-		// What our run of the quest a friend's spawn names holds in that alias, and whether it is ours to pair with it now.
+		// Our NPCs that could be a friend's spawn's twin, and the one that pairs with it now (QuestActors::Pick).
 		struct PairCandidate
 		{
-			RE::NiPointer<RE::TESObjectREFR> ref;
-			bool                             oursThere = false;  // an NPC of ours, alive, is in the alias
-			bool                             pairs = false;      // QuestActors::Pairs
+			RE::NiPointer<RE::TESObjectREFR> ref;                // ours to pair (or to let go of its spawn first: yield)
+			bool                             oursThere = false;  // an NPC of ours stands for theirs: no copy beside it meanwhile
+			bool                             pairs = false;      // ref pairs now (their spawn near our player)
+			bool                             yield = false;      // ref is shared by us: its spawn goes first (QuestActors::Yields)
+			bool                             spot = false;       // ref is a spot twin (QuestActors::SpotTwin)
 		};
 
-		PairCandidate CandidateFor(const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us)
+		// Our NPCs a friend's spawn could be the twin of: those its alias holds here (a collection's from the loaded actors,
+		// whose alias arrays name it), or for one whose alias keys nothing here, those our game first saw within SPOT_TWIN of
+		// where theirs was shared.
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> TwinsSought(const SpawnBook::Theirs::Copy& a_copy, const AliasHere& a_alias)
+		{
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> out;
+			if (a_alias.quest && a_alias.kind == QuestActors::AliasKind::kRef) {
+				if (auto ref = a_alias.quest->GetAliasedRef(a_copy.spawn.alias).get()) {
+					out.push_back(std::move(ref));
+				}
+			} else if (a_alias.quest) {
+				const auto lists = RE::ProcessLists::GetSingleton();
+				if (!lists) {
+					return out;
+				}
+				for (const auto& handle : lists->highActorHandles) {
+					auto       ptr = handle.get();
+					const auto actor = ptr.get();
+					const auto aliases = actor && Protocol::IsSpawnRef(actor->GetFormID()) && actor->extraList ? actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+					if (!aliases) {
+						continue;
+					}
+					bool                     holds = false;
+					const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+					for (const auto& entry : aliases->aliasArray) {
+						holds = holds || (entry.quest == a_alias.quest && entry.alias == a_alias.alias);
+					}
+					if (holds) {
+						out.push_back(RE::NiPointer<RE::TESObjectREFR>(actor));
+					}
+				}
+			} else {
+				const RemoteEdits::Spot sharedAt{ a_copy.spawn.cell, a_copy.spawn.worldspace, a_copy.spawn.x, a_copy.spawn.y, a_copy.spawn.z };
+				for (const auto& [local, seen] : firstSeen) {
+					if (RemoteEdits::Within(RemoteEdits::Distance(seen.at, sharedAt), QuestActors::SPOT_TWIN)) {
+						if (auto ref = seen.handle.get(); ref && ref->GetFormID() == local) {
+							out.push_back(std::move(ref));
+						}
+					}
+				}
+			}
+			return out;
+		}
+
+		PairCandidate CandidateFor(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us)
 		{
 			PairCandidate out;
-			QuestActors::PairFacts facts{ .keyed = a_copy.spawn.quest != 0, .over = a_copy.dead || a_copy.gone, .theirsAt = a_copy.at, .player = a_us };
-			const auto quest = facts.keyed ? RE::TESForm::GetFormByID<RE::TESQuest>(a_copy.spawn.quest) : nullptr;
-			if (!quest) {
+			if (a_copy.dead || a_copy.gone) {
 				return out;
 			}
-			const auto questFacts = QuestFactsOf(quest);
-			// A quest of any line may pair an enemy (QuestActors::QuestPairs): whether ours is one is read below.
-			const auto alias = std::ranges::find_if(quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == a_copy.spawn.alias; });
-			if (!QuestActors::QuestPairs(questFacts, true) || alias == quest->aliases.end()) {
-				return out;
+			const auto alias = KeyAliasHere(a_copy.spawn);
+			const auto questFacts = alias.quest ? QuestFactsOf(alias.quest) : QuestActors::Quest{};
+			const bool theirsKeyed = a_copy.spawn.kind == Protocol::SpawnKind::kQuestActor;
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> refs;
+			std::vector<QuestActors::Candidate>           candidates;
+			for (auto& ref : TwinsSought(a_copy, alias)) {
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				const auto local = actor ? actor->GetFormID() : 0;
+				// Ours (a copy of a friend's is not), alive and switched on. One still switched off here stands for nothing: the
+				// quest's script switches each game's own on as its own player comes (Min00's waves as its player leaves the
+				// museum's roof), and a friend whose game has not yet would see none of the owner's raiders at all, held back for
+				// ours; a copy is placed, and goes once ours is switched on and pairs with theirs.
+				if (!actor || !Protocol::IsSpawnRef(local) || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef() || actor->IsDisabled()) {
+					continue;
+				}
+				const auto copyOf = theirs.IdOf(local);
+				const bool pairedHere = copyOf != 0 && paired.contains(copyOf);
+				if (copyOf != 0 && !pairedHere) {
+					continue;  // our copy of another friend's spawn
+				}
+				if (pairedHere && copyOf == a_id) {
+					return out;  // paired with this one already (UpdatePaired)
+				}
+				const bool enemy = EnemyOfOurs(actor);
+				const auto keys = KeysOf(actor, enemy);
+				QuestActors::Candidate c{ .twin = IsTwinOf(OwnFacts(actor, enemy, keys.otherSystem), keys, a_id, a_copy), .paired = pairedHere };
+				// A calm NPC of a quest whose calm creatures pair stands for their spawn as before (no copy beside it), though
+				// it pairs only once it is a creature or an enemy here (Keyed).
+				const bool standsFor = c.twin || (alias.quest && alias.kind == QuestActors::AliasKind::kRef && QuestActors::QuestPairs(questFacts, enemy));
+				if (!standsFor) {
+					continue;
+				}
+				c.ready = actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
+				          !NpcSync::IsOurCompanion(actor) && !Leaving(local);
+				c.shared = ours.Shares(local);
+				const bool granted = ours.IdOf(local) != 0;
+				c.yields = granted && QuestActors::Yields(reportedKeyed.contains(local), LocalPlayer(), theirsKeyed, a_copy.spawn.playerId);
+				c.at = SpotOf(actor);
+				// One reported and not answered yet stands for theirs too (it will be refused as its twin, or settled once granted);
+				// one granted that keeps its spawn does not: their game lets go of theirs, and its copy is placed meanwhile.
+				out.oursThere = out.oursThere || (!c.paired && (!c.shared || !granted || c.yields));
+				refs.push_back(ref);
+				candidates.push_back(c);
 			}
-			const char* type = (*alias)->QType().c_str();
-			if (!type || std::string_view{ type } != RE::BGSRefAlias::TYPE) {
-				return out;
+			const auto pick = QuestActors::Pick(candidates, a_copy.at);
+			if (pick < candidates.size()) {
+				out.ref = refs[pick];
+				out.yield = candidates[pick].shared;
+				out.spot = !alias.quest;
+				out.pairs = RemoteEdits::Within(RemoteEdits::Distance(a_copy.at, a_us), SpawnBook::PLACE_RANGE);
 			}
-			out.ref = quest->GetAliasedRef(a_copy.spawn.alias).get();
-			const auto actor = out.ref ? out.ref->As<RE::Actor>() : nullptr;
-			const auto local = actor ? actor->GetFormID() : 0;
-			if (!actor || !Protocol::IsSpawnRef(local) || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
-				return out;
-			}
-			// Ours from the alias, by the rules for what it is here (an enemy of our player, or not). One those rules don't
-			// pair (a calm NPC of a story's quest) leaves their spawn as any other: a copy placed, or withheld while ours
-			// stands at its spot (SpawnBook::NPC_SAME_SPOT), as before. So does one still switched off here: the quest's
-			// script switches each game's own on as its own player comes (Min00's waves as its player leaves the museum's
-			// roof), and a friend whose game has not yet would see none of the owner's raiders at all, held back for ours;
-			// a copy is placed, and goes once ours is switched on and pairs with theirs (PairOrHold).
-			const bool enemy = EnemyOfOurs(actor);
-			facts.questPairs = QuestActors::QuestPairs(questFacts, enemy);
-			if (!facts.questPairs || actor->IsDisabled()) {
-				return out;
-			}
-			out.oursThere = true;
-			facts.ours = actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
-			             !NpcSync::IsOurCompanion(actor) && !Leaving(local);
-			facts.creature = QuestActors::Keyed(questFacts, FillOf(*alias), RaceFlags(actor), RaceForm(actor), (*alias)->aliasID, enemy);
-			// One our game reported and the server granted is ours (the server refuses a second game's report of the alias,
-			// so theirs could not be granted too); one reported and not answered yet will be refused, as this one's twin.
-			facts.shared = ours.IdOf(local) != 0 || theirs.IdOf(local) != 0;
-			if (facts.ours) {
-				facts.oursAt = SpotOf(actor);
-			}
-			out.pairs = QuestActors::Pairs(facts, SpawnBook::PLACE_RANGE);
 			return out;
 		}
 
@@ -1190,10 +1399,12 @@ namespace Spawns
 
 		void Discard(std::uint32_t a_id);
 
-		// A friend's spawn named with a quest alias, alive, not paired: ours from that alias paired with it (true), or held
-		// back from a copy while ours is in the alias (true: nothing to place), or neither (false: as for any spawn; with
-		// our player not yet on the quest, its creatures' unique base places no copy, BaseOk). A copy placed of a keyed
-		// spawn (a base that isn't unique) goes once our run has its own creature there (true), which is paired next.
+		// A friend's live spawn not paired (a quest actor, or a plain one that may be a spot twin): our twin of it paired with
+		// it (true), or held back from a copy while ours stands for it (true: nothing to place), or neither (false: as for any
+		// spawn; with our player not yet on the quest, its creatures' unique base places no copy, BaseOk). A copy placed of
+		// it goes once our game has its own twin there (true), which is paired next. Ours shared already lets go of its
+		// spawn first when it ranks below theirs (QuestActors::Yields: Share gives no id for it, so NpcSync releases it), and
+		// pairs once the server has dropped it.
 		bool PairOrHold(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us, Clock::time_point a_now)
 		{
 			auto& look = pairLooked[a_id];
@@ -1201,27 +1412,39 @@ namespace Spawns
 				return look.oursThere && a_copy.local == 0;
 			}
 			look.at = a_now;
-			const auto candidate = CandidateFor(a_copy, a_us);
+			const auto candidate = CandidateFor(a_id, a_copy, a_us);
 			look.oursThere = candidate.oursThere;
+			const bool keyed = a_copy.spawn.kind == Protocol::SpawnKind::kQuestActor;
+			const auto named = keyed ? std::format("quest {:08X} alias {}", a_copy.spawn.quest, a_copy.spawn.alias) : std::string{ "no alias (a spot twin)" };
 			if (look.oursThere && a_copy.local != 0) {
-				REX::INFO("Spawns: our quest {:08X} has its own creature from alias {} now; our copy {:08X} of player {}'s {:08X} goes, and ours pairs with it", a_copy.spawn.quest, a_copy.spawn.alias,
-					a_copy.local, a_copy.spawn.playerId, a_id);
+				REX::INFO("Spawns: our game has its own twin of player {}'s {:08X} ({}) now; our copy {:08X} of it goes, and ours pairs with it", a_copy.spawn.playerId, a_id, named,
+					a_copy.local);
 				Discard(a_id);
 				look.at = {};  // looked at again next frame
 				return true;
 			}
-			if (!candidate.pairs || a_copy.local != 0) {
+			if (!candidate.ref || !candidate.pairs || a_copy.local != 0) {
 				return look.oursThere && a_copy.local == 0;
 			}
 			const auto local = candidate.ref->GetFormID();
+			if (candidate.yield) {
+				if (const auto [it, fresh] = yielding.try_emplace(local, Yield{ a_id, a_now }); fresh || it->second.theirs != a_id) {
+					it->second = { a_id, a_now };
+					++yields;
+					REX::INFO("Spawns: {:08X}, ours shared as {:08X}, is the twin of player {}'s {:08X} ({}), which outranks it: ours lets go of its spawn, then pairs with theirs", local,
+						ours.IdOf(local), a_copy.spawn.playerId, a_id, named);
+				}
+				return true;
+			}
+			yielding.erase(local);
 			paired[a_id] = candidate.ref->GetHandle();
 			if (auto own = Rolls::Read(candidate.ref->As<RE::Actor>(), a_id, true)) {
 				pairedOwn[a_id] = std::move(*own);  // what ours is in our game, put back as it is unpaired
 			}
 			theirs.Placed(a_id, local, a_now);
 			++pairs;
-			REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is paired with player {}'s {:08X} from the same alias: mirrored as theirs, no copy placed", local, a_copy.spawn.quest,
-				a_copy.spawn.alias, a_copy.spawn.playerId, a_id);
+			spotPairs += candidate.spot;
+			REX::INFO("Spawns: {:08X}, our twin of player {}'s {:08X} ({}), is paired with it: mirrored as theirs, no copy placed", local, a_copy.spawn.playerId, a_id, named);
 			return true;
 		}
 
@@ -1647,6 +1870,7 @@ namespace Spawns
 		}
 		const auto now = Clock::now();
 		const auto at = SpotOf(a_actor);
+		NoteFirstSeen(a_actor, at);  // where a script placed it, for a friend's spawn of the same placing (QuestActors::SpotTwin)
 		// A random encounter's actor (Encounters.h) is ours to share calm or fighting, from the moment it stands: unless a
 		// friend's encounter already ran at the spot when ours started, in which case ours is stopped (and none of its
 		// actors offered: those seen are removed, Frame). Looked at before the grant below too: a friend's spawn that came
@@ -1703,6 +1927,15 @@ namespace Spawns
 					return 0;
 				}
 			}
+		}
+		// Ours letting go of its spawn for a friend's twin that outranks it (PairOrHold): no id, so NpcSync releases it, and
+		// it pairs once the server has dropped it. Given up after YIELD_WAIT, or once theirs is over: ours is shared again.
+		if (const auto yield = yielding.find(local); yield != yielding.end()) {
+			const auto twin = theirs.Find(yield->second.theirs);
+			if (now - yield->second.since < YIELD_WAIT && twin && !twin->dead && !twin->gone) {
+				return 0;
+			}
+			yielding.erase(yield);
 		}
 		if (const auto id = ours.IdOf(local)) {
 			return id;  // dead or alive: ours until the server has its death
@@ -1763,21 +1996,51 @@ namespace Spawns
 		// A settler names its workbench in the quest's place, with no alias and no twin: the host's game alone has it.
 		auto key = encounter;
 		auto kind = Protocol::SpawnKind::kEncounter;
+		AliasKey plainKey;  // the key of one shared plain because a friend's game shares that alias's already (QuestActors::Report::kPlain)
 		if (settlerBench != 0) {
 			key = { settlerBench, 0 };
 			kind = Protocol::SpawnKind::kSettler;
+		} else if (encounter.quest == 0 && ownedRadiant != 0) {
+			kind = Protocol::SpawnKind::kPlain;
 		} else if (encounter.quest == 0) {
-			key = KeyOf(a_actor);
-			kind = key.quest != 0 ? Protocol::SpawnKind::kQuestActor : Protocol::SpawnKind::kPlain;
-			if (HasTwin(key)) {
+			// Its keys and its twins, read afresh at each scan while it is not shared (QuestActors::ReportAs).
+			const bool enemy = EnemyOfOurs(a_actor);
+			const auto keys = KeysOf(a_actor, enemy);
+			const auto own = OwnFacts(a_actor, enemy, keys.otherSystem);
+			const auto canonical = KeyOf(keys);
+			bool       waiting = false, taken = false;
+			std::uint32_t twin = 0;
+			for (const auto id : theirs.Ids()) {
+				const auto copy = theirs.Find(id);
+				if (!copy) {
+					continue;
+				}
+				taken = taken || (canonical.quest != 0 && copy->spawn.kind == Protocol::SpawnKind::kQuestActor && copy->spawn.quest == canonical.quest && copy->spawn.alias == canonical.alias);
+				if (!waiting && !paired.contains(id) && IsTwinOf(own, keys, id, *copy)) {
+					waiting = true;
+					twin = id;
+				}
+			}
+			switch (QuestActors::ReportAs({ canonical.quest, canonical.alias }, waiting, taken)) {
+			case QuestActors::Report::kWait:
 				if (twinsNoted.size() >= MAX_BLOCKED_NOTED) {
 					twinsNoted.clear();
 				}
 				if (twinsNoted.insert(local).second) {
 					++twinsHeld;
-					REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is not shared: a friend's game shares theirs from the alias, and ours pairs with it", local, key.quest, key.alias);
+					REX::INFO("Spawns: {:08X}{} is not shared: player {}'s {:08X} is its twin, and ours pairs with it", local,
+						canonical.quest != 0 ? std::format(", our quest {:08X}'s from alias {},", canonical.quest, canonical.alias) : std::string{ ", placed where a friend's game placed theirs," },
+						theirs.Find(twin) ? theirs.Find(twin)->spawn.playerId : 0, twin);
 				}
 				return 0;
+			case QuestActors::Report::kKeyed:
+				key = canonical;
+				kind = Protocol::SpawnKind::kQuestActor;
+				break;
+			case QuestActors::Report::kPlain:
+				kind = Protocol::SpawnKind::kPlain;
+				plainKey = canonical;
+				break;
 			}
 		}
 		const bool settler = SettlerSpawns::IsSettler(kind);
@@ -1805,6 +2068,15 @@ namespace Spawns
 		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias, kind }, Protocol::MessageType::kReportSpawn));
 		++reported;
 		keyedReported += kind == Protocol::SpawnKind::kQuestActor;
+		if (kind == Protocol::SpawnKind::kQuestActor) {
+			reportedKeyed.insert(local);  // its rank as a twin (QuestActors::Yields)
+		} else {
+			reportedKeyed.erase(local);
+		}
+		if (plainKey.quest != 0 && ++keyTakenPlain <= LOGGED) {
+			REX::INFO("Spawns: {:08X}, our quest {:08X}'s from alias {}, is shared plain: a friend's game shares that alias's already, and none of theirs is its twin here", local,
+				plainKey.quest, plainKey.alias);
+		}
 		radiantActorsShared += ownedRadiant != 0;
 		if (logged < LOGGED || (settler ? settlersShared <= LOGGED : kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED)) ||
 			(ownedRadiant != 0 && radiantActorsShared <= LOGGED)) {
@@ -2263,7 +2535,8 @@ namespace Spawns
 				UpdatePaired(id, *copy, us);
 				continue;
 			}
-			if (copy->spawn.kind == Protocol::SpawnKind::kQuestActor && copy->spawn.quest != 0 && !copy->dead && !copy->gone && PairOrHold(id, *copy, us, now)) {
+			if ((copy->spawn.kind == Protocol::SpawnKind::kQuestActor || copy->spawn.kind == Protocol::SpawnKind::kPlain) && !copy->dead && !copy->gone && !RadiantSync::FollowsSpawn(id) &&
+				PairOrHold(id, *copy, us, now)) {
 				continue;
 			}
 			SpawnBook::Facts facts{ .player = us };
@@ -2374,6 +2647,8 @@ namespace Spawns
 		std::erase_if(pairLooked, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(paired, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(pairedOwn, [&](const auto& a_entry) { return !paired.contains(a_entry.first); });
+		std::erase_if(reportedKeyed, [](std::uint32_t a_local) { return !ours.Shares(a_local); });
+		std::erase_if(yielding, [&](const auto& a_entry) { return now - a_entry.second.since >= YIELD_WAIT; });
 		std::erase_if(keptClear, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 		std::erase_if(theirSeq, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(offeredEncounter, [&](const auto& a_entry) { return !ours.Holds(a_entry.first); });
@@ -2473,6 +2748,9 @@ namespace Spawns
 		leaving.clear();
 		blockedNoted.clear();  // the loaded world's ids name other NPCs
 		twinsNoted.clear();
+		firstSeen.clear();
+		yielding.clear();
+		reportedKeyed.clear();
 		unplacedWhy.clear();
 		oursThere.clear();  // the loaded world's frames are looked at afresh
 		keptClear.clear();
@@ -2526,6 +2804,9 @@ namespace Spawns
 		unplacedWhy.clear();
 		blockedNoted.clear();
 		twinsNoted.clear();
+		firstSeen.clear();
+		yielding.clear();
+		reportedKeyed.clear();
 		absentNoBase.clear();
 		theirs.Clear();
 		raises.Clear();
@@ -2560,10 +2841,10 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} kills: killsTried={} killsLifted={} killsWaiting={} killsGivenUp={} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} unrunKept={} unrunEnded={} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} kills: killsTried={} killsLifted={} killsWaiting={} killsGivenUp={} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} unrunKept={} unrunEnded={} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={} spotPairs={} yields={} keyTakenPlain={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, killsTried, protectionsLifted, pendingKills.Size(), killsGivenUp, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(), unrunKept, unrunEnded,
-			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
+			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored, spotPairs, yields, keyTakenPlain) +
 		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} stopsWaited={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} followDisabled={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
 			   encountersReceived, encountersStopped, stopsWaited, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, followDisabledCount, radiantActorsShared, shareSettle.Size(),
 			   shareSettle.Begun(), shareSettle.Expired()) +
