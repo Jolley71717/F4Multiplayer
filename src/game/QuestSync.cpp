@@ -88,7 +88,8 @@ namespace QuestSync
 		bool IsCompanion(const RE::TESQuest* a_quest);
 
 		// A quest whose stages are no steps in order and which counts as started once it runs: a dialogue quest, or an
-		// objective-less one the host's sQuests = safe shares (IsSilent). Neither shows an objective.
+		// objective-less one the host's sQuests = safe shares (IsSilent; a place's fight, whatever sQuests says). Neither shows
+		// an objective.
 		bool Unordered(const RE::TESQuest* a_quest)
 		{
 			return IsDialogue(a_quest) || IsSilent(a_quest);
@@ -188,7 +189,7 @@ namespace QuestSync
 			std::uint32_t quest;
 			std::uint16_t stage;
 			bool          story;
-			bool          safe;  // of a quest QuestFilter::SAFE holds
+			bool          safe;  // of a quest shared only with sQuests = safe (SafeOnly: QuestFilter::SAFE's, less the fights)
 		};
 		std::deque<Baselined>                            baseline;
 		bool                                             baselineQueued = false;

@@ -17,7 +17,7 @@
 // kept out of a save, as it is that game's own quest's. The server refuses a second game's report of the same alias.
 //
 // Guarded so it cannot touch a story: only a quest this session shares (QuestSync::SharesHere: a side quest, or with the
-// host's sQuests = safe a SAFE or SILENT one; its stages go between the games, so its creatures' deaths must too), of
+// host's sQuests = safe a SAFE or SILENT one, or a place's fight in waves (QuestFilter::FIGHTS) whatever sQuests says; its stages go between the games, so its creatures' deaths must too), of
 // those only one that is running here and runs once or starts with the game (never started twice: a second run's alias
 // would be the first's on the wire), of no story or faction line (Quest type none, misc or side: never the main quest's
 // or a faction's), no radiant (RadiantRules shares those by their run) nor a quest each game runs alone
