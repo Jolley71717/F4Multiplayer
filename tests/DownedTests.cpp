@@ -1742,8 +1742,9 @@ TEST("downed rules: a stand-in knocked down here while its friend is down too li
 	// Laid down already: a knock is nothing.
 	now += FRAME;
 	CHECK(down.KnockedDown(false, now) == Do::kNone);
-	// Knocked while getting up for its friend, then the friend down again: it lies down again.
+	// Getting up for its friend: a knock is nothing too (its down state is still ours); the friend down again, it lies again.
 	CHECK(down.Frame(false, true, true, now) == Do::kGetUp);
+	CHECK(down.KnockedDown(false, now) == Do::kNone);
 	now += FRAME;
 	CHECK(down.Frame(true, true, true, now) == Do::kLieDown);
 }

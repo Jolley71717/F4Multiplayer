@@ -379,6 +379,7 @@ namespace RemotePlayers
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
 		std::uint32_t   downedStandIns = 0;  // stand-ins knocked down here while their friend was up, and stood up again (StandInDown::KnockedDown)
 		LogPace::Pace   knockedPace;         // ... their log line
+		LogPace::Pace   essentialPace;       // stand-ins found no longer essential, and made so again (Puppets::KeepEssential)
 		std::uint32_t   brokenStandIns = 0;  // stand-ins replaced because something here killed or disabled them (DownRules::StandInBroken)
 		std::uint32_t   laidDown = 0;        // stand-ins laid down for their downed friend (DownRules::StandInDown)
 		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
@@ -519,8 +520,8 @@ namespace RemotePlayers
 			return static_cast<std::int32_t>(static_cast<RE::ActorState&>(*a_actor).lifeState);
 		}
 
-		// A dead puppet (killed despite protection, e.g. by a script), or one put down by a hit bigger than its whole
-		// health, is replaced by a fresh one.
+		// Dead (killed despite being essential, e.g. a script's KillEssential), switched off, or down (DownRules::StandInBroken):
+		// a down one is stood up again (StandInDown::KnockedDown, in Update), the others are replaced by a fresh one.
 		bool IsBroken(RE::Actor* a_actor)
 		{
 			return DownRules::StandInBroken(LifeState(a_actor), a_actor->IsDead(false), a_actor->IsDisabled());
@@ -3549,6 +3550,10 @@ namespace RemotePlayers
 			const bool laid = actor && remote.standInDown.Laid() && DownRules::IsDownState(LifeState(actor)) && !actor->IsDisabled();
 			// Down here, not by us (a lethal blow on the essential stand-in): it gets up again where it is, or, its friend down too,
 			// lies on as theirs (StandInDown lays it down); replaced only if it won't get up (StandInDown's kReplace, below).
+			if (actor && !actor->IsDisabled() && Puppets::KeepEssential(actor) && essentialPace.Due(now)) {
+				REX::WARN("RemotePlayers: player {} stand-in {:08X} was no longer essential here (something took its override away); made essential again ({} since the last line, {} in all)",
+					remote.id, actor->GetFormID(), essentialPace.Since(), essentialPace.Count());
+			}
 			const bool knocked = actor && !laid && !actor->IsDisabled() && DownRules::IsDownState(LifeState(actor));
 			if (knocked) {
 				const auto lifeState = LifeState(actor);

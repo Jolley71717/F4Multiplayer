@@ -712,6 +712,17 @@ namespace Puppets
 			a_actor->boolFlags.set(RE::Actor::BOOL_FLAGS::kEssential);
 		}
 
+		// The essential byte of the reference's ExtraEssentialProtected (extra data 0x17): +0x18, 0 none, 1 essential, 2 not
+		// (as Downed.cpp reads our player's).
+		constexpr std::size_t ESSENTIAL_OVERRIDE = 0x18;
+
+		bool OverriddenEssential(RE::Actor* a_actor)
+		{
+			const auto extra = a_actor->extraList.get();
+			const auto data = extra ? extra->GetByType(RE::EXTRA_DATA_TYPE::kEssentialProtected) : nullptr;
+			return data && reinterpret_cast<const std::uint8_t*>(data)[ESSENTIAL_OVERRIDE] == 1;
+		}
+
 		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
 		std::atomic<std::uint64_t> graphsSetUp{ 0 };
 
@@ -1285,6 +1296,15 @@ namespace Puppets
 		return std::format("setup queued={} subgraphs loaded={} setUps={}", queued(process), loaded(process, a_actor, SUBGRAPH_PRIORITY), setUps);
 	}
 
+	bool KeepEssential(RE::Actor* a_actor)
+	{
+		if (!a_actor || OverriddenEssential(a_actor)) {
+			return false;
+		}
+		MakeEssential(a_actor);
+		return true;
+	}
+
 	void SetDown(RE::Actor* a_actor, bool a_down)
 	{
 		{
@@ -1293,8 +1313,9 @@ namespace Puppets
 			if (!entry) {
 				return;
 			}
-			if (entry->down && !a_down) {
-				// Up from the engine's downed pose into its base state: told again whether it moves, its sneak and its draw.
+			if (!a_down) {
+				// Up from the engine's downed pose into its base state: told again whether it moves, its sneak and its draw. Also
+				// for one a blow here put down (not laid down by us: RemotePlayers' KnockedDown), whose graph played the same pose.
 				entry->moving = false;
 				entry->appliedFlags = 0;
 				entry->lastWeaponState.reset();
