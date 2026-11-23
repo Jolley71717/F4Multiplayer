@@ -1,4 +1,5 @@
 #include "game/Spawns.h"
+#include "game/EffectTasks.h"
 
 #include "game/CopyKill.h"
 #include "game/CopyRevive.h"
@@ -1931,6 +1932,7 @@ namespace Spawns
 		if (followDisabled.size() >= MAX_FOLLOW_DISABLED) {
 			return false;  // left enabled, as before: it goes by the scan's removal or the 30 s limit once its alias is forced
 		}
+		EffectTasks::Retire(actor);
 		actor->Disable();
 		followDisabled[a_local] = actor->GetHandle();
 		if (++followDisabledCount <= LOGGED) {

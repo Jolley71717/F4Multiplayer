@@ -35,8 +35,10 @@ namespace EffectTask
 	// The effect's hit-effect controller, whose vtable the refresh calls.
 	inline constexpr std::size_t CONTROLLER = 0x10;
 
-	// How long an effect of an actor we disabled is kept as gone: the queue runs every frame.
-	inline constexpr auto KEEP = std::chrono::seconds(5);
+	// How long an effect of an actor we disabled is kept as gone: the queue runs every frame (the rig's one caught refresh
+	// came 18 ms after the disable), and the engine soon gives a freed effect's address to a new one, whose art a longer
+	// hold would leave stale.
+	inline constexpr auto KEEP = std::chrono::seconds(1);
 
 	// The first few skips are logged; the rest are only counted.
 	inline constexpr std::uint32_t LOGGED = 5;

@@ -508,7 +508,7 @@ if ($null -ne $react -and $null -ne $enterCombat) {
 # The hit-effect refresh, whose queued call EffectTasks::Install hooks (src/game/EffectTask.h): the task queue's unpack calls
 # it for message 0x0F at +0x92C (the plugin checks this call itself at load); the message's queueing (2229195) keeps the
 # effect as a bare pointer (mov [rsp+28h],rbx with no lock inc); the refresh calls the controller at +0x10 (lea rcx,[r15+10h])
-# at +0xF3; the controller's own vtable (ID 336901) is ActiveEffectReferenceEffectController's.
+# at +0xF3. The controller's own vtable is CommonLibF4's RE::VTABLE::ActiveEffectReferenceEffectController (ID 336901, not checked here).
 $refresh = Resolve 2226006
 Report ($refresh -eq 0xB74950) ('the hit-effect refresh ID 2226006 is +{0:X}' -f $refresh)
 $unpack = Resolve 2229323
