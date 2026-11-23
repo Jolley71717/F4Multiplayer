@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T22:02:13+00:00",
+ "updated": "2026-11-23T23:12:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2679,8 +2679,8 @@
    "title": "A friend's stand-in in the host's game is killed by the host's NPCs while the friend is up, and is replaced each time (5 in 10 min at RobCo Battlezone)",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "PR reviewed; waiting for the rig to test it in the arena"
+   "stage": 5,
+   "note": "Merged for 0.21.2: a friend's stand-in can no longer be killed or knocked down by the host's NPCs while the friend is alive"
   },
   {
    "id": "lvem",
