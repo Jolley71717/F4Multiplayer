@@ -3576,6 +3576,18 @@ Den quest with the VM as his (the host's Nick disallowed first, so his plain 100
 console, reads which game's Companion alias holds whom after each owner's stage, and sets MS07c's 305 in the host's game and
 then its MS07cPostQuest 20: the VM's game, whose own 305 started its post-quest, never sees that 20 and recruits nobody.
 
+A place's fight in waves is shared with the story whatever sQuests says (QuestFilter::FIGHTS, all SILENT's, read by hand:
+the Castle's mirelurk waves DN029FirstWave, DN029SecondWaveA and B, Rotten Landfill's DN119Fight, Far Harbor's
+DLC03MQ02Fight and Nuka-World's RobCo Battlezone DLC04GZBattlezone). Its stages wake or enable the wave's enemies, which
+every session shares as NPCs (one game runs each, the others hold copies). Left each game's own under the default
+sQuests = story, a Battlezone wave started in one game woke its robots there alone: the other game's copies stayed
+asleep ghosts no shot could hurt, and a wave started in the friend's game was held at the host's sleeping robots, its
+copies dying in their pods (the rig, 0.21.1). Chosen (2026-11-23) over mirroring the runner's
+ghost and unconscious state onto the copies, which needs a bit the actor state has no room for (a protocol change)
+and could only put a friend's woken wave back to sleep, leaving their arena waiting for kills that never come. A fight
+whose outcome is a faction's or a settlement's (Acadia's defence, Sierra Petrovita's attack, the airport and Mass Fusion
+battles) stays sQuests = safe's.
+
 With it, the base game's objective-less kick-outs and faction outcomes are shared with the host's sQuests = safe
 (QuestFilter::SILENT, by tools/questscan.cs ALLOW_OUTCOMES; the maintainer's choice, 2026-11-11: a faction's kick-out is
 the chooser's for both): the Brotherhood's kick-out BoSKickOut (its 20, and 30 for Mass Fusion's: the player out of the

@@ -755,7 +755,8 @@ namespace QuestSync
 
 		// Whether the host's sQuests = safe shares a quest of the game's own files: 0 no, 1 QuestFilter::SAFE (misc
 		// quests and quests under no type with objectives that are the same in every game), 2 QuestFilter::SILENT
-		// (those with no objectives). Looked up once per quest.
+		// (those with no objectives), 3 one of SILENT's that is a place's fight (QuestFilter::FIGHTS: shared with the
+		// story whatever sQuests says). Looked up once per quest.
 		std::uint8_t SafeKindOf(const RE::TESQuest* a_quest)
 		{
 			const auto id = a_quest->GetFormID();
@@ -768,7 +769,7 @@ namespace QuestSync
 			if (file && QuestFilter::IsSafe(static_cast<std::uint8_t>(*file), local)) {
 				kind = 1;
 			} else if (file && QuestFilter::IsSilent(static_cast<std::uint8_t>(*file), local)) {
-				kind = 2;
+				kind = QuestFilter::IsFight(static_cast<std::uint8_t>(*file), local) ? 3 : 2;
 			}
 			safeQuests.emplace(id, kind);
 			return kind;
@@ -784,7 +785,22 @@ namespace QuestSync
 		// One of those with no objectives (QuestFilter::SILENT): shared as a dialogue quest is (Unordered).
 		bool IsSilent(const RE::TESQuest* a_quest)
 		{
-			return SafeKindOf(a_quest) == 2;
+			const auto kind = SafeKindOf(a_quest);
+			return kind == 2 || kind == 3;
+		}
+
+		// One of those that is a place's fight (QuestFilter::FIGHTS): shared with the story whatever sQuests says.
+		bool IsFight(const RE::TESQuest* a_quest)
+		{
+			return SafeKindOf(a_quest) == 3;
+		}
+
+		// A quest shared only with the host's sQuests = safe: IsSafe's, less the fights. The rules that ask for sQuests =
+		// safe (Shared, the outbox's and the baseline's mark) ask this; the rest of IsSafe's rules (only with the story, watched
+		// whatever the setting, Unordered for SILENT's) hold for a fight too.
+		bool SafeOnly(const RE::TESQuest* a_quest)
+		{
+			return IsSafe(a_quest) && !IsFight(a_quest);
 		}
 
 		// A companion's quest filed under no type that is shared as a side quest (QuestFilter::COMPANION_QUESTS: Curie's,
@@ -878,7 +894,7 @@ namespace QuestSync
 		// those too (sQuests = safe). A radiant's while its run here is shared (RadiantSync).
 		bool Shared(const RE::TESQuest* a_quest)
 		{
-			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest)) && (SafeShared() || !IsSafe(a_quest))) || RadiantSync::Shares(a_quest->GetFormID()) ||
+			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest)) && (SafeShared() || !SafeOnly(a_quest))) || RadiantSync::Shares(a_quest->GetFormID()) ||
 			       EncounterRuns::Shares(a_quest->GetFormID());
 		}
 
@@ -3062,7 +3078,7 @@ namespace QuestSync
 			std::size_t left = 0;
 			std::size_t byQuickstart = 0;
 			for (const auto quest : AllQuests()) {
-				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared()) || (IsSafe(quest) && !SafeShared())) {
+				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared()) || (SafeOnly(quest) && !SafeShared())) {
 					continue;
 				}
 				if (!SessionStarted(quest) && !(quest->data.flags & QUEST_COMPLETED)) {
@@ -3088,7 +3104,7 @@ namespace QuestSync
 						continue;  // ScriptDoors'
 					}
 					if (baseline.size() < MAX_BASELINE) {
-						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest), IsSafe(quest) });
+						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest), SafeOnly(quest) });
 					} else {
 						++left;
 					}
@@ -3177,6 +3193,9 @@ namespace QuestSync
 		}
 		if (IsDialogue(a_quest)) {
 			return "dialogue";
+		}
+		if (IsFight(a_quest)) {
+			return "silent (a place's fight: shared with the story whatever sQuests)";
 		}
 		if (IsSilent(a_quest)) {
 			return SafeShared() ? "silent (shared with the story: sQuests = safe)" : "silent (not shared: sQuests = story)";
@@ -3494,7 +3513,7 @@ namespace QuestSync
 				continue;
 			}
 			const bool story = IsStory(quest);
-			const bool safe = IsSafe(quest);
+			const bool safe = SafeOnly(quest);
 			if ((story && a_inSession && !Story::Shared()) || (safe && a_inSession && !SafeShared())) {
 				continue;
 			}
@@ -3536,7 +3555,7 @@ namespace QuestSync
 				// Not one that a console quickstart finished here (its current stage is one the quickstart's script set): that is
 				// this game's only, as the stage is, and the friends get no "completed" line for it.
 				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !Unordered(quest) && !SetByQuickstart(quest, quest->currentStage)) {
-					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, IsSafe(quest));
+					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, SafeOnly(quest));
 					++completed;
 				}
 			}
@@ -3601,7 +3620,7 @@ namespace QuestSync
 			// player's own then (Story::SetShared(false)), and these stages are seen done only now. The outbox
 			// sends them only if the welcome says the session shares the story (StageLog::Outbox).
 			const bool story = IsStory(quest);
-			const bool safe = IsSafe(quest);
+			const bool safe = SafeOnly(quest);
 			// A radiant's stages go by its run, if it is shared (RadiantSync); a stage of it set here from a friend is
 			// never seen fresh, and one its script sets in reply goes too (each game takes each stage of a run once).
 			if (RadiantSync::IsRadiant(quest)) {

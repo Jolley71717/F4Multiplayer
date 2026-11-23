@@ -526,6 +526,31 @@ namespace QuestFilter
 		return std::ranges::binary_search(SILENT, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
 	}
 
+	// SILENT's quests that are a place's fight in waves and nothing more: their stages wake or enable the wave's enemies,
+	// which the session shares as it shares every NPC (one game runs each, the others hold copies of it). Left each game's
+	// own (the host's sQuests = story), a wave started in one game woke its enemies there alone: the other game's copies
+	// stayed asleep ghosts nobody could hurt, and a wave started there was held at the sleeping enemies' spots, its copies
+	// dying where they stood (Nuka-World's RobCo Battlezone on the rig, 2026-11-22). So these are shared with the story
+	// whatever sQuests says, as sQuests = safe shares them: every game wakes the same wave. Each read by hand: the Castle's
+	// mirelurk waves (DN029FirstWave, DN029SecondWaveA and B), Rotten Landfill's fight (DN119Fight), Far Harbor's fight at
+	// the docks (DLC03MQ02Fight, whose stages the story's DLC03MQ02 follows: shared only with the story, as here) and the
+	// Battlezone's waves (DLC04GZBattlezone). Not a fight whose outcome is a faction's or a settlement's (Acadia's defence,
+	// Sierra Petrovita's attack, the airport and Mass Fusion battles): those stay the chooser's, with sQuests = safe.
+	// Sorted by file and form ID; each is in SILENT.
+	inline constexpr Local FIGHTS[] = {
+		{ 0, 0x0ABF55 },  // DN029FirstWave
+		{ 0, 0x0ADCA6 },  // DN029SecondWaveA
+		{ 0, 0x0AE44C },  // DN029SecondWaveB
+		{ 0, 0x0BACBC },  // DN119Fight
+		{ 1, 0x043822 },  // DLC03MQ02Fight
+		{ 3, 0x0295C8 },  // DLC04GZBattlezone
+	};
+
+	inline bool IsFight(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		return std::ranges::binary_search(FIGHTS, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
+	}
+
 	// The companions' personal quests the game files under no type that a session shares as side quests (with either
 	// sQuests, story shared or not): Curie's Emergent Behavior (COMCurieQuest) and MacCready's Long Road Ahead
 	// (COMMacCreadyQuest). Each starts in the game of the player the companion is with (CompanionBook: the first to
