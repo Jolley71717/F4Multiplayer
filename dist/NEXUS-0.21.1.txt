@@ -1,0 +1,9 @@
+Fixed: a friend's shots now land on Concord's raiders during When Freedom Calls (and on other quests' enemies made the same way)
+Fixed: an update no longer replaces your F4Multiplayer.ini
+Fixed: companions in power armor now show in it on a friend's game
+Fixed: a Memory Den lounger that never seats you gives the controls back
+Fixed: a friend's invisible figure is found and shown again; friends' figures no longer say settler lines
+Fixed: a swarm of flying ants can no longer crash the game
+Fixed: the game keeps running when you switch windows while hosting or joining
+More of the mod is translated: name tags, compass markers, key names, notices and the workshop texts
+Same protocol as 0.20.0 to 0.21.0 (84); everyone should update for the fixes
