@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T04:11:12+00:00",
+ "updated": "2026-11-23T04:39:00+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -507,8 +507,8 @@
    "title": "Crash to desktop whenever a flying ant swarm is met in Nuka-World (only in a session)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Fix merged; ships in the next patch"
+   "stage": 7,
+   "note": "Shipped in 0.21.1"
   },
   {
    "id": "498g",
@@ -1558,7 +1558,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
+   "note": "Taken on again 2026-11-22: reproducing on the rig"
   },
   {
    "id": "d618",
