@@ -841,6 +841,21 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   (`net status`, `spawns: ... notShared=`); the other side logs a spawn it holds no copy of for a lasting reason (`has no
   copy here`: its base is a unique NPC, placing failed, its owner's stand-in not heard or far) and counts them
   (`unplaced=base/far/owner`).
+- An NPC a player places with the console (`player.placeatme <base> <n>`, `placeleveledactoratme`) is shared calm too
+  (`src/game/ConsoleSpawns.h`, `src/game/ConsolePlace.cpp`). A calm runtime NPC is otherwise each game's own business
+  (every game's scripts make their own, and sharing them all would double them), so a settler or a brahmin one player
+  spawned stood in that player's game alone until it fought (a Nexus report on 0.20.1). The two commands are the
+  engine's old script functions, which only the console calls (Papyrus has its own PlaceAtMe); their slots in the
+  engine's table are pointed at a wrapper that notes where the command's reference stands and calls the engine's
+  function untouched. A runtime NPC the scan then sees for the first time within 10 s and 1024 units of that spot is
+  the console's (`ConsoleSpawns::Book`, game-free and tested) and is offered as a plain spawn, calm or not, at most 16
+  calm ones a game at once (`ConsoleSpawns::MAX_CALM`; past them one waits, said once in the log). Nothing new
+  travels and no limit moves: the server's caps on spawns hold as they are, a unique NPC's base still gets no copy
+  in a friend's game (it has its own), and a friend's copy is placed only near its player, as any spawn's. Not
+  shared: an item or a piece of furniture placed with the console, an NPC placed while in no session (once it fights
+  in one it is shared as any fight's spawn), and a calm one after its player loads a save (the mark is not saved).
+  `net status`: `spawns: ... console: consoleRan= consoleFound= consoleMade= consoleShared= consoleCalm= consoleHeld=
+  consolePlace: placeAtMe=watched/n placeLeveled=watched/n`.
 - A plugin's NPC our game has no reference of goes the same way (`Spawns::Absent`, `SpawnBook::AbsentBase`): a reference
   its plugin stores as temporary is in a game only while its cell is loaded there, and a quest can take one far from its
   cell. The random encounter RETravelKMK04 moves its Mr Gutsy (REMisterGutsy01REF, 0002F61D, a temporary reference in

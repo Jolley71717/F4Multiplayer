@@ -5,6 +5,7 @@
 #include "game/UiMainMenuEntry.h"
 #include "game/UiPanel.h"
 #include "game/AutoSave.h"
+#include "game/ConsolePlace.h"
 #include "game/BodySave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
@@ -562,6 +563,7 @@ namespace
 			UiPanel::Register();  // the multiplayer menu of our own, before the main menu can open it
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
+			ConsolePlace::Install();  // the console's place commands say where they ran, so their NPCs are shared calm too (ConsoleSpawns.h)
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
 			ExitMusic::AtShutdown([] {
 				shutdownStage = true;  // first: a frame message the engine dispatches from here on runs nothing
