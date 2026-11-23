@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T23:12:18+00:00",
+ "updated": "2026-11-23T23:22:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3748,8 +3748,8 @@
    "title": "A friend's hit kills an NPC set to infinite health in the game that runs it",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix in PR 562 with the float checks; rig re-run queued",
+   "stage": 4,
+   "note": "Rig: an immortal NPC's hit and its copy's death are refused; 0.21.1 fell to one hit",
    "pr": 562
   },
   {
@@ -3767,8 +3767,8 @@
    "title": "Health share: an infinite health maximum sends share 0 and sets friends' copies to 0 health; a NaN maximum sends a report the receiver refuses every 250 ms",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Draft PR 562: every float the game sends is checked for inf/NaN; CI building",
+   "stage": 4,
+   "note": "Rig: an immortal NPC's hit and its copy's death are refused; 0.21.1 fell to one hit",
    "pr": 562
   },
   {
