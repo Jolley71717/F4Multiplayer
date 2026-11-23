@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T18:08:50+00:00",
+ "updated": "2026-11-23T19:29:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2679,8 +2679,8 @@
    "title": "A friend's stand-in in the host's game is killed by the host's NPCs while the friend is up, and is replaced each time (5 in 10 min at RobCo Battlezone)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in a PR: stand-ins kept essential so nothing here can kill them; rig test next"
+   "stage": 3,
+   "note": "PR reviewed; waiting for the rig to test it in the arena"
   },
   {
    "id": "lvem",
