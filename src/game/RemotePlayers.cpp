@@ -379,6 +379,7 @@ namespace RemotePlayers
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
 		std::uint32_t   downedStandIns = 0;  // stand-ins knocked down here while their friend was up, and stood up again (StandInDown::KnockedDown)
 		LogPace::Pace   knockedPace;         // ... their log line
+		constexpr float STAND_IN_HEALTH = 10000.0f;  // a stand-in's health (see Spawn)
 		LogPace::Pace   essentialPace;       // stand-ins found no longer essential, and made so again (Puppets::KeepEssential)
 		std::uint32_t   brokenStandIns = 0;  // stand-ins replaced because something here killed or disabled them (DownRules::StandInBroken)
 		std::uint32_t   laidDown = 0;        // stand-ins laid down for their downed friend (DownRules::StandInDown)
@@ -2152,6 +2153,13 @@ namespace RemotePlayers
 				}
 				if (values->assistance) {
 					owner->SetActorValue(*values->assistance, StandInCalm::ASSISTANCE);
+				}
+				// Health enough that no one frame's blows put it down: its own (a settler's, about 100 to 190) went in one burst
+				// of an arena robot's fire, so the essential stand-in fell and was stood up again, up to 7 times a minute (rig,
+				// 2026-11-23). Kept full every update (Puppets), it never shows: its name tag is its friend's health, and what a
+				// hit on it sends its friend is the hit's own damage, not what it took off this.
+				if (values->health) {
+					owner->SetActorValue(*values->health, STAND_IN_HEALTH);
 				}
 			}
 			// Their LooksMenu body sliders and overlays, when both games have LooksMenu (LooksMenu keeps them by reference,
