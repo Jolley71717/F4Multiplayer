@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-23T14:46:12+00:00",
+ "updated": "2026-11-23T15:04:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -36,8 +36,8 @@
    "title": "Host crash (abort: pure virtual call, off the main thread) in RobCo Battlezone as wave 54's robots fight a friend's stand-in; the stand-in was re-spawned the same second",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Looking into it"
+   "stage": 2,
+   "note": "Cause found; fix in a draft PR, rig test next"
   },
   {
    "id": "04l0",
@@ -3730,8 +3730,9 @@
    "title": "Health share: an infinite health maximum sends share 0 and sets friends' copies to 0 health; a NaN maximum sends a report the receiver refuses every 250 ms",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Taken on for 0.21.2: one pairing mechanism for quest-made enemies"
+   "stage": 3,
+   "note": "Draft PR 562: every float the game sends is checked for inf/NaN; CI building",
+   "pr": 562
   },
   {
    "id": "unyl",
