@@ -3548,12 +3548,14 @@ namespace RemotePlayers
 			}
 			// Down because we laid it down for its downed friend (DownRules::StandInDown) is not broken.
 			const bool laid = actor && remote.standInDown.Laid() && DownRules::IsDownState(LifeState(actor)) && !actor->IsDisabled();
-			// Down here, not by us (a lethal blow on the essential stand-in): it gets up again where it is, or, its friend down too,
-			// lies on as theirs (StandInDown lays it down); replaced only if it won't get up (StandInDown's kReplace, below).
-			if (actor && !actor->IsDisabled() && Puppets::KeepEssential(actor) && essentialPace.Due(now)) {
+			// Its essential override kept (a dead one is replaced below, not made essential).
+			const bool dead = actor && DownRules::Dead(LifeState(actor), actor->IsDead(false));
+			if (actor && !dead && !actor->IsDisabled() && Puppets::KeepEssential(actor) && essentialPace.Due(now)) {
 				REX::WARN("RemotePlayers: player {} stand-in {:08X} was no longer essential here (something took its override away); made essential again ({} since the last line, {} in all)",
 					remote.id, actor->GetFormID(), essentialPace.Since(), essentialPace.Count());
 			}
+			// Down here, not by us (a lethal blow on the essential stand-in): it gets up again where it is, or, its friend down too,
+			// lies on as theirs (StandInDown lays it down); replaced only if it won't get up (StandInDown's kReplace, below).
 			const bool knocked = actor && !laid && !actor->IsDisabled() && DownRules::IsDownState(LifeState(actor));
 			if (knocked) {
 				const auto lifeState = LifeState(actor);
