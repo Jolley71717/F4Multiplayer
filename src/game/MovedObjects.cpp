@@ -1,5 +1,7 @@
 #include "game/MovedObjects.h"
 
+#include "game/EffectTasks.h"
+
 #include "game/Collisions.h"
 #include "game/Equipment.h"
 #include "game/HavokNan.h"
@@ -343,6 +345,7 @@ namespace MovedObjects
 				return;
 			}
 			released.emplace(id, std::pair{ a_ref->GetHandle(), a_now + RELEASE_AGAIN });
+			EffectTasks::Retire(a_ref);  // a body grabbed: an actor's effects go with its AI process (EffectTask.h)
 			a_ref->Disable();
 			++counts.releases;
 			REX::INFO("MovedObjects: a friend holds {:08X}, which our player grabbed after them: our player lets go", id);

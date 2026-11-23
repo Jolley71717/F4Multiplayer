@@ -346,6 +346,14 @@
   hands the victim's to `AIProcess::EnterCombat` unchecked, and `TESObjectREFR::Disable` deletes an actor's process at once:
   a stand-in replaced in a fight crashed the game there. `CombatReactions` (src/game/CombatReaction.h) hooks the task's call
   and skips a victim that is disabled, deleted or has no process (`reactionsSkipped=` in `net status`).
+- An effect with hit-effect art refreshes it through the task queue's message 0x0F (2229195, +C46060, queued by 2226031),
+  which keeps the effect as a bare pointer and takes no reference (the queue's other messages that keep an object take
+  one). An actor's effects live in its AI process, which `TESObjectREFR::Disable` deletes at once: a refresh queued before
+  a stand-in was replaced ran on the destroyed effect (its controller back on the base class's vtable) and the game
+  aborted on a pure virtual call, twice in two tries in Nuka-World's RobCo Battlezone. `EffectTasks`
+  (src/game/EffectTask.h) hooks the queue's call (2229323 at +0x92C) and skips an effect whose actor we disabled since
+  (`EffectTasks::Retire` notes an actor's effects before each disable of ours) or whose controller is no longer on
+  `ActiveEffectReferenceEffectController`'s vtable (`effectGuard=`, `effectsRetired=`, `effectRefreshesSkipped=` in `net status`).
 - The console's `kill` (2204420, +5C03D0) kills the actor and then, when its torso part is Explodable with an absolute
   chance (BPND flags 0x08 and 0x40), reads that part's limb actor value and blasts the torso with a hit. It never checks that
   the part names a value: with none it reads through null, vanilla too. Nuka-World's flying ant swarm

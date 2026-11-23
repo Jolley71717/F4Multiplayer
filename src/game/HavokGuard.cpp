@@ -1,5 +1,7 @@
 #include "game/HavokGuard.h"
 
+#include "game/EffectTasks.h"
+
 #include "game/Equipment.h"
 #include "game/HavokNan.h"
 #include "game/Hud.h"
@@ -188,6 +190,7 @@ namespace HavokGuard
 				REX::WARN("Havok NaN: {} has a transform that is not finite: {}", text, HavokNan::Name(action));
 				if (action == HavokNan::Action::kReset) {
 					held[found.refId] = ref->GetHandle();
+					EffectTasks::Retire(ref.get());  // an actor's effects go with its AI process (EffectTask.h)
 					ref->Disable();  // at once (the console's `disable` is queued: a save could come before it, and keep it)
 					++result.reset;
 					++put;

@@ -50,6 +50,7 @@
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
 #include "game/CombatReactions.h"
+#include "game/EffectTasks.h"
 #include "game/ExitInventory.h"
 #include "game/VatsTargets.h"
 #include "game/HavokGuard.h"
@@ -1193,7 +1194,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 808 of 832 bytes used: forty-eight 14-byte call stubs, one per distinct hook (REL::Trampoline shares a stub between
+	// 822 of 832 bytes used: forty-nine 14-byte call stubs, one per distinct hook (REL::Trampoline shares a stub between
 	// calls to the same hook) (WorkshopSync::InstallNumbers' thirteen, one for each figure the
 	// workshop bar asks for; WorkshopSync::InstallSettlers' four (the give-command and InstallTransfers' three);
 	// WorkshopSync::InstallBenchUse's two (the activate event and the workshop key's search);
@@ -1202,7 +1203,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	// WorkshopSync::InstallPicks' nineteen calls share fifteen (the pick test, the store test, the scrap button, the scrap key,
 	// the move button, the menu's Accept, the menu's Store key, the scrap confirmation's Yes, the store box's Yes, the general
 	// pick's run and filter, the wire pick's run and filter, and both picks' casts and hits), CombatReactions::Install's
-	// one, ExitInventory::Install's one, KillBlasts::Install's two share one,
+	// one, EffectTasks::Install's one, ExitInventory::Install's one, KillBlasts::Install's two share one,
 	// Storage::InstallGather's two share one,
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
@@ -1235,6 +1236,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
 	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
+	EffectTasks::Install();      // a queued hit-effect refresh skips an effect freed since (a replaced stand-in's), which crashed on a pure virtual call (EffectTask.h)
 	ExitInventory::Install();    // quitting from workshop mode crashed at the shutdown's end in an inventory list's destructor (ExitInventory.h)
 	KillBlasts::Install();       // the console's kill (which lands a friend's game's deaths here) and Papyrus's Actor.Kill crashed on a torso with no limb value: a flying ant swarm's (KillBlast.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)

@@ -1,4 +1,5 @@
 #include "game/WorkshopSync.h"
+#include "game/EffectTasks.h"
 
 #include "game/ActorTemplates.h"
 #include "game/BuiltWalk.h"
@@ -144,6 +145,7 @@ namespace WorkshopSync
 			const auto baseId = base ? base->GetFormID() : 0;
 			const bool actor = a_ref.As<RE::Actor>() != nullptr;
 			const std::array<float, 3> at{ a_ref.data.location.x, a_ref.data.location.y, a_ref.data.location.z };
+			EffectTasks::Retire(&a_ref);  // a turret copy's effects go with its AI process (EffectTask.h)
 			a_ref.Disable();
 			a_ref.SetDelete(true);
 			if (!WorkshopApply::DropsRecord(id, persistent)) {

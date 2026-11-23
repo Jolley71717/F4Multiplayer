@@ -1,4 +1,5 @@
 #include "game/PlacedScenes.h"
+#include "game/EffectTasks.h"
 
 #include "Config.h"
 #include "game/PlacedSceneRules.h"
@@ -160,6 +161,7 @@ namespace PlacedScenes
 			for (const auto id : a_run.actors) {
 				const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(id) : nullptr;
 				if (actor && !actor->IsDisabled() && !actor->IsDeleted()) {
+					EffectTasks::Retire(actor);  // its effects go with its AI process (EffectTask.h)
 					actor->Disable();
 					++count;
 				}
