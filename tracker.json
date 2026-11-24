@@ -1,7 +1,7 @@
 {
  "release": "0.21.3",
  "known_issues": [],
- "updated": "2026-11-24T23:36:55+00:00",
+ "updated": "2026-11-24T23:38:14+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3273,7 +3273,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 1,
-   "note": "Decided: one owner per settlement per session (host first, else the first friend who owns it); others' versions hidden for the session. Both steps in 0.18.0"
+   "note": "Being built: stage 0 experiment, then stage 1 (a friend's own buildings put away at the host's settlements)"
   },
   {
    "id": "qx9n",
