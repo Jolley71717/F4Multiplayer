@@ -1,7 +1,7 @@
 {
  "release": "0.21.1",
  "known_issues": [],
- "updated": "2026-11-24T01:51:18+00:00",
+ "updated": "2026-11-24T03:11:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1702,6 +1702,14 @@
    "stage": 7,
    "note": "",
    "pr": 282
+  },
+  {
+   "id": "e694",
+   "title": "Request: split-screen couch co-op (two players on one PC)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Nexus request, not planned"
   },
   {
    "id": "e9yk",
