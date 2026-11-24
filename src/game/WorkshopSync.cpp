@@ -1364,7 +1364,7 @@ namespace WorkshopSync
 		// container's (WorkshopApply::Rescues): a turret or a robot holds its own gear.
 		void Delete(RE::TESObjectREFR* a_ref)
 		{
-			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref))) {
+			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref), Blocked(*a_ref) && !IsWorkshopObject(a_ref))) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
 				Hud::Notify(Text::Get("workshop.rescued"));

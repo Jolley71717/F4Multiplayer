@@ -112,7 +112,7 @@ namespace
 			world[a_copy].bench = a_item.workshop;
 			blocked.insert(a_copy);
 		}
-		bool                 MadeByUs(Copy a_copy) const { return blocked.contains(a_copy); }
+		bool                 MadeByUs(Copy a_copy) const { return blocked.contains(a_copy) || (world.contains(a_copy) && world.at(a_copy).kept); }
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const
 		{
 			if (!WorkshopApply::Shared(true, a_item.base == FRAME)) {
@@ -172,7 +172,7 @@ namespace
 			if (it == world.end()) {
 				return;
 			}
-			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0)) {
+			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0, MadeByUs(a_copy))) {
 				inventory += it->second.held;
 			}
 			world.erase(it);
@@ -1304,7 +1304,7 @@ TEST("workshop session: a friend's container that comes stocked is copied empty,
 	// A copy an older version made of Alice's vending machine stands in Bob's save, with what he put in it.
 	auto vendor = Wall(0xFF000001, 300.0f);
 	vendor.base = VENDOR;
-	bob.Load({ { 99, { VENDOR, WorkshopMove::Of(vendor), { 0, 0 }, 4 } } });
+	bob.Load({ { 99, { VENDOR, WorkshopMove::Of(vendor), { 0, 0 }, 4, true } } });  // with the keyword Keep gives
 	f.fake->Deliver(1, Report(vendor));
 	auto fresh = Wall(0xFF000002, 600.0f);  // and one she builds now
 	fresh.base = VENDOR;
@@ -1517,10 +1517,11 @@ TEST("workshop session: a wire's shape goes to the others with it, and to whoeve
 TEST("workshop apply: only a container's contents are handed over when its copy goes, never an actor's")
 {
 	using WorkshopApply::Kind;
-	CHECK(WorkshopApply::Rescues(Kind::kContainer, true));
-	CHECK(!WorkshopApply::Rescues(Kind::kContainer, false));
-	CHECK(!WorkshopApply::Rescues(Kind::kActor, true));  // a turret's ammo, a robot's parts
-	CHECK(!WorkshopApply::Rescues(Kind::kOther, true));
+	CHECK(WorkshopApply::Rescues(Kind::kContainer, true, true));
+	CHECK(!WorkshopApply::Rescues(Kind::kContainer, false, true));
+	CHECK(!WorkshopApply::Rescues(Kind::kContainer, true, false));  // the player's own container: never emptied into their pockets
+	CHECK(!WorkshopApply::Rescues(Kind::kActor, true, true));  // a turret's ammo, a robot's parts
+	CHECK(!WorkshopApply::Rescues(Kind::kOther, true, true));
 }
 
 // ---- WorkshopMove's rules, alone ------------------------------------------------------------
@@ -1563,4 +1564,34 @@ TEST("workshop apply: a copy whose handle names nothing is found again under its
 	CHECK(!WorkshopApply::SameCopy(COPY, 0, WALL, false));      // no reference (or base) under it
 	CHECK(!WorkshopApply::SameCopy(0x0001F2A1, WALL, WALL, false));  // not made at runtime: none of ours
 	CHECK(!WorkshopApply::SameCopy(COPY, 0, 0, false));         // kept without a base: never taken for anything
+}
+
+TEST("workshop session: a container of the player's own that stands where a friend's does is never taken for a copy, nor emptied into their pockets when the session ends")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.loaded.insert(WorkshopCells::Exterior(COMMONWEALTH, 4300.0f, 1000.0f));
+	bob.Receive(Received(f, 2));
+
+	// Bob's own crate, with his things in it, stands at the very spot where Alice builds hers, linked to no workbench of his
+	// (so it passes for neither his piece nor a copy), without the keyword the copies carry.
+	auto crate = Wall(0xFF000010, 500.0f);
+	crate.base = CRATE;
+	bob.world[77] = { CRATE, WorkshopMove::Of(crate), { 0, 0 }, 9 };
+	f.fake->Deliver(1, Report(crate));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+
+	REQUIRE(bob.copies.contains({ alice, crate.refId }));
+	CHECK(bob.copies.at({ alice, crate.refId }) != 77);  // a copy of its own, beside his crate
+	CHECK(bob.counts.adopted == 0);
+	CHECK(bob.world.at(77).held == 9);
+
+	bob.Leave();
+	CHECK(bob.world.contains(77));  // his crate stays, with what he put in it
+	CHECK(bob.world.at(77).held == 9);
+	CHECK(bob.inventory == 0);  // nothing of his containers came to his pockets
 }
