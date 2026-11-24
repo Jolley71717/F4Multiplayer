@@ -1,0 +1,2 @@
+Fixed: leaving a friend's game no longer empties your own containers into your inventory
+Same protocol as 0.20.0 to 0.21.2 (84); the player who joins needs 0.21.3 for the fix
