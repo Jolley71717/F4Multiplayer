@@ -415,7 +415,7 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	auto bob = GameAt(100.0f);
 	bob.Receive(Received(f, 2));
 	// Both saves come from one: the wall built before they parted stands in both, linked to each one's workbench (and a
-	// settler's job may hang on it). A copy an earlier session left is another matter: taken over, as before.
+	// settler's job may hang on it). A piece with no link and no copy keyword is the player's too (a mod's, a console's): never taken over.
 	const auto mine = bob.Build(100.0f);
 	bob.world[bob.nextId++] = { WALL, { { 200.0f, 1000.0f, 0.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f }, { 0, 0 } };
 
@@ -424,7 +424,7 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	bob.Receive(Received(f, 2));
 	bob.RunUntilIdle();
 	CHECK(bob.counts.oursThere == 1);
-	CHECK(bob.counts.adopted == 1);
+	CHECK(bob.counts.adopted == 0);  // the unlinked piece at 200 carries no copy keyword: it is the player's, never taken over
 	CHECK(bob.At(100.0f) == 1);  // not doubled
 	CHECK(bob.copies.size() == 1);
 	CHECK(std::ranges::none_of(bob.copies, [&](const auto& a_copy) { return a_copy.second == mine; }));
@@ -436,7 +436,7 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	CHECK(bob.world.contains(mine));
 	bob.Leave();
 	CHECK(bob.world.contains(mine));
-	CHECK(bob.At(200.0f) == 0);  // the adopted copy went with the session
+	CHECK(bob.At(200.0f) == 1);  // the copy beside the unlinked piece went with the session; the piece itself stays
 }
 
 TEST("workshop session: a friend's piece sent while you are towns away from its settlement waits for its cell, then takes over the save's copy there, and none goes over yours")
