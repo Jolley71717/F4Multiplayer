@@ -1,7 +1,7 @@
 {
  "release": "0.21.2",
  "known_issues": [],
- "updated": "2026-11-24T05:47:10+00:00",
+ "updated": "2026-11-24T06:07:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2038,8 +2038,8 @@
    "title": "Friend wears a stray chest + right arm armor piece near you (Creation Club NCR Ranger Veteran Armor with torso mods)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in a PR, waits for CI and a rig test"
+   "stage": 3,
+   "note": "Reviewed; rig test next"
   },
   {
    "id": "h4er",
