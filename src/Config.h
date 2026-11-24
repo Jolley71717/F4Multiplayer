@@ -216,6 +216,11 @@ namespace Config
 		// hooks out when something goes wrong (bSharedRolls).
 		bool sharedRolls = true;
 
+		// Not a host's rule: at a settlement the host owns, your own pieces built before the session are put away for the session
+		// (hidden and walk-through, never deleted, moved or disabled: PutAway.h), so the host's version of it is the one in the way
+		// of nothing. Off: both versions stand superimposed, as before (bPutAwayOwnSettlements).
+		bool putAwayOwnSettlements = true;
+
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;
 

@@ -136,3 +136,10 @@ TEST("Config: a cut-off line's key reads at its default once repaired, and the m
 	CHECK(ReadText(IniFile::SetValue(repaired.text, "bSharedWorkshop", "false")).sharedWorkshop == false);
 	CHECK(ReadText(IniFile::SetValue(IniFile::SetValue(repaired.text, "bSharedWorkshop", "false"), "bSharedWorkshop", "true")).sharedWorkshop == true);
 }
+
+TEST("config: bPutAwayOwnSettlements is on unless the file says off")
+{
+	CHECK(ReadText("").putAwayOwnSettlements);
+	CHECK(!ReadText("bPutAwayOwnSettlements = false\n").putAwayOwnSettlements);
+	CHECK(ReadText("bPutAwayOwnSettlements = true\n").putAwayOwnSettlements);
+}

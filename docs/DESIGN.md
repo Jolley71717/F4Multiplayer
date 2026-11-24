@@ -5589,6 +5589,33 @@ out from behind its switch (**A move.**, above); a
 refusal re-placing the copy from the server's kept report; repair, settler assignment and the host's settlement numbers. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
 adopted; per-workbench owners for dedicated servers.
 
+### Our own pieces at the host's settlements are put away for the session (src/game/PutAway.h, WorkshopSync.cpp)
+
+A friend and the host who both own Sanctuary each have their own version of it. Under the shared workshop everyone sees the host's
+(its pieces are the friend's copies), so the friend's own, built before the session, would stand through them. In a friend's game,
+while the shared workshop hands pieces over, each settlement the host owns (`hostSettlements`, told since 0.17.0) that is loaded has
+its workshop items read four times a second (`PutAwayFrame`). Our own pieces from before the session in them are put away: the
+scene-graph node is culled (`SetAppCulled`) and the collision of its bodies is switched off (`bhkWorld::EnableCollision`), the two
+calls `RemotePlayers` makes for a power armor frame. A piece counts when `BuiltWalk::Built` says it is one our player built (not a
+copy, not switched off, linked to the workbench) and it is not an actor and not one made or kept in this session (a build waiting
+for the host's answer, or kept as ours because the host was away: it stands).
+
+**Nothing saved is touched.** A piece is never disabled, deleted, moved, unlinked, given a keyword or stripped of a change record:
+a culled flag and a collision switch are no part of a reference's saved state (a save writes its flags, place, links and extra
+data, and the game makes the 3D and the bodies again on load). So a save made meanwhile, or a crash, holds every piece as before the
+session, and nothing runs in the save hooks. A 3D made anew (a cell loaded again) is told again, by its pointer; leaving the
+session, a settlement the host loses and the local switch `bPutAwayOwnSettlements` turned off show the pieces again.
+
+A put-away piece is blocked in workshop mode's pick (`PickBlockedHook`: nothing to aim at), does not stand for the host's piece at
+its spot (`OursAt`: no hole where the host's goes), and is not reported by a guest's walk (`bShareGuestBuilds`). The switch is the
+friend's own, not a host rule: no protocol or session file change. The log says "put away N of our own pieces at workbench X" for
+each settlement and "shown again" when they come back; the dev command `wsputaway` says the state and, with a reference and
+`cull`, `collision`, `both` or `off`, hides or shows one by hand. Rig: `sharedws-putaway`.
+
+Not covered: our own settlers, turrets and robots (actors) stand around the host's settlement in the friend's game; a loose object
+resting on a put-away piece, whose collision is off, falls (see the PR for what was measured); the stage 2 rule (one owner per
+settlement, a friend-owned settlement shown to everyone) is not here.
+
 ### Settlers at the host's settlement: a job is a request (src/game/SettlerRequests.h, common/SettlerRoster.h, WorkshopSync.cpp)
 
 **The rule.** At a settlement the host's game runs, a friend's game assigns nothing and takes over no settler. The friend, in

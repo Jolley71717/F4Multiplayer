@@ -3096,6 +3096,21 @@ namespace DevCommands
 			return "error: usage: wsnumbers [<benchHex>] | bar on|off";
 		}
 
+		// wsputaway: what is put away of our own pieces at the host's settlements. wsputaway <refHex> cull|collision|both|off: one
+		// reference hidden or shown by hand (the experiment: what a hidden generator, lamp or table does).
+		std::string WsPutAway(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return WorkshopSync::DescribePutAway();
+			}
+			const auto ref = LookupRef(args[0]);
+			if (!ref || args.size() > 2) {
+				return "error: usage: wsputaway [<refHex> [cull|collision|both|off]]";
+			}
+			return WorkshopSync::PutAwayByHand(ref, args.size() == 2 ? args[1] : std::string_view{ "status" });
+		}
+
 		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
 		std::string WsInfo(std::string_view a_args)
 		{
@@ -5429,6 +5444,7 @@ namespace DevCommands
 			Entry{ "wsbenches", WsBenches },
 			Entry{ "wslink", WsLink },
 			Entry{ "wsinfo", WsInfo },
+			Entry{ "wsputaway", WsPutAway },
 			Entry{ "wsres", WsRes },
 			Entry{ "wsnumbers", WsNumbers },
 			Entry{ "wswire", WsWire },

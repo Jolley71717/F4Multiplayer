@@ -9077,3 +9077,67 @@ step_faces() {
 	_faces_one host
 	crash_verdict "faces"
 }
+
+# ---- sharedws-putaway: a friend's own pieces at the host's settlement are put away for the session --------------------------------------
+# The VM (the friend) makes two pieces of its own at Sanctuary before it is the host's (a generator and a light: the engine's console
+# placement, linked to the workbench as a build is, `wsreport place ... quiet` and `wslink`), the host then owns Sanctuary. Checks: the VM
+# says "put away 2 of our own pieces", each is culled, the VM walks through where the generator stands (real movement; its collision is
+# off), the host's game puts nothing away, the host losing Sanctuary shows them again and getting it back puts them away again, leaving
+# the session shows them again, and the pieces are never disabled or deleted (what a save holds). Console placement and
+# SetOwnedByPlayer are the only set-up; no saves are made.
+_spa_said() { grep -qE "WorkshopSync: put away $2 of our own pieces at workbench $SANCT_BENCH" "$(win_read spa "$1")"; }
+_spa_shown() { grep -qE "WorkshopSync: shown again, $2 pieces of ours put away" "$(win_read spa "$1")"; }
+_spa_ref() {  # _spa_ref <base>: a piece of the VM's own, made at its feet and linked to Sanctuary's workbench; prints its id
+	local out ref
+	out=$(vm "wsreport place $1 $SANCT_BENCH quiet"); ref=$(grep -oE 'placed [0-9A-F]{8}' <<<"$out" | grep -oE '[0-9A-F]{8}')
+	[ -n "$ref" ] || return 1
+	vm "wslink $ref $SANCT_BENCH" >/dev/null; echo "$ref"
+}
+step_sharedws_putaway() {
+	section "shared workshop: a friend's own pieces at the host's settlement are put away for the session (console placement and SetOwnedByPlayer; no saves)"
+	local label="sharedws-putaway" r gen lamp info
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	case "$(vm wsputaway)" in putaway:*) ;; *) fail "$label: precondition: the VM's build knows dev wsputaway" "$(vm wsputaway | cut -c1-160)"; return;; esac
+	enter_both SanctuaryExt 14
+	win_mark spa host; win_mark spa vm
+	gen=$(_spa_ref "$SWS_GENERATOR"); lamp=$(_spa_ref "$SWS_LIGHT")
+	if [ -z "$gen" ] || [ -z "$lamp" ]; then setup_fault "$label: set-up: the VM makes a generator and a light of its own at Sanctuary" "gen='$gen' lamp='$lamp'"; return; fi
+	_sws_placed vm "$gen"; _sws_placed vm "$lamp"
+	sleep 2
+	expect_eq "$label: before the host owns Sanctuary nothing of the VM's is put away" "$(field "$(vm wsputaway)" away)" 0
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then setup_fault "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; _sws_cleanup; return; fi
+	vm "wsmode host" >/dev/null
+	crash_snapshot
+	# 1. put away
+	if wait_for 30 _spa_said vm 2; then pass "$label: the VM puts its two own pieces at the host's settlement away" "$(grep -E 'WorkshopSync: put away' "$(win_read spa vm)" | tail -1 | cut -c1-200)"
+	else fail "$label: the VM puts its two own pieces at the host's settlement away" "$(vm wsputaway | cut -c1-200); $(grep -E 'WorkshopSync: (put away|the host.s settlements)' "$(win_read spa vm)" | tail -2 | tr '\n' '|' | cut -c1-300)"; _sws_cleanup; return; fi
+	info=$(vm "wsputaway $gen")
+	expect_eq "$label: the generator is culled" "$(field "$info" culled)" true
+	expect_eq "$label: the generator is put away" "$(field "$info" away)" true
+	expect_eq "$label: the light is culled" "$(field "$(vm "wsputaway $lamp")" culled)" true
+	# 2. never disabled, moved or deleted: what a save holds
+	for r in "$gen" "$lamp"; do
+		expect_eq "$label: $r stays enabled and standing (a save holds it as before)" "$(field "$(vm "refinfo $r")" disabled)$(field "$(vm "wsinfo $r")" deleted)" "falsefalse"
+	done
+	# 3. walk through where the generator stands: solid, the walk would stop short of it
+	if walk vm "$label: the VM walks through its own generator's place (put away: no collision)" 0.6 30 "$gen"; then pass "$label: the VM walked to within 30 units of its put-away generator's centre" "$WALK_LAST"; fi
+	pads_off
+	# 4. the host puts nothing away
+	if grep -qE "WorkshopSync: put away" "$(win_read spa host)"; then fail "$label: the host's game puts nothing away" "$(grep -E 'WorkshopSync: put away' "$(win_read spa host)" | tail -1 | cut -c1-200)"; else pass "$label: the host's game puts nothing away" "no line"; fi
+	# 5. the host loses Sanctuary: shown again; regains it: put away again
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 0" >/dev/null; sleep 2
+	if wait_for 30 _spa_shown vm 2; then pass "$label: the host losing Sanctuary shows the VM's pieces again" "$(grep -E 'shown again' "$(win_read spa vm)" | tail -1 | cut -c1-160)"
+	else fail "$label: the host losing Sanctuary shows the VM's pieces again" "$(vm wsputaway | cut -c1-200)"; fi
+	expect_eq "$label: the generator is drawn again" "$(field "$(vm "wsputaway $gen")" culled)" false
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	wait_for 30 _spa_said vm 2
+	expect_eq "$label: the host regaining Sanctuary puts the generator away again" "$(field "$(vm "wsputaway $gen")" culled)" true
+	# 6. leaving the session: shown again without a load
+	vm "net leave" >/dev/null; sleep 4
+	expect_eq "$label: the VM leaving the session draws the generator again" "$(field "$(vm "wsputaway $gen")" culled)" false
+	expect_eq "$label: nothing is put away after the leave" "$(field "$(vm wsputaway)" away)" 0
+	crash_verdict "$label:"
+	_sws_cleanup
+}
