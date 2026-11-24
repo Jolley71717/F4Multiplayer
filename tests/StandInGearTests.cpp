@@ -1063,40 +1063,73 @@ TEST("stand-in gear: the mods a copy is built with here are theirs less the ones
 	CHECK(!Buildable(&missing, here));
 }
 
-TEST("stand-in gear: a friend's armor goes on their stand-in without the effects its mods give it, whatever the piece; a gun keeps its own")
+TEST("stand-in gear: a friend's armor goes on their stand-in without any of the effects its copy lists; a gun keeps only what the shot replay reads")
 {
 	using StandInGear::Effects;
-	using StandInGear::LeaveOffEffects;
-	// A chest piece with a torso mod that adds an effect, a legendary's or the mod's own: its copy's own list is emptied.
-	CHECK(LeaveOffEffects(true, 1, false) == Effects::kEmpty);
-	CHECK(LeaveOffEffects(true, 3, false) == Effects::kEmpty);  // a legendary and two of a mod's own
-	// The engine left the copy pointing at the base form's list: let go of, never emptied (it is every copy's, ours too).
-	CHECK(LeaveOffEffects(true, 1, true) == Effects::kDetach);
-	CHECK(LeaveOffEffects(true, 2, true) == Effects::kDetach);
-	// Nothing listed: nothing to do, whether the list is its own, the base form's or none.
-	CHECK(LeaveOffEffects(true, 0, false) == Effects::kKeep);
-	CHECK(LeaveOffEffects(true, 0, true) == Effects::kKeep);
-	// A gun keeps its enchantments: the stand-in's shots are replayed by them (AttackKind), and hit no one.
-	CHECK(LeaveOffEffects(false, 1, false) == Effects::kKeep);
-	CHECK(LeaveOffEffects(false, 2, true) == Effects::kKeep);
+	using StandInGear::Enchantment;
+	using StandInGear::Keeps;
+	using StandInGear::PlanEffects;
+	using Off = std::vector<std::size_t>;
+	constexpr std::int32_t CONSTANT = AttackKind::CAST_CONSTANT_EFFECT;
+	constexpr std::int32_t FIRE_AND_FORGET = 1;
+	constexpr std::int32_t SELF = AttackKind::DELIVERY_SELF;
+	constexpr std::int32_t TOUCH = 1;
+	const Enchantment onWearer{ .castingType = CONSTANT, .delivery = SELF };          // AP regen, Chameleon, slow time, a plugin's own
+	const Enchantment onHit{ .castingType = FIRE_AND_FORGET, .delivery = TOUCH };     // a legendary's bleed, a laser's fire
+	const Enchantment blast{ .castingType = CONSTANT, .delivery = SELF, .explodes = true };
+	const Enchantment none{ .present = false };
+
+	// Armor keeps none of them, whatever they are.
+	CHECK(!Keeps(true, onWearer));
+	CHECK(!Keeps(true, onHit));
+	CHECK(!Keeps(true, blast));
+	// A gun keeps what lands on a hit and what sets off an explosion (both read by the replay), not what acts on its holder.
+	CHECK(!Keeps(false, onWearer));
+	CHECK(Keeps(false, onHit));
+	CHECK(Keeps(false, blast));
+	// A null entry is left where it is.
+	CHECK(Keeps(true, none));
+	CHECK(Keeps(false, none));
+
+	// A chest piece whose torso mod adds an effect, and a legendary's: both taken out of the copy's own list, last first.
+	const auto chest = PlanEffects(true, { onWearer, onWearer }, false);
+	CHECK(chest.what == Effects::kErase);
+	CHECK((chest.off == Off{ 1, 0 }));
+	// A gun with a wielder's legendary between two that land on a hit: only that one goes.
+	const auto gun = PlanEffects(false, { onHit, onWearer, onHit }, false);
+	CHECK(gun.what == Effects::kErase);
+	CHECK((gun.off == Off{ 1 }));
+	// Nothing to leave off: the list stays as it is.
+	CHECK(PlanEffects(false, { onHit, blast }, false).what == Effects::kKeep);
+	CHECK(PlanEffects(true, {}, false).what == Effects::kKeep);
+	CHECK(PlanEffects(true, { none }, false).what == Effects::kKeep);
+	// The base form's own list (every copy's, our player's too) is never edited: let go of when none of it stays, else left
+	// as it is (and said in the log).
+	const auto detached = PlanEffects(true, { onWearer }, true);
+	CHECK(detached.what == Effects::kDetach);
+	CHECK((detached.off == Off{ 0 }));
+	const auto shared = PlanEffects(false, { onHit, onWearer }, true);
+	CHECK(shared.what == Effects::kShared);
+	CHECK(shared.off.empty());
 }
 
-TEST("stand-in gear: a friend's armor copy built without its effects still carries their mods, so it is kept, not given again on every dressing")
+TEST("stand-in gear: a friend's copy built without its effects still carries their mods, so it is kept, not given again on every dressing")
 {
 	using Mods = std::vector<Protocol::ItemMod>;
-	constexpr std::uint32_t CHEST = 0x0010C4D4;            // an armor piece
-	constexpr std::uint32_t TORSO_MOD = 0x0A000F99;        // a plugin's torso mod: another look, and an effect of its own
-	constexpr std::uint32_t LEGENDARY = 0x001CF57F;        // a legendary armor mod: an effect alone
-	const Protocol::ItemMods theirs{ CHEST, 2, { { TORSO_MOD, 0, 0 }, { LEGENDARY, 0, 0 } } };
+	constexpr std::uint32_t CHEST = 0x0011D3C3;       // a combat armor chest piece
+	constexpr std::uint32_t TORSO_MOD = 0x0A000F99;   // a plugin's torso mod: another look, and an effect of its own
+	constexpr std::uint32_t AP_REGEN = 0x001F7A75;    // mod_Legendary_Armor_APRegen: adds an enchantment (AP regen on the wearer)
+	const Protocol::ItemMods theirs{ CHEST, 2, { { TORSO_MOD, 0, 0 }, { AP_REGEN, 0, 0 } } };
 	const auto built = StandInGear::Buildable(&theirs, [](std::uint32_t) { return true; });
 	REQUIRE(built);
-	CHECK(built->mods == theirs.mods);  // every mod goes on: the look and the rating are the mods' too
-	CHECK(StandInGear::LeaveOffEffects(true, 2, false) == StandInGear::Effects::kEmpty);
+	CHECK(built->mods == theirs.mods);  // every mod goes on: the look, the rating and the actor values are the mods' too
+	const StandInGear::Enchantment effect{ .castingType = AttackKind::CAST_CONSTANT_EFFECT, .delivery = AttackKind::DELIVERY_SELF };
+	CHECK(StandInGear::PlanEffects(true, { effect, effect }, false).what == StandInGear::Effects::kErase);
 	// The copy keeps its mods (only its instance data's effects were left off), so the next dressing finds it theirs.
-	const Mods ours{ { LEGENDARY, 0, 0 }, { TORSO_MOD, 0, 0 } };
+	const Mods ours{ { AP_REGEN, 0, 0 }, { TORSO_MOD, 0, 0 } };
 	CHECK(StandInGear::ChooseCopy(&*built, ours) == StandInGear::Copy::kKeep);
-	// Another torso mod of theirs is another copy, built (and stripped) again.
-	const Protocol::ItemMods changed{ CHEST, 2, { { LEGENDARY, 0, 0 } } };
+	// Another torso mod of theirs is another copy, built (and left without its effects) again.
+	const Protocol::ItemMods changed{ CHEST, 2, { { AP_REGEN, 0, 0 } } };
 	CHECK(StandInGear::ChooseCopy(&changed, ours) == StandInGear::Copy::kReplace);
 }
 

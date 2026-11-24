@@ -106,6 +106,10 @@ namespace Equipment
 		// Our player's worn items already said in the log as left out of the gear report, or said in it without the mods
 		// made at runtime. Starts afresh with each session too.
 		GearReport::RuntimeWorn runtimeWorn;
+		// Give's warnings about a stand-in's copy, each said once for an item a session.
+		GearReport::RuntimeWorn recordEffectSaid;
+		GearReport::RuntimeWorn noInstanceSaid;
+		GearReport::RuntimeWorn sharedListSaid;
 
 		// Where a form comes from, for a log line: the plugin that made it and the last one to change it.
 		std::string SourceOf(const RE::TESForm& a_form)
@@ -257,6 +261,9 @@ namespace Equipment
 		ownGear = {};
 		ownGearLog = {};
 		runtimeWorn.Clear();
+		recordEffectSaid.Clear();
+		noInstanceSaid.Clear();
+		sharedListSaid.Clear();
 	}
 
 	std::string DescribeOwnGear()
@@ -603,30 +610,90 @@ namespace Equipment
 			return RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_mod) != nullptr;
 		}
 
-		// The enchantments a stand-in's copy of an armor piece comes with, left off (StandInGear::LeaveOffEffects) before the
-		// copy is in its inventory: none of a friend's armor's effects runs here. The instance data the engine made for an
-		// armor object is an armor's (as MuzzleFlash reads a gun's); the base form's own list is never touched. Returns how
-		// many were left off.
-		std::size_t LeaveOffEffects(RE::TESBoundObject& a_object, RE::TBO_InstanceData* a_data)
+		// One enchantment as StandInGear::Keeps weighs it.
+		StandInGear::Enchantment FactsOf(const RE::EnchantmentItem* a_enchantment)
 		{
-			const auto armor = a_object.GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_object.As<RE::TESObjectARMO>() : nullptr;
-			if (!armor || !a_data) {
+			if (!a_enchantment) {
+				return { .present = false };
+			}
+			StandInGear::Enchantment facts{ .castingType = a_enchantment->data.castingType.underlying(), .delivery = a_enchantment->data.delivery.underlying() };
+			for (const auto effect : a_enchantment->listOfEffects) {
+				facts.explodes |= effect && effect->effectSetting && effect->effectSetting->data.explosion;
+			}
+			return facts;
+		}
+
+		// The copy's enchantment list (where its instance data keeps it) and the base form's own, for an armor piece or a gun.
+		struct EffectLists
+		{
+			RE::BSTArray<RE::EnchantmentItem*>**      copy = nullptr;
+			const RE::BSTArray<RE::EnchantmentItem*>* base = nullptr;
+			bool                                      armor = false;
+		};
+
+		EffectLists ListsOf(RE::TESBoundObject& a_object, RE::TBO_InstanceData* a_data)
+		{
+			if (!a_data) {
+				return {};
+			}
+			// The instance data the engine made for an armor object is an armor's, a gun's a gun's (as MuzzleFlash reads one).
+			if (const auto armor = a_object.GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_object.As<RE::TESObjectARMO>() : nullptr) {
+				return { &static_cast<RE::TESObjectARMO::InstanceData*>(a_data)->enchantments, armor->armorData.enchantments, true };
+			}
+			if (const auto weapon = a_object.GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_object.As<RE::TESObjectWEAP>() : nullptr) {
+				return { &static_cast<RE::TESObjectWEAP::InstanceData*>(a_data)->enchantments, weapon->weaponData.enchantments, false };
+			}
+			return {};
+		}
+
+		// The enchantments a stand-in's copy comes with that would act here (StandInGear::PlanEffects), left off before the copy
+		// is in its inventory: none of a friend's armor's effects runs here, and none of a gun's on its wielder. The base
+		// form's own list is never edited. Returns how many were left off; a_shared: some were to be, but the list is the
+		// base form's.
+		std::size_t LeaveOffEffects(RE::TESBoundObject& a_object, RE::TBO_InstanceData* a_data, bool& a_shared)
+		{
+			a_shared = false;
+			const auto lists = ListsOf(a_object, a_data);
+			const auto list = lists.copy ? *lists.copy : nullptr;
+			if (!list || list->empty()) {
 				return 0;
 			}
-			const auto data = static_cast<RE::TESObjectARMO::InstanceData*>(a_data);
-			const auto list = data->enchantments;
-			const std::size_t count = list ? list->size() : 0;
-			switch (StandInGear::LeaveOffEffects(true, count, list && list == armor->armorData.enchantments)) {
+			std::vector<StandInGear::Enchantment> facts;
+			for (const auto enchantment : *list) {
+				facts.push_back(FactsOf(enchantment));
+			}
+			const auto plan = StandInGear::PlanEffects(lists.armor, facts, list == lists.base);
+			switch (plan.what) {
 			case StandInGear::Effects::kKeep:
 				return 0;
-			case StandInGear::Effects::kEmpty:
-				list->clear();
-				return count;
+			case StandInGear::Effects::kErase:
+				for (const auto index : plan.off) {  // highest first, so the others keep their places
+					list->erase(list->begin() + static_cast<std::ptrdiff_t>(index));
+				}
+				return plan.off.size();
 			case StandInGear::Effects::kDetach:
-				data->enchantments = nullptr;
-				return count;
+				*lists.copy = nullptr;
+				return plan.off.size();
+			case StandInGear::Effects::kShared:
+				a_shared = true;
+				return 0;
 			}
 			return 0;
+		}
+
+		// The item's record's own object effect (TESEnchantableForm: a record's EITM) when the stand-in would not keep it
+		// (StandInGear::Keeps), or null. No mod added it, so LeaveOffEffects does not reach it: where the engine applies it
+		// from on an equip is not read yet. Said in the log (Give) and shown by the equipped dev command.
+		const RE::EnchantmentItem* RecordEffectOf(const RE::TESBoundObject& a_object)
+		{
+			const RE::TESEnchantableForm* form = nullptr;
+			if (a_object.GetFormType() == RE::ENUM_FORM_ID::kARMO) {
+				form = a_object.As<RE::TESObjectARMO>();
+			} else if (a_object.GetFormType() == RE::ENUM_FORM_ID::kWEAP) {
+				form = a_object.As<RE::TESObjectWEAP>();
+			}
+			const auto enchantment = form ? form->formEnchanting : nullptr;
+			return enchantment && !StandInGear::Keeps(a_object.GetFormType() == RE::ENUM_FORM_ID::kARMO, FactsOf(enchantment)) ? enchantment : nullptr;
 		}
 
 		// Gives the actor one of the item built as their copy is: with the mods of theirs that are here
@@ -665,11 +732,18 @@ namespace Equipment
 				}
 			}
 			if (!object || (!instance && object->objectTemplate.items.empty())) {
+				if (const auto record = object ? RecordEffectOf(*object) : nullptr; record && recordEffectSaid.Fresh(a_item)) {
+					REX::WARN("Equipment: {:08X} '{}' given to stand-in {:08X} carries an effect of its own record ({:08X} '{}'), with no instance data on the copy: it may "
+							  "run here on the stand-in",
+						a_item, RE::TESFullName::GetFullName(*object), a_actor->GetFormID(), record->GetFormID(), RE::TESFullName::GetFullName(*record));
+				}
 				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", a_actor->GetFormID(), a_item).c_str());
 				return;
 			}
 			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
 			std::size_t                            effectsOff = 0;
+			bool                                   shared = false;
+			bool                                   hasData = false;
 			if (StandInGear::IsPlain(a_mods)) {
 				// Theirs is a plain piece: given as it is, not with the default combination, which may be an armored one here.
 			} else if (instance) {
@@ -677,18 +751,36 @@ namespace Equipment
 				instance->CreateBaseInstanceData(*object, data);
 				extra->AddExtra(instance.release());  // the list owns it from here
 				if (data) {
-					effectsOff = LeaveOffEffects(*object, data.get());
+					hasData = true;
+					effectsOff = LeaveOffEffects(*object, data.get(), shared);
 					extra->AddExtra(new RE::ExtraInstanceData(object, data));
+				} else if (noInstanceSaid.Fresh(a_item)) {
+					// Built later by the engine, if at all, from the mods: with any effects they add, which this never saw.
+					REX::WARN("Equipment: {:08X} '{}' given to stand-in {:08X} with {} of their mods, but the engine made no instance data for it: effects those mods add "
+							  "are not left off it",
+						a_item, RE::TESFullName::GetFullName(*object), a_actor->GetFormID(), attached);
 				}
 			} else {
 				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*object, *extra, nullptr, true);
 				if (const auto made = extra->GetByType<RE::ExtraInstanceData>(); made && made->data) {
-					effectsOff = LeaveOffEffects(*object, made->data.get());
+					hasData = true;
+					effectsOff = LeaveOffEffects(*object, made->data.get(), shared);
 				}
+			}
+			if (shared && sharedListSaid.Fresh(a_item)) {
+				REX::WARN("Equipment: {:08X} '{}' on stand-in {:08X}: its copy lists the base form's own effects, some of which would act here; left as they are (the "
+						  "base form's list is every copy's)",
+					a_item, RE::TESFullName::GetFullName(*object), a_actor->GetFormID());
+			}
+			if (const auto record = RecordEffectOf(*object); record && recordEffectSaid.Fresh(a_item)) {
+				REX::WARN("Equipment: {:08X} '{}' given to stand-in {:08X} carries an effect of its own record ({:08X} '{}'), {}: it may run here on the stand-in (only the "
+						  "effects its copy's mods add are left off)",
+					a_item, RE::TESFullName::GetFullName(*object), a_actor->GetFormID(), record->GetFormID(), RE::TESFullName::GetFullName(*record),
+					hasData ? "with instance data" : "with no instance data on the copy");
 			}
 			a_actor->AddInventoryItem(object, extra, 1, nullptr, nullptr, nullptr);
 			REX::INFO("Equipment: {:08X} given to {:08X} with {} ({} of {} found here){}", a_item, a_actor->GetFormID(), attached ? "their mods" : "its default mods", attached,
-				a_mods ? a_mods->mods.size() : 0, effectsOff ? std::format(", without the {} effect(s) its mods give it", effectsOff) : std::string{});
+				a_mods ? a_mods->mods.size() : 0, effectsOff ? std::format(", without {} effect(s) that would act here", effectsOff) : std::string{});
 		}
 
 		// Gives the actor its copy of one of their items as StandInGear::ChooseCopy says, and equips it, unless it wears a
@@ -740,8 +832,6 @@ namespace Equipment
 		}
 	}
 
-	// The enchantments on the actor's worn armor, as its copies' instance data lists them ("0001EED7:0,000F4D22:1"): what
-	// LeaveOffEffects leaves a stand-in's at (0), for the equipped dev command.
 	std::string WornEffects(RE::Actor* a_actor)
 	{
 		std::string out;
@@ -749,29 +839,44 @@ namespace Equipment
 		if (!list) {
 			return out;
 		}
-		RE::BSAutoReadLock l{ list->rwLock };
-		for (auto& item : list->data) {
-			if (!item.object || item.object->GetFormType() != RE::ENUM_FORM_ID::kARMO) {
-				continue;
-			}
-			for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
-				if (!stack->IsEquipped()) {
+		{
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (!item.object || !item.object->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
 					continue;
 				}
-				const auto extra = stack->extra ? stack->extra->GetByType<RE::ExtraInstanceData>() : nullptr;
-				const auto data = extra ? extra->data.get() : nullptr;
-				std::size_t count = 0;
-				if (data) {
-					const auto enchantments = static_cast<const RE::TESObjectARMO::InstanceData*>(data)->enchantments;
-					count = enchantments ? enchantments->size() : 0;
-				} else if (const auto armor = item.object->As<RE::TESObjectARMO>(); armor && armor->armorData.enchantments) {
-					count = armor->armorData.enchantments->size();  // no instance data: the base form's own
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					if (!stack->IsEquipped()) {
+						continue;
+					}
+					const auto extra = stack->extra ? stack->extra->GetByType<RE::ExtraInstanceData>() : nullptr;
+					const auto lists = ListsOf(*item.object, extra ? extra->data.get() : nullptr);
+					std::string count = "-";  // no instance data on the copy
+					if (lists.copy) {
+						count = std::to_string(*lists.copy ? (*lists.copy)->size() : 0);
+					}
+					const RE::TESEnchantableForm* form = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? static_cast<const RE::TESEnchantableForm*>(item.object->As<RE::TESObjectARMO>()) :
+					                                                                                              static_cast<const RE::TESEnchantableForm*>(item.object->As<RE::TESObjectWEAP>());
+					const auto record = form ? form->formEnchanting : nullptr;
+					out += std::format("{}{:08X}:{}{}", out.empty() ? "" : ",", item.object->GetFormID(), count, record ? std::format("+rec{:08X}", record->GetFormID()) : std::string{});
+					break;
 				}
-				out += std::format("{}{:08X}:{}", out.empty() ? "" : ",", item.object->GetFormID(), count);
-				break;
 			}
 		}
-		return out;
+		// What the engine runs on the actor from an item it wears (an active effect whose source is armor or a gun):
+		// enchantment@item, whatever list it came from.
+		std::string active;
+		const auto effects = static_cast<RE::MagicTarget*>(a_actor)->GetActiveEffectList();
+		if (effects) {
+			for (const auto& effect : effects->data) {
+				const auto e = effect.get();
+				if (!e || !e->source || !e->source->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) || e->flags.any(RE::ActiveEffect::Flags::kDispelled)) {
+					continue;
+				}
+				active += std::format("{}{:08X}@{:08X}", active.empty() ? "" : ",", e->spell ? e->spell->GetFormID() : 0, e->source->GetFormID());
+			}
+		}
+		return out + " fromItems=" + active;
 	}
 
 	bool WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)

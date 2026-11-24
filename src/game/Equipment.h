@@ -50,9 +50,10 @@ namespace Equipment
 	// (no other game has it: the list would be another robot) or there are more than the wire carries.
 	[[nodiscard]] std::optional<std::vector<Protocol::ItemMod>> ReadActorMods(RE::Actor* a_actor);
 
-	// The enchantments (object effects) on each armor piece the actor wears, as its copy's instance data lists them, else as the
-	// base form lists them ("0001EED7:0,000F4D22:1"), for the equipped dev command. A friend's stand-in's are 0: none of their
-	// armor's effects runs here (StandInGear::LeaveOffEffects).
+	// The enchantments (object effects) on the armor and guns the actor wears, for the equipped dev command: per item, how many
+	// its copy's instance data lists ("-" with no instance data) and its record's own ("+recXXXXXXXX"), then what the engine
+	// runs on the actor from them ("fromItems=enchantment@item,..."). A friend's stand-in's armor lists 0, and runs none of
+	// what its mods add (StandInGear::PlanEffects).
 	std::string WornEffects(RE::Actor* a_actor);
 
 	// Replaces everything the puppet carries with these items and equips them, each built with its mods in a_mods (or the
