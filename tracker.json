@@ -1,7 +1,7 @@
 {
  "release": "0.21.2",
  "known_issues": [],
- "updated": "2026-11-24T05:11:53+00:00",
+ "updated": "2026-11-24T05:47:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -138,6 +138,14 @@
    "stage": 7,
    "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
    "pr": 245
+  },
+  {
+   "id": "13e5",
+   "title": "Stand-in: an armor or gun record's own object effect (EITM) may still run on a friend's stand-in",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Follow-up from a review"
   },
   {
    "id": "153o",
