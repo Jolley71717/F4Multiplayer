@@ -5064,6 +5064,7 @@ loads: a reference made at run time, of that base, blocked, linked to no workben
 and it goes the way a session's end removes a copy (a container's contents to the player first, off our power, deleted) once its
 3D is in (`DeferredDelete::Safe`). An id that names anything else now is left alone and dropped from the list; one whose cell
 hasn't loaded (it still has a record of changes, `SaveGuard::HasRecord`) waits, and is carried into the next save's record. In a
+A container is emptied into the player's pockets only when it is a copy of ours: it carries the keyword our copies carry and is no workshop object of the player's own (`WorkshopApply::Rescues`). A thing of the same base that stands at a friend's spot with no such keyword and no link to a workbench (a mod's or the console's own container) is the player's: it is never taken over as a leftover copy, a copy is made beside it, and no session's end deletes it or empties it (rig: `tools/rig/repro/containers-on-leave.sh`; 0.21.2 took it for a copy at the host's next piece on its spot and put its contents into the friend's pockets).
 session nothing is removed: the session's reports find those copies at their spots (`FindExisting`) and, once kept as copies,
 the session's own end removes them. A save from before this has no record: its copies stay strays until a session adopts them.
 `savedCopies=`, `savedRemoved=`, `savedNotOurs=` and the rest in `wspower`. The repro `tools/rig/repro/friend-save-host-leftovers.sh`.
