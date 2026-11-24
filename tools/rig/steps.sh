@@ -2311,7 +2311,7 @@ _qa_silent() {
 	local k hl vl r x y z f p0 h0 who
 	[ -n "$QA_CELL" ] && enter_both "$QA_CELL" 16
 	k=$(dc host "stages $QA_QUEST")
-	case "$k" in *"silent (shared"*) ;; *) _shares_fail "quest actors ($QA_QUEST): set-up: the host's game shares it as a silent quest" "got '$(cut -c1-200 <<<"$k")'"; return;; esac
+	case "$k" in *"silent (shared"*|*"silent (a place's fight: shared"*) ;; *) _shares_fail "quest actors ($QA_QUEST): set-up: the host's game shares it as a silent quest" "got '$(cut -c1-200 <<<"$k")'"; return;; esac
 	# Started before and not running now: its run is over
 	f=$(field "$k" flags)
 	if _qa_started host $QA_QUEST && [[ $f =~ ^[0-9A-F]{4}$ ]] && [ $((0x$f & 1)) -eq 0 ]; then
