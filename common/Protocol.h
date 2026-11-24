@@ -175,7 +175,9 @@ namespace Protocol
 	// 84: each rack weapon says which rack holds it in its owner's game (RackWeapon::rackBase and rackX, rackY, rackZ, new
 	// fields at the end of each entry): its base and its place, so a game shows it only where a rack of that base stands at
 	// that spot, not wherever any rack stands near. No new message ids, no welcome bytes. 83 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 84;
+	// 85: the open state of doors built in a settlement (kReportWorkshopStates 202, kWorkshopStates 203: PieceStates,
+	// src/game/WorkshopDoors.h), which no message carried. No welcome bytes. 84 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 85;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -369,6 +371,7 @@ namespace Protocol
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
 		kReportWorkshopDamage = 190,   // how damaged the sender's own workshop pieces are now: health and destroyed (PieceDamages)
+		kReportWorkshopStates = 202,   // the open state of built doors as the sender's game has them: its own, or a friend's copies it moved (PieceStates; protocol 85)
 		kReportBenchNumbers = 192,     // the host's game: what its settlements' workshop bars show, those that changed (BenchNumbers; none: forget them all)
 		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
 		kReportHostSettlements = 196,  // the host's game: every settlement its player owns, and its Local Leader rank, when they change (HostSettlements; none: forget them)
@@ -452,6 +455,7 @@ namespace Protocol
 		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
 		kWorkshopDamage = 191,    // how damaged another player's workshop pieces are in their game: their copies here show it, wrecked or mended (PieceDamages)
+		kWorkshopStates = 203,    // the open state of built doors as another player's game has them: ours and our copies follow (PieceStates; protocol 85)
 		kBenchNumbers = 193,      // what the host's settlements' workshop bars show, as the host's game said (BenchNumbers); none: the host left or loaded, forget them all
 		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
 		kHostSettlements = 197,   // the host's settlements and Local Leader rank, as the host's game said (HostSettlements; a joiner gets them); none: forget them
@@ -1647,6 +1651,28 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_DAMAGE_ENTRIES = 128;
+
+	// The open state of one door built in a settlement (protocol 85, src/game/WorkshopDoors.h): the builder (0: the sender's
+	// own door; else a friend's, whose copy the sender's game moved) and the builder's reference ID, which every game knows
+	// the door by (its copies have IDs of their own).
+	struct PieceState
+	{
+		std::uint32_t builder = 0;
+		std::uint32_t refId = 0;
+		bool          open = false;
+
+		bool operator==(const PieceState&) const = default;
+	};
+
+	struct PieceStates
+	{
+		std::uint32_t           playerId = 0;  // stamped by the server
+		std::vector<PieceState> entries;
+
+		bool operator==(const PieceStates&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_STATE_ENTRIES = 128;
 
 	// What one of the sender's own workshop pieces (a reference their game made: something they built) counts for in their
 	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
@@ -4571,6 +4597,50 @@ namespace Protocol
 				return std::nullopt;
 			}
 			entry.powered = powered == 1;
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Up to MAX_STATE_ENTRIES entries (any more are left off: the sender sends the rest next time). Each entry is the
+	// builder (0: the sender's own), the builder's reference and a byte (1 open, 0 shut).
+	inline std::vector<std::uint8_t> Encode(const PieceStates& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_STATE_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			w.U32(entry.builder);
+			w.U32(entry.refId);
+			w.U8(entry.open ? 1 : 0);
+		}
+		return w.Data();
+	}
+
+	// None if it names no door, one no game made at runtime, or a state that is neither open nor shut.
+	inline std::optional<PieceStates> DecodePieceStates(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PieceStates msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0 || count > MAX_STATE_ENTRIES) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.builder = r.U32();
+			entry.refId = r.U32();
+			const auto open = r.U8();
+			if (!r.Ok() || open > 1 || !IsRuntimeRef(entry.refId)) {
+				return std::nullopt;
+			}
+			entry.open = open == 1;
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;

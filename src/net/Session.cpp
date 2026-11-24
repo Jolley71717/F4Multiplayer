@@ -923,6 +923,11 @@ namespace Session
 					WorkshopSync::ApplyDamage(*msg);
 				}
 				break;
+			case MessageType::kWorkshopStates:
+				if (const auto msg = Protocol::DecodePieceStates(a_data)) {
+					WorkshopSync::ApplyPieceStates(*msg);
+				}
+				break;
 			case MessageType::kWorkshopRequest:
 				if (const auto msg = Protocol::DecodeWorkshopRequest(a_data)) {
 					WorkshopSync::OnRequest(*msg);

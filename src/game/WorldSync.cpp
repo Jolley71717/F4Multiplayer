@@ -2777,6 +2777,27 @@ namespace WorldSync
 		constexpr std::uint32_t RESYNC_VERSION = 1;
 	}
 
+	bool SharesOpenState(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) {
+			return false;
+		}
+		const auto       base = a_ref->GetObjectReference();
+		const auto       door = base ? base->As<RE::TESObjectDOOR>() : nullptr;
+		DoorShare::Facts facts;
+		facts.door = door != nullptr;
+		facts.doorFlags = door ? static_cast<std::uint8_t>(door->flags) : 0;
+		if (door) {
+			ForEachScript(a_ref, [&](std::string_view a_name) {
+				++facts.scripts;
+				if (DoorShare::IsQuiet(a_name)) {
+					++facts.quietScripts;
+				}
+			});
+		}
+		return DoorShare::SharesOpen(facts);
+	}
+
 	bool InWorld()
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();

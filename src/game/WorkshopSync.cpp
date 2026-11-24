@@ -26,6 +26,8 @@
 #include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopDamage.h"
+#include "game/WorkshopDoors.h"
+#include "game/WorldSync.h"
 #include "game/WorkshopGraveyard.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
@@ -195,6 +197,8 @@ namespace WorkshopSync
 		// whether a piece of ours waits for the host's answer (its moves and scraps are not reported meanwhile).
 		bool HandOver(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench);
 		bool IsPendingPiece(std::uint32_t a_id);
+		// A door just placed (the placed event): one of our built doors' candidates (ownDoors, SendDoorStates).
+		void NoteOwnDoor(const RE::TESObjectREFR* a_ref);
 		const char* PendingNoticeOf(std::uint32_t a_id);  // the notice for a key on a copy something is asked of already (a scrap or a store)
 		// A move (SharedMove, defined with the shared workshop): a report of the host's piece whose copy our player holds in
 		// workshop mode is kept until the copy is let go (true: kept, not applied now).
@@ -778,6 +782,7 @@ namespace WorkshopSync
 		void OnPlaced(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench)
 		{
 			LogEvent("placed", a_item, a_bench);
+			NoteOwnDoor(a_item);
 			NoteGrabPlaced(a_item);  // (SharedMove) the drop of the copy our player holds: undone when it is let go
 			if (HandOver(a_item, a_bench)) {
 				return;  // asked of the host (or taken off): not ours to report
@@ -1097,6 +1102,7 @@ namespace WorkshopSync
 		std::unordered_set<std::uint32_t> keptTied;  // copies an audit could not take off: the session's audit tries them no more
 		std::uint32_t            auditSkips = 0;     // ... skipped by it since
 		std::set<std::uint32_t>  powerBenches;       // workbenches seen in loaded cells, and ones a copy was linked to
+		WorkshopDoors::Found     ownDoors;           // doors made at runtime seen in loaded cells or placed: our built doors to look at (SendDoorStates)
 		std::uint64_t            frameNumber = 0;
 		std::uint64_t            gridNamedFrame = ~0ull;
 		std::unordered_set<std::uint32_t> gridNamed;  // what the benches' grids name, as of gridNamedFrame
@@ -2603,23 +2609,46 @@ namespace WorkshopSync
 		std::int64_t            pollUsMax = 0;
 		std::uint32_t           benchWorld = 0;     // the worldspace whose persistent cell was looked over for workbenches
 
+		// Whether a reference is a door made at runtime: one a player built, ours or a copy (SendDoorStates sorts them).
+		bool RuntimeDoor(const RE::TESObjectREFR& a_ref)
+		{
+			const auto base = a_ref.GetObjectReference();
+			return WorkshopDoors::Found::Runtime(a_ref.GetFormID()) && base && base->Is(RE::ENUM_FORM_ID::kDOOR);
+		}
+
+		void NoteOwnDoor(const RE::TESObjectREFR* a_ref)
+		{
+			if (a_ref && RuntimeDoor(*a_ref)) {
+				ownDoors.Note(a_ref->GetFormID());
+			}
+		}
+
 		// The workbenches among the cell's references, with their workshop data or not yet: a settlement's workbench gets its data
-		// the first time workshop mode is used there (PowerBenches looks again each time).
+		// the first time workshop mode is used there (PowerBenches looks again each time). And the doors made at runtime among
+		// them, our built doors' candidates (ownDoors): whatever a workbench holds or lists, and whenever they were built.
 		void NoteBenchesIn(RE::TESObjectCELL* a_cell)
 		{
 			if (!a_cell) {
 				return;
 			}
-			std::vector<std::uint32_t> found;
+			std::vector<std::uint32_t> found, doors;
 			{
 				const RE::BSAutoLock l{ a_cell->spinLock };
 				for (const auto& ref : a_cell->references) {
-					if (ref && IsWorkbenchAnchor(ref.get())) {
+					if (!ref) {
+						continue;
+					}
+					if (RuntimeDoor(*ref)) {
+						doors.push_back(ref->GetFormID());
+					} else if (IsWorkbenchAnchor(ref.get())) {
 						found.push_back(ref->GetFormID());
 					}
 				}
 			}
 			powerBenches.insert(found.begin(), found.end());
+			for (const auto id : doors) {
+				ownDoors.Note(id);
+			}
 		}
 
 		void NoteBenches(const std::vector<AttachedCell>& a_fresh)
@@ -3042,6 +3071,17 @@ namespace WorkshopSync
 		WorkshopDamage::Reporter damageReporter;         // our own pieces that can be damaged
 		WorkshopDamage::Mirror   damageMirror;           // what friends' games say of theirs
 		bool                     damageMirrorOn = true;  // the dev channel's `wsdamage mirror off`: copies left as our own game has them
+		// Built doors' open states across games (WorkshopDoors.h): the session's word on each, by (builder, their ref).
+		WorkshopDoors::Book doorBook;
+		Clock::time_point   nextDoorPoll{};
+		std::uint32_t       doorStatesSent = 0, doorStatesHeard = 0, doorStatesSet = 0;
+		// The log's word on built doors: each door the first time it is looked at (whether its state is shared, and its
+		// key), and the first DOOR_LOG_LINES states said and heard, so a rig run shows where a state stopped.
+		std::unordered_set<std::uint32_t> doorsNoted;
+		std::uint32_t                     doorLines = 0;
+		constexpr std::size_t             DOOR_NOTED_MAX = 64;
+		constexpr std::uint32_t           DOOR_LOG_LINES = 60;
+		constexpr auto      DOOR_POLL = std::chrono::milliseconds(500);
 		bool                     repairsOn = true;       // the dev channel's `wsdamage repairs off`: the host's game refuses friends' repairs (as its setting off does)
 		Clock::time_point        nextDamageTrack{};
 		std::uint32_t            damageSent = 0;       // entries sent
@@ -3140,6 +3180,134 @@ namespace WorkshopSync
 			}
 		}
 
+		// ---- Built doors' open states (WorkshopDoors.h) -----------------------------------------------------------
+		// A door's open state as a word: open or opening is open; shut or shutting is shut; none for anything else.
+		std::optional<bool> DoorOpen(RE::TESObjectREFR* a_ref)
+		{
+			using Open = RE::BGSOpenCloseForm::OPEN_STATE;
+			switch (RE::BGSOpenCloseForm::GetOpenState(a_ref)) {
+			case Open::kOpen:
+			case Open::kOpening:
+				return true;
+			case Open::kClosed:
+			case Open::kClosing:
+				return false;
+			default:
+				return std::nullopt;
+			}
+		}
+
+		// The first look at a built door, ours or a copy, in the log: whether its open state is shared (a door, not automatic,
+		// no script but the quiet ones), and the key it is kept under.
+		void NoteDoor(RE::TESObjectREFR* a_ref, std::uint32_t a_builder, std::uint32_t a_refId, bool a_shared)
+		{
+			if (doorsNoted.size() >= DOOR_NOTED_MAX || !doorsNoted.insert(a_ref->GetFormID()).second) {
+				return;
+			}
+			REX::INFO("WorkshopSync: built door {:08X} ({}'s {:08X}, our player {}): {}", a_ref->GetFormID(), a_builder == 0 ? "our own" : std::format("player {}", a_builder), a_refId,
+				NpcSync::LocalPlayer(), a_shared ? "its open state is shared" : "its open state is its own game's (a script on it, or automatic)");
+		}
+
+		// A built piece that is a door with its 3D: noted once (NoteDoor), and whether its open state is shared.
+		bool LookableDoor(RE::TESObjectREFR* a_ref, std::uint32_t a_builder, std::uint32_t a_refId)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kDOOR) || !a_ref->Get3D() || a_ref->IsDeleted() || a_ref->IsDisabled()) {
+				return false;
+			}
+			const bool shared = WorldSync::SharesOpenState(a_ref);
+			NoteDoor(a_ref, a_builder, a_refId, shared);
+			return shared;
+		}
+
+		// One look at a door (ours, a_builder 0, or a copy of a_builder's): the word set on it, or its state reported.
+		void LookAtDoor(RE::TESObjectREFR* a_ref, std::uint32_t a_builder, std::uint32_t a_refId, std::vector<Protocol::PieceState>& a_out)
+		{
+			const auto open = DoorOpen(a_ref);
+			if (!open) {
+				return;
+			}
+			const auto local = NpcSync::LocalPlayer();
+			const WorkshopDoors::Key key{ a_builder == 0 ? local : a_builder, a_refId };
+			switch (doorBook.Look(key, *open, a_builder == 0)) {
+			case WorkshopDoors::Do::kApply:
+				RE::BGSOpenCloseForm::SetOpenState(a_ref, doorBook.Open(key), false);
+				doorBook.Applied(key);
+				++doorStatesSet;
+				REX::INFO("WorkshopSync: built door {:08X} ({}'s {:08X}) {} here, as another player's game has it", a_ref->GetFormID(), a_builder == 0 ? "our own" : std::format("player {}", a_builder), a_refId,
+					doorBook.Open(key) ? "opened" : "shut");
+				break;
+			case WorkshopDoors::Do::kSend:
+				if (a_out.size() < Protocol::MAX_STATE_ENTRIES) {
+					a_out.push_back({ a_builder, a_refId, *open });
+					if (doorLines < DOOR_LOG_LINES) {
+						++doorLines;
+						REX::INFO("WorkshopSync: built door {:08X} ({}'s {:08X}) is {} here: said to the others", a_ref->GetFormID(), a_builder == 0 ? "our own" : std::format("player {}", a_builder), a_refId,
+							*open ? "open" : "shut");
+					}
+				}
+				break;
+			case WorkshopDoors::Do::kNothing:
+				break;
+			}
+		}
+
+		// The doors among the workshop items each workbench in memory lists, with its workshop data or not (a door built where
+		// the cells were walked already, by a script rather than workshop mode): into ownDoors.
+		void NoteBenchDoors()
+		{
+			for (const auto benchId : powerBenches) {
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(benchId);
+				const auto children = bench && bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+				if (!children) {
+					continue;
+				}
+				for (const auto& child : children->linkedChildren) {
+					const auto ref = child.REFR.get();
+					if (ref && child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && RuntimeDoor(*ref)) {
+						ownDoors.Note(ref->GetFormID());
+					}
+				}
+			}
+		}
+
+		// Every DOOR_POLL: our own built doors (ownDoors: found as the cells attach, as they are placed, and in the workbenches'
+		// lists) and our copies of friends' are looked at (LookAtDoor), and what changed goes out as kReportWorkshopStates.
+		void SendDoorStates(Clock::time_point a_now)
+		{
+			if (a_now < nextDoorPoll) {
+				return;
+			}
+			nextDoorPoll = a_now + DOOR_POLL;
+			std::vector<Protocol::PieceState> out;
+			NoteBenchDoors();
+			ownDoors.Each([&](std::uint32_t a_id) {
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) };
+				if (!ref || ref->IsDeleted() || !RuntimeDoor(*ref) || IsCopy(ref.get())) {
+					return false;  // gone here, or a copy of a friend's (looked at below): found again if it comes back as ours
+				}
+				// Ours and one of a workbench's pieces (not one waiting for the host's answer: the host's piece is the one that
+				// counts); one not linked to a workbench yet is kept and looked at again.
+				if (OwnPiece(*ref) && !IsPendingPiece(a_id) && LookableDoor(ref.get(), 0, a_id)) {
+					LookAtDoor(ref.get(), 0, a_id, out);
+				}
+				return true;
+			});
+			for (const auto& [key, copy] : copies) {
+				const auto ref = Live(copy);
+				if (ref && LookableDoor(ref.get(), key.first, key.second)) {
+					LookAtDoor(ref.get(), key.first, key.second, out);
+				}
+			}
+			if (!out.empty()) {
+				const auto count = out.size();
+				std::scoped_lock l{ outLock };
+				if (outgoing.Push({ Protocol::Encode(Protocol::PieceStates{ 0, std::move(out) }, Protocol::MessageType::kReportWorkshopStates), 0 })) {
+					doorStatesSent += static_cast<std::uint32_t>(count);
+				}
+			}
+		}
+
 		std::string HealthText(const WorkshopDamage::State& a_state)
 		{
 			return WorkshopDamage::HasHealth(a_state) ? std::format("{:.1f}", a_state.health) : std::string{ "none" };
@@ -3231,6 +3399,7 @@ namespace WorkshopSync
 				TrackOwnDamage();
 			}
 			SendDamage(a_now);
+			SendDoorStates(a_now);
 			if (damageMirrorOn) {
 				DamageEngine engine;
 				damageMirror.Refresh(engine, a_now);
@@ -9781,12 +9950,16 @@ namespace WorkshopSync
 		}
 		damageReporter.Clear();
 		damageMirror.Clear();
+		doorBook.Clear();
+		doorsNoted.clear();
+		doorLines = 0;
 		copiesLost.clear();
 		TakeResourcesOff("leaving");
 		resources.Clear();
 		theirResources.Clear();
 		keptTied.clear();
 		powerBenches.clear();
+		ownDoors.Clear();  // found again as the cells are walked again
 		benchWorld = 0;
 		ResetShared();
 		std::scoped_lock l{ outLock };
@@ -9882,9 +10055,11 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		damageReporter.SendAll();
 		damageMirror.Invalidate();
+		doorBook.Clear();  // our doors said again as they stand, friends' words heard again
 		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
+		ownDoors.Clear();  // found again as the cells are walked again
 		benchWorld = 0;
 		// The workbenches are the save's (or the new game's) now, which hold none of friends' pieces (BeforeSave took them
 		// off): what we had put on the old world's is forgotten, and theirs go on again as their copies are found. One clear
@@ -9927,9 +10102,11 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		damageReporter.Clear();
 		damageMirror.Invalidate();
+		doorBook.Clear();
 		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
+		ownDoors.Clear();  // found again as the cells are walked again
 		benchWorld = 0;
 		ForgetAllCopies();
 		resources.Clear();  // the world loaded is no session's (its workbenches hold none of ours: OnGameLoaded forgot them)
@@ -9949,6 +10126,25 @@ namespace WorkshopSync
 			damageMirror.Set(a_damage.playerId, entry);
 		}
 		damageReceived += static_cast<std::uint32_t>(a_damage.entries.size());
+	}
+
+	void ApplyPieceStates(const Protocol::PieceStates& a_states)
+	{
+		for (const auto& entry : a_states.entries) {
+			// The builder: the sender for their own door, else whom the entry names. Nobody's word on our own door but a
+			// friend's with a copy of it; the sender can't name themselves as another's door's builder.
+			const auto builder = entry.builder == 0 ? a_states.playerId : entry.builder;
+			if (builder == 0 || (entry.builder != 0 && entry.builder == a_states.playerId)) {
+				continue;
+			}
+			doorBook.Heard({ builder, entry.refId }, entry.open);
+			++doorStatesHeard;
+			if (doorLines < DOOR_LOG_LINES) {
+				++doorLines;
+				REX::INFO("WorkshopSync: built door: player {} says player {}'s {:08X} is {} (kept as {}'s)", a_states.playerId, entry.builder, entry.refId, entry.open ? "open" : "shut", builder);
+			}
+		}
+		nextDoorPoll = {};  // set on the doors at the next frame, not the next poll
 	}
 
 	void SetDamageMirrorForDev(bool a_on)
@@ -10007,7 +10203,8 @@ namespace WorkshopSync
 	{
 		return std::format("workshop damage: mirror={} tracked={} sent={} received={} mirrored={} wrecked={} mended={} failed={} capped={} deferred={} back={} lost={} dropped={} repairs={} repairsAsked={} repairsNotAsked={} repairsServed={} repairsUnpaid={}",
 			damageMirrorOn ? "on" : "off", damageReporter.Size(), damageSent, damageReceived, damageMirror.Size(), damageMirror.Lowered(), damageMirror.Mended(), damageMirror.Failed(),
-			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked.load(), repairsServed, repairsUnpaid);
+			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked.load(), repairsServed, repairsUnpaid) +
+		       std::format(" doors: known={} own={} sent={} heard={} set={}", doorBook.Size(), ownDoors.Size(), doorStatesSent, doorStatesHeard, doorStatesSet);
 	}
 
 	std::string DescribeDamageOf(RE::TESObjectREFR* a_ref)
@@ -10053,6 +10250,20 @@ namespace WorkshopSync
 		reporter.SendAll();
 		damageReporter.SendAll();
 		resources.SendAll();
+		// Our built doors as the session has them, loaded here or not: the joiner's copies are placed shut, and the server
+		// keeps no door's state (WorkshopDoors::Book::OwnWords).
+		const auto own = doorBook.OwnWords(NpcSync::LocalPlayer());
+		for (std::size_t at = 0; at < own.size(); at += Protocol::MAX_STATE_ENTRIES) {
+			Protocol::PieceStates states;
+			for (std::size_t i = at; i < (std::min)(own.size(), at + Protocol::MAX_STATE_ENTRIES); ++i) {
+				states.entries.push_back({ 0, own[i].first, own[i].second });
+			}
+			const auto           count = states.entries.size();
+			std::scoped_lock     l{ outLock };
+			if (outgoing.Push({ Protocol::Encode(states, Protocol::MessageType::kReportWorkshopStates), 0 })) {
+				doorStatesSent += static_cast<std::uint32_t>(count);
+			}
+		}
 	}
 
 	void OnPlayerLeft(std::uint32_t a_playerId)

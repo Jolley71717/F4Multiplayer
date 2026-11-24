@@ -3500,6 +3500,55 @@ void Server::Run()
 		relayOwnPieces(a_player, *damage, Protocol::MessageType::kWorkshopDamage);
 	};
 
+	// The open state of built doors as a player's game has them (protocol 85). Their own doors (builder 0) are passed on as
+	// theirs, like their pieces' power and damage. A friend's door whose copy they moved (the entry names its builder, as
+	// the copy was told to them) is passed on under that builder, so every other copy follows; the builder's own game gets
+	// it as its player's door, and only when the door is one of the character it plays now (a builder id's pieces are its
+	// other character's otherwise, which that world does not hold). Not kept: each game says its own doors again when
+	// someone joins.
+	const auto handleWorkshopStates = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto states = Protocol::DecodePieceStates(a_data);
+		if (!states) {
+			return;
+		}
+		std::vector<Protocol::PieceState> others;
+		std::erase_if(states->entries, [&](const Protocol::PieceState& a_entry) {
+			if (a_entry.builder == 0) {
+				return false;
+			}
+			if (WorkshopStore::PlayerOf(a_entry.builder) != a_player.id) {  // their own are said with builder 0
+				others.push_back(a_entry);
+			}
+			return true;
+		});
+		if (!states->entries.empty()) {
+			relayOwnPieces(a_player, *states, Protocol::MessageType::kWorkshopStates);
+		}
+		if (others.empty()) {
+			return;
+		}
+		for (const auto& [key, other] : players) {
+			if (key == a_player.key || !other.welcomed) {
+				continue;
+			}
+			Protocol::PieceStates     forThem{ a_player.id, {} };
+			const std::uint64_t       character = other.characterKnown ? drops.CharacterOf(other.id) : 0;
+			for (const auto& entry : others) {
+				if (WorkshopStore::PlayerOf(entry.builder) != other.id) {
+					forThem.entries.push_back(entry);
+				} else if (workshop.BuilderOf(other.id, character, entry.refId) == entry.builder) {
+					forThem.entries.push_back({ other.id, entry.refId, entry.open });
+				}
+			}
+			if (!forThem.entries.empty()) {
+				send(key, Protocol::Encode(forThem, Protocol::MessageType::kWorkshopStates), true);
+			}
+		}
+	};
+
 	// The weapons a player's own weapon racks show in their game: passed on as theirs, and not kept (their game sends the whole
 	// list again when someone joins). Each list replaces the last one from that player in every other game, which shows a
 	// copy of each that nobody can take (src/game/RackShare.h).
@@ -5200,6 +5249,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopDamage:
 			handleWorkshopDamage(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopStates:
+			handleWorkshopStates(a_player, a_data);
 			break;
 		case MessageType::kReportRackWeapons:
 			handleRackWeapons(a_player, a_data);
