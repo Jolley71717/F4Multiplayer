@@ -1,7 +1,7 @@
 {
- "release": "0.21.1",
+ "release": "0.21.2",
  "known_issues": [],
- "updated": "2026-11-24T03:11:48+00:00",
+ "updated": "2026-11-24T03:48:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -36,8 +36,8 @@
    "title": "Host crash (abort: pure virtual call, off the main thread) in RobCo Battlezone as wave 54's robots fight a friend's stand-in; the stand-in was re-spawned the same second",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 561
   },
   {
@@ -908,8 +908,8 @@
    "title": "Enemies a quest's script places (PlaceActorAtMe/PlaceAtMe) are made in each game and shared plain: doubled, or invisible to the friend",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 563
   },
   {
@@ -1107,8 +1107,8 @@
    "title": "Enemies a quest's alias creates stay each game's own when the session doesn't share that quest (sQuests = story, sStory = own) or it has no run-once flag",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 563
   },
   {
@@ -2687,8 +2687,8 @@
    "title": "A friend's stand-in in the host's game is killed by the host's NPCs while the friend is up, and is replaced each time (5 in 10 min at RobCo Battlezone)",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking"
+   "stage": 7,
+   "note": "shipped in 0.21.2"
   },
   {
    "id": "lvem",
@@ -3051,8 +3051,8 @@
    "title": "Quest enemies in a reference collection that the quest creates are keyed but never paired: a friend's game keeps its own unshared beside copies",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 563
   },
   {
@@ -3687,8 +3687,8 @@
    "title": "A quest enemy's key is read once, at its first share, and from the first alias that passes: one fighting before it turns on our player, or held by two quests' aliases, can stay unpaired",
    "kind": "bug",
    "priority": 3,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 563
   },
   {
@@ -3756,8 +3756,8 @@
    "title": "A friend's hit kills an NPC set to infinite health in the game that runs it",
    "kind": "bug",
    "priority": 3,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 562
   },
   {
@@ -3775,8 +3775,8 @@
    "title": "Health share: an infinite health maximum sends share 0 and sets friends' copies to 0 health; a NaN maximum sends a report the receiver refuses every 250 ms",
    "kind": "bug",
    "priority": 3,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 562
   },
   {
@@ -4206,8 +4206,8 @@
    "title": "Nuka-World RobCo Battlezone under the default sQuests = story: a wave started in one game leaves the other game's robots asleep ghosts, so the friend can't hurt the host's wave (and the host's robots sleep through a friend's wave)",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "0.21.2-rc1 soaking",
+   "stage": 7,
+   "note": "shipped in 0.21.2",
    "pr": 564
   },
   {
