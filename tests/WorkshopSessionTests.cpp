@@ -112,7 +112,8 @@ namespace
 			world[a_copy].bench = a_item.workshop;
 			blocked.insert(a_copy);
 		}
-		bool                 MadeByUs(Copy a_copy) const { return blocked.contains(a_copy) || (world.contains(a_copy) && world.at(a_copy).kept); }
+		bool                 MadeByUs(Copy a_copy) const { return blocked.contains(a_copy); }
+		bool                 CarriesKeyword(Copy a_copy) const { return blocked.contains(a_copy) || (world.contains(a_copy) && world.at(a_copy).kept); }
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const
 		{
 			if (!WorkshopApply::Shared(true, a_item.base == FRAME)) {
@@ -172,7 +173,7 @@ namespace
 			if (it == world.end()) {
 				return;
 			}
-			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0, MadeByUs(a_copy))) {
+			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0, CarriesKeyword(a_copy))) {
 				inventory += it->second.held;
 			}
 			world.erase(it);
@@ -1594,4 +1595,41 @@ TEST("workshop session: a container of the player's own that stands where a frie
 	CHECK(bob.world.contains(77));  // his crate stays, with what he put in it
 	CHECK(bob.world.at(77).held == 9);
 	CHECK(bob.inventory == 0);  // nothing of his containers came to his pockets
+}
+
+TEST("workshop session: a copy of ours that holds items is still taken over or replaced at its spot, its contents rescued, while a container with no copy keyword is left alone")
+{
+	constexpr std::uint32_t VENDOR = 0x0010C3D0;
+	Fixture                 f;
+	const auto              alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.stocked.insert(VENDOR);
+	bob.kinds[VENDOR] = WorkshopApply::Kind::kContainer;
+	bob.Receive(Received(f, 2));
+
+	// A full stocked copy of ours (keyword) at one spot, a full keyword-less container of Bob's at another, a plain crate copy of
+	// ours that holds his things at a third.
+	auto ours = Wall(0xFF000001, 300.0f);
+	ours.base = VENDOR;
+	auto his = Wall(0xFF000002, 600.0f);
+	his.base = VENDOR;
+	auto kept = Wall(0xFF000003, 900.0f);
+	kept.base = CRATE;
+	bob.Load({ { 91, { VENDOR, WorkshopMove::Of(ours), { 0, 0 }, 4, true } },
+		{ 92, { VENDOR, WorkshopMove::Of(his), { 0, 0 }, 8 } },
+		{ 93, { CRATE, WorkshopMove::Of(kept), { 0, 0 }, 3, true } } });
+	f.fake->Deliver(1, Report(ours));
+	f.fake->Deliver(1, Report(his));
+	f.fake->Deliver(1, Report(kept));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+
+	CHECK(!bob.world.contains(91));  // the old full copy went, its 4 came to him
+	CHECK(bob.world.contains(92));   // his own container stays, full
+	CHECK(bob.world.at(92).held == 8);
+	CHECK(bob.copies.at({ alice, kept.refId }) == 93);  // the crate copy that holds his things is taken over, contents kept in it
+	CHECK(bob.world.at(93).held == 3);
+	CHECK(bob.inventory == 4);
 }

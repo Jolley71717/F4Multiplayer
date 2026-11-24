@@ -26,10 +26,11 @@
 //   void Keep(const Copy&, item)                         ours from now on, as the copy of that report (its workbench)
 //   void Discard(const Copy&)                            deleted, in time
 //   Placeable CanPlace(item)
-//   std::optional<Copy> FindExisting(item)               a thing of the same object at the spot no copy of this run is (never a piece of ours); only one MadeByUs is taken over
+//   std::optional<Copy> FindExisting(item)               a thing of the same object at the spot no copy of this run is (never a piece of ours); only one that CarriesKeyword is taken over
 //   bool MadeByUs(const Copy&)                           a copy of this kind made it (it carries the keyword that keeps
 //                                                        workshop mode off our copies, saved with it) and holds nothing, not
 //                                                        the player's own
+//   bool CarriesKeyword(const Copy&)                    it has the keyword our copies carry and is no workshop object of the player's (what FindExisting may take over)
 //   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
 //   bool CopyAt(item)                                    one of our copies, the same object, stands near the spot (TwinOf's quick look)
 //   std::optional<Copy> LeftoverAt(item)                 a copy of it no session knows, at the spot, beside the one kept (or a piece of ours)
@@ -335,10 +336,10 @@ namespace WorkshopApply
 		if (placeable == Placeable::kStocked) {
 			// A copy a save kept (an older version made them full) may hold what its base came with: it goes
 			// (what the player kept in it comes to them first), and an empty one is made below.
-			if (const auto existing = a_world.FindExisting(a_item); existing && a_world.MadeByUs(*existing)) {
+			if (const auto existing = a_world.FindExisting(a_item); existing && a_world.CarriesKeyword(*existing)) {
 				a_world.Discard(*existing);
 			}
-		} else if (const auto existing = a_world.FindExisting(a_item); existing && a_world.MadeByUs(*existing)) {
+		} else if (const auto existing = a_world.FindExisting(a_item); existing && a_world.CarriesKeyword(*existing)) {
 			// Only one of ours left by an earlier session (its keyword): a container of the player's own at the spot that
 			// nothing links to a workbench is theirs, never taken over as a copy (it would go, its contents with it, as the
 			// session ends). The copy is made beside it below.

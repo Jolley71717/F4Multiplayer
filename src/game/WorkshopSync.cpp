@@ -2011,6 +2011,14 @@ namespace WorkshopSync
 				return ref && Blocked(*ref) && !HoldsItems(ref.get());
 			}
 
+			// What FindExisting may take over or replace: it carries the keyword our copies carry (Keep gives it, saves keep it) and
+			// is no workshop object of the player's own. A copy that holds items qualifies (its contents are rescued as it goes).
+			bool CarriesKeyword(const Copy& a_copy)
+			{
+				const auto ref = Live(a_copy);
+				return ref && Blocked(*ref) && !IsWorkshopObject(ref.get());
+			}
+
 			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }
 			bool CopyAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::CopyAt(a_item); }
 
