@@ -1,7 +1,7 @@
 {
  "release": "0.21.2",
  "known_issues": [],
- "updated": "2026-11-24T06:07:48+00:00",
+ "updated": "2026-11-24T17:19:56+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -138,6 +138,14 @@
    "stage": 7,
    "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
    "pr": 245
+  },
+  {
+   "id": "0wtb",
+   "title": "Leaving a friend's game puts everything in the player's containers into their inventory",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "Nexus report: leaving a friend's game moves container contents into the inventory"
   },
   {
    "id": "13e5",
