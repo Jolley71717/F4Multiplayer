@@ -1364,7 +1364,7 @@ namespace WorkshopSync
 		// container's (WorkshopApply::Rescues): a turret or a robot holds its own gear.
 		void Delete(RE::TESObjectREFR* a_ref)
 		{
-			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref))) {
+			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref), Blocked(*a_ref) && !IsWorkshopObject(a_ref))) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
 				Hud::Notify(Text::Get("workshop.rescued"));
@@ -2009,6 +2009,14 @@ namespace WorkshopSync
 			{
 				const auto ref = Live(a_copy);
 				return ref && Blocked(*ref) && !HoldsItems(ref.get());
+			}
+
+			// What FindExisting may take over or replace: it carries the keyword our copies carry (Keep gives it, saves keep it) and
+			// is no workshop object of the player's own. A copy that holds items qualifies (its contents are rescued as it goes).
+			bool CarriesKeyword(const Copy& a_copy)
+			{
+				const auto ref = Live(a_copy);
+				return ref && Blocked(*ref) && !IsWorkshopObject(ref.get());
 			}
 
 			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }

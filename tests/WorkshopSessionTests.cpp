@@ -113,6 +113,7 @@ namespace
 			blocked.insert(a_copy);
 		}
 		bool                 MadeByUs(Copy a_copy) const { return blocked.contains(a_copy); }
+		bool                 CarriesKeyword(Copy a_copy) const { return blocked.contains(a_copy) || (world.contains(a_copy) && world.at(a_copy).kept); }
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const
 		{
 			if (!WorkshopApply::Shared(true, a_item.base == FRAME)) {
@@ -172,7 +173,7 @@ namespace
 			if (it == world.end()) {
 				return;
 			}
-			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0)) {
+			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0, CarriesKeyword(a_copy))) {
 				inventory += it->second.held;
 			}
 			world.erase(it);
@@ -415,7 +416,7 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	auto bob = GameAt(100.0f);
 	bob.Receive(Received(f, 2));
 	// Both saves come from one: the wall built before they parted stands in both, linked to each one's workbench (and a
-	// settler's job may hang on it). A copy an earlier session left is another matter: taken over, as before.
+	// settler's job may hang on it). A piece with no link and no copy keyword is the player's too (a mod's, a console's): never taken over.
 	const auto mine = bob.Build(100.0f);
 	bob.world[bob.nextId++] = { WALL, { { 200.0f, 1000.0f, 0.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f }, { 0, 0 } };
 
@@ -424,7 +425,7 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	bob.Receive(Received(f, 2));
 	bob.RunUntilIdle();
 	CHECK(bob.counts.oursThere == 1);
-	CHECK(bob.counts.adopted == 1);
+	CHECK(bob.counts.adopted == 0);  // the unlinked piece at 200 carries no copy keyword: it is the player's, never taken over
 	CHECK(bob.At(100.0f) == 1);  // not doubled
 	CHECK(bob.copies.size() == 1);
 	CHECK(std::ranges::none_of(bob.copies, [&](const auto& a_copy) { return a_copy.second == mine; }));
@@ -436,7 +437,7 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	CHECK(bob.world.contains(mine));
 	bob.Leave();
 	CHECK(bob.world.contains(mine));
-	CHECK(bob.At(200.0f) == 0);  // the adopted copy went with the session
+	CHECK(bob.At(200.0f) == 1);  // the copy beside the unlinked piece went with the session; the piece itself stays
 }
 
 TEST("workshop session: a friend's piece sent while you are towns away from its settlement waits for its cell, then takes over the save's copy there, and none goes over yours")
@@ -1304,7 +1305,7 @@ TEST("workshop session: a friend's container that comes stocked is copied empty,
 	// A copy an older version made of Alice's vending machine stands in Bob's save, with what he put in it.
 	auto vendor = Wall(0xFF000001, 300.0f);
 	vendor.base = VENDOR;
-	bob.Load({ { 99, { VENDOR, WorkshopMove::Of(vendor), { 0, 0 }, 4 } } });
+	bob.Load({ { 99, { VENDOR, WorkshopMove::Of(vendor), { 0, 0 }, 4, true } } });  // with the keyword Keep gives
 	f.fake->Deliver(1, Report(vendor));
 	auto fresh = Wall(0xFF000002, 600.0f);  // and one she builds now
 	fresh.base = VENDOR;
@@ -1517,10 +1518,11 @@ TEST("workshop session: a wire's shape goes to the others with it, and to whoeve
 TEST("workshop apply: only a container's contents are handed over when its copy goes, never an actor's")
 {
 	using WorkshopApply::Kind;
-	CHECK(WorkshopApply::Rescues(Kind::kContainer, true));
-	CHECK(!WorkshopApply::Rescues(Kind::kContainer, false));
-	CHECK(!WorkshopApply::Rescues(Kind::kActor, true));  // a turret's ammo, a robot's parts
-	CHECK(!WorkshopApply::Rescues(Kind::kOther, true));
+	CHECK(WorkshopApply::Rescues(Kind::kContainer, true, true));
+	CHECK(!WorkshopApply::Rescues(Kind::kContainer, false, true));
+	CHECK(!WorkshopApply::Rescues(Kind::kContainer, true, false));  // the player's own container: never emptied into their pockets
+	CHECK(!WorkshopApply::Rescues(Kind::kActor, true, true));  // a turret's ammo, a robot's parts
+	CHECK(!WorkshopApply::Rescues(Kind::kOther, true, true));
 }
 
 // ---- WorkshopMove's rules, alone ------------------------------------------------------------
@@ -1563,4 +1565,71 @@ TEST("workshop apply: a copy whose handle names nothing is found again under its
 	CHECK(!WorkshopApply::SameCopy(COPY, 0, WALL, false));      // no reference (or base) under it
 	CHECK(!WorkshopApply::SameCopy(0x0001F2A1, WALL, WALL, false));  // not made at runtime: none of ours
 	CHECK(!WorkshopApply::SameCopy(COPY, 0, 0, false));         // kept without a base: never taken for anything
+}
+
+TEST("workshop session: a container of the player's own that stands where a friend's does is never taken for a copy, nor emptied into their pockets when the session ends")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.loaded.insert(WorkshopCells::Exterior(COMMONWEALTH, 4300.0f, 1000.0f));
+	bob.Receive(Received(f, 2));
+
+	// Bob's own crate, with his things in it, stands at the very spot where Alice builds hers, linked to no workbench of his
+	// (so it passes for neither his piece nor a copy), without the keyword the copies carry.
+	auto crate = Wall(0xFF000010, 500.0f);
+	crate.base = CRATE;
+	bob.world[77] = { CRATE, WorkshopMove::Of(crate), { 0, 0 }, 9 };
+	f.fake->Deliver(1, Report(crate));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+
+	REQUIRE(bob.copies.contains({ alice, crate.refId }));
+	CHECK(bob.copies.at({ alice, crate.refId }) != 77);  // a copy of its own, beside his crate
+	CHECK(bob.counts.adopted == 0);
+	CHECK(bob.world.at(77).held == 9);
+
+	bob.Leave();
+	CHECK(bob.world.contains(77));  // his crate stays, with what he put in it
+	CHECK(bob.world.at(77).held == 9);
+	CHECK(bob.inventory == 0);  // nothing of his containers came to his pockets
+}
+
+TEST("workshop session: a copy of ours that holds items is still taken over or replaced at its spot, its contents rescued, while a container with no copy keyword is left alone")
+{
+	constexpr std::uint32_t VENDOR = 0x0010C3D0;
+	Fixture                 f;
+	const auto              alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.stocked.insert(VENDOR);
+	bob.kinds[VENDOR] = WorkshopApply::Kind::kContainer;
+	bob.Receive(Received(f, 2));
+
+	// A full stocked copy of ours (keyword) at one spot, a full keyword-less container of Bob's at another, a plain crate copy of
+	// ours that holds his things at a third.
+	auto ours = Wall(0xFF000001, 300.0f);
+	ours.base = VENDOR;
+	auto his = Wall(0xFF000002, 600.0f);
+	his.base = VENDOR;
+	auto kept = Wall(0xFF000003, 900.0f);
+	kept.base = CRATE;
+	bob.Load({ { 91, { VENDOR, WorkshopMove::Of(ours), { 0, 0 }, 4, true } },
+		{ 92, { VENDOR, WorkshopMove::Of(his), { 0, 0 }, 8 } },
+		{ 93, { CRATE, WorkshopMove::Of(kept), { 0, 0 }, 3, true } } });
+	f.fake->Deliver(1, Report(ours));
+	f.fake->Deliver(1, Report(his));
+	f.fake->Deliver(1, Report(kept));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+
+	CHECK(!bob.world.contains(91));  // the old full copy went, its 4 came to him
+	CHECK(bob.world.contains(92));   // his own container stays, full
+	CHECK(bob.world.at(92).held == 8);
+	CHECK(bob.copies.at({ alice, kept.refId }) == 93);  // the crate copy that holds his things is taken over, contents kept in it
+	CHECK(bob.world.at(93).held == 3);
+	CHECK(bob.inventory == 4);
 }
