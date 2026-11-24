@@ -1,7 +1,7 @@
 {
  "release": "0.21.2",
  "known_issues": [],
- "updated": "2026-11-24T20:14:11+00:00",
+ "updated": "2026-11-24T20:38:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -144,8 +144,8 @@
    "title": "Leaving a friend's game puts everything in the player's containers into their inventory",
    "kind": "bug",
    "priority": 1,
-   "stage": 4,
-   "note": "PR open and rig-tested: own container no longer taken for a copy"
+   "stage": 5,
+   "note": "Fixed on main, ships in 0.21.3"
   },
   {
    "id": "13e5",
