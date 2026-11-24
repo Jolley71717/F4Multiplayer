@@ -1,0 +1,6 @@
+Fixed: the host's game no longer crashes when enemies down a friend's figure (RobCo Battlezone and anywhere a friend's figure is replaced in a fight)
+Fixed: a friend's figure no longer dies in the host's game while your friend is alive; the hits still reach your friend
+Fixed: RobCo Battlezone's waves (and other fights that come in waves at one place) wake in both games, whoever starts them
+Fixed: quest enemies made separately in each game are now the same ones in both games, so both players' hits land
+Fixed: an enemy with endless health stays alive in both games
+Same protocol as 0.20.0 to 0.21.1 (84); everyone should update for the fixes
