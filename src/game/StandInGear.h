@@ -2,9 +2,11 @@
 
 #include "Protocol.h"
 #include "game/ArmorFrames.h"
+#include "game/AttackKind.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -101,6 +103,78 @@ namespace StandInGear
 	inline bool IsPlain(const Protocol::ItemMods* a_theirs)
 	{
 		return a_theirs && a_theirs->templateIndex == NO_TEMPLATE && a_theirs->mods.empty();
+	}
+
+	// The enchantments (object effects) the stand-in's copy of an item comes with: the ones its instance data lists, which is
+	// where an object mod puts the effect it adds (a legendary's, or a plugin's own). A friend's effects run in their own
+	// game, on them; on the stand-in here they would run in ours, and an effect a plugin wrote for whoever wears the armor
+	// as "the player" acts on our player here. A Nexus report had a stray chest and right arm piece on a player, in no
+	// Pip-Boy and holding those slots, whenever a friend's stand-in in an armor with a certain torso mod was near, and gone
+	// as it left; changing the torso mod ended it. A mod's look, rating, keywords and actor values stay on the stand-in
+	// (they act on it alone); its effect is the one thing that can reach anyone else, a script's on "the player", a
+	// cloak's on whoever stands near, slow time's on the whole game. So the stand-in's copy goes without those effects
+	// (docs/DESIGN.md: a hit on a stand-in is resisted by its armor, not by their legendary effects).
+	struct Enchantment
+	{
+		bool          present = true;    // a listed entry that names one (a null one is left as it is)
+		std::int32_t  castingType = 0;   // EnchantmentItem::Data, as AttackKind keeps them
+		std::int32_t  delivery = 0;
+		bool          explodes = false;  // one of its effects sets off an explosion (MuzzleFlash::GunEnchantmentExplodes)
+	};
+
+	// Whether the stand-in's copy keeps this one. Armor keeps none. A gun keeps what the shot replay reads: what lands on a
+	// hit (AttackKind::EnchantmentOnHit; a stand-in's shots hit no one, InertImpact) and what sets off an explosion; a
+	// constant effect on the one holding it (a Bloodied or Nocturnal legendary, a recon scope's marking, a plugin's own) acts
+	// on its wielder alone and is left off, which no reading of the replay's sees.
+	constexpr bool Keeps(bool a_armor, const Enchantment& a_enchantment)
+	{
+		if (!a_enchantment.present) {
+			return true;
+		}
+		if (a_armor) {
+			return false;
+		}
+		return AttackKind::EnchantmentOnHit(a_enchantment.castingType, a_enchantment.delivery) || a_enchantment.explodes;
+	}
+
+	// What is done to the copy's list.
+	enum class Effects
+	{
+		kKeep,    // nothing to leave off
+		kErase,   // the copy's own list: those left off are taken out of it
+		kDetach,  // the list is the base form's own (the engine left the copy pointing at it) and none of it stays: the copy
+		          // lets go of it, the list untouched, as it is every copy's of that item, our player's too
+		kShared,  // the base form's own list, some of it to stay: left as it is (said in the log), never edited
+	};
+
+	struct EffectsPlan
+	{
+		Effects                  what = Effects::kKeep;
+		std::vector<std::size_t> off;  // the entries left off, by index, highest first (taken out in that order)
+	};
+
+	// a_armor: the item is armor (else a gun). a_list: the enchantments its copy's instance data lists, in order.
+	// a_baseList: that list is the base form's own.
+	inline EffectsPlan PlanEffects(bool a_armor, const std::vector<Enchantment>& a_list, bool a_baseList)
+	{
+		EffectsPlan plan;
+		for (std::size_t i = a_list.size(); i-- > 0;) {
+			if (!Keeps(a_armor, a_list[i])) {
+				plan.off.push_back(i);
+			}
+		}
+		if (plan.off.empty()) {
+			return plan;
+		}
+		if (!a_baseList) {
+			plan.what = Effects::kErase;
+		} else if (plan.off.size() == a_list.size()) {
+			plan.what = Effects::kDetach;
+		} else {
+			plan.what = Effects::kShared;
+			plan.off.clear();
+		}
+		return plan;
 	}
 
 	// How the stand-in gets one item of theirs.

@@ -1689,6 +1689,8 @@ namespace DevCommands
 					out += std::format("{:08X},", mod.mod);
 				}
 			}
+			// The effects on the armor worn (a friend's stand-in's are 0, StandInGear::LeaveOffEffects).
+			out += " effects=" + Equipment::WornEffects(actor);
 			// The engine's own list (a throwable shows up here and not above on an NPC), and its 3D; what hangs in its hands.
 			return out + " held:" + Equipment::DescribeHeld(actor) + " hands:" + Equipment::DescribeHands(actor);
 		}
