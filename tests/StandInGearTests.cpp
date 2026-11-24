@@ -1063,6 +1063,43 @@ TEST("stand-in gear: the mods a copy is built with here are theirs less the ones
 	CHECK(!Buildable(&missing, here));
 }
 
+TEST("stand-in gear: a friend's armor goes on their stand-in without the effects its mods give it, whatever the piece; a gun keeps its own")
+{
+	using StandInGear::Effects;
+	using StandInGear::LeaveOffEffects;
+	// A chest piece with a torso mod that adds an effect, a legendary's or the mod's own: its copy's own list is emptied.
+	CHECK(LeaveOffEffects(true, 1, false) == Effects::kEmpty);
+	CHECK(LeaveOffEffects(true, 3, false) == Effects::kEmpty);  // a legendary and two of a mod's own
+	// The engine left the copy pointing at the base form's list: let go of, never emptied (it is every copy's, ours too).
+	CHECK(LeaveOffEffects(true, 1, true) == Effects::kDetach);
+	CHECK(LeaveOffEffects(true, 2, true) == Effects::kDetach);
+	// Nothing listed: nothing to do, whether the list is its own, the base form's or none.
+	CHECK(LeaveOffEffects(true, 0, false) == Effects::kKeep);
+	CHECK(LeaveOffEffects(true, 0, true) == Effects::kKeep);
+	// A gun keeps its enchantments: the stand-in's shots are replayed by them (AttackKind), and hit no one.
+	CHECK(LeaveOffEffects(false, 1, false) == Effects::kKeep);
+	CHECK(LeaveOffEffects(false, 2, true) == Effects::kKeep);
+}
+
+TEST("stand-in gear: a friend's armor copy built without its effects still carries their mods, so it is kept, not given again on every dressing")
+{
+	using Mods = std::vector<Protocol::ItemMod>;
+	constexpr std::uint32_t CHEST = 0x0010C4D4;            // an armor piece
+	constexpr std::uint32_t TORSO_MOD = 0x0A000F99;        // a plugin's torso mod: another look, and an effect of its own
+	constexpr std::uint32_t LEGENDARY = 0x001CF57F;        // a legendary armor mod: an effect alone
+	const Protocol::ItemMods theirs{ CHEST, 2, { { TORSO_MOD, 0, 0 }, { LEGENDARY, 0, 0 } } };
+	const auto built = StandInGear::Buildable(&theirs, [](std::uint32_t) { return true; });
+	REQUIRE(built);
+	CHECK(built->mods == theirs.mods);  // every mod goes on: the look and the rating are the mods' too
+	CHECK(StandInGear::LeaveOffEffects(true, 2, false) == StandInGear::Effects::kEmpty);
+	// The copy keeps its mods (only its instance data's effects were left off), so the next dressing finds it theirs.
+	const Mods ours{ { LEGENDARY, 0, 0 }, { TORSO_MOD, 0, 0 } };
+	CHECK(StandInGear::ChooseCopy(&*built, ours) == StandInGear::Copy::kKeep);
+	// Another torso mod of theirs is another copy, built (and stripped) again.
+	const Protocol::ItemMods changed{ CHEST, 2, { { LEGENDARY, 0, 0 } } };
+	CHECK(StandInGear::ChooseCopy(&changed, ours) == StandInGear::Copy::kReplace);
+}
+
 TEST("stand-in gear: a list naming two guns at once is worn by a stand-in holding one of them and wearing the rest; anything less is not")
 {
 	using StandInGear::Wears;

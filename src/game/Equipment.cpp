@@ -603,6 +603,32 @@ namespace Equipment
 			return RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_mod) != nullptr;
 		}
 
+		// The enchantments a stand-in's copy of an armor piece comes with, left off (StandInGear::LeaveOffEffects) before the
+		// copy is in its inventory: none of a friend's armor's effects runs here. The instance data the engine made for an
+		// armor object is an armor's (as MuzzleFlash reads a gun's); the base form's own list is never touched. Returns how
+		// many were left off.
+		std::size_t LeaveOffEffects(RE::TESBoundObject& a_object, RE::TBO_InstanceData* a_data)
+		{
+			const auto armor = a_object.GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_object.As<RE::TESObjectARMO>() : nullptr;
+			if (!armor || !a_data) {
+				return 0;
+			}
+			const auto data = static_cast<RE::TESObjectARMO::InstanceData*>(a_data);
+			const auto list = data->enchantments;
+			const std::size_t count = list ? list->size() : 0;
+			switch (StandInGear::LeaveOffEffects(true, count, list && list == armor->armorData.enchantments)) {
+			case StandInGear::Effects::kKeep:
+				return 0;
+			case StandInGear::Effects::kEmpty:
+				list->clear();
+				return count;
+			case StandInGear::Effects::kDetach:
+				data->enchantments = nullptr;
+				return count;
+			}
+			return 0;
+		}
+
 		// Gives the actor one of the item built as their copy is: with the mods of theirs that are here
 		// (StandInGear::Buildable), or, none, with the item's default combination. The console's additem has the engine
 		// roll the item's object template for the actor's level (a stock 10mm showed up on a friend's stand-in with a
@@ -643,6 +669,7 @@ namespace Equipment
 				return;
 			}
 			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
+			std::size_t                            effectsOff = 0;
 			if (StandInGear::IsPlain(a_mods)) {
 				// Theirs is a plain piece: given as it is, not with the default combination, which may be an armored one here.
 			} else if (instance) {
@@ -650,14 +677,18 @@ namespace Equipment
 				instance->CreateBaseInstanceData(*object, data);
 				extra->AddExtra(instance.release());  // the list owns it from here
 				if (data) {
+					effectsOff = LeaveOffEffects(*object, data.get());
 					extra->AddExtra(new RE::ExtraInstanceData(object, data));
 				}
 			} else {
 				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*object, *extra, nullptr, true);
+				if (const auto made = extra->GetByType<RE::ExtraInstanceData>(); made && made->data) {
+					effectsOff = LeaveOffEffects(*object, made->data.get());
+				}
 			}
 			a_actor->AddInventoryItem(object, extra, 1, nullptr, nullptr, nullptr);
-			REX::INFO("Equipment: {:08X} given to {:08X} with {} ({} of {} found here)", a_item, a_actor->GetFormID(), attached ? "their mods" : "its default mods", attached,
-				a_mods ? a_mods->mods.size() : 0);
+			REX::INFO("Equipment: {:08X} given to {:08X} with {} ({} of {} found here){}", a_item, a_actor->GetFormID(), attached ? "their mods" : "its default mods", attached,
+				a_mods ? a_mods->mods.size() : 0, effectsOff ? std::format(", without the {} effect(s) its mods give it", effectsOff) : std::string{});
 		}
 
 		// Gives the actor its copy of one of their items as StandInGear::ChooseCopy says, and equips it, unless it wears a
@@ -707,6 +738,40 @@ namespace Equipment
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, a_item).c_str());
 			return false;
 		}
+	}
+
+	// The enchantments on the actor's worn armor, as its copies' instance data lists them ("0001EED7:0,000F4D22:1"): what
+	// LeaveOffEffects leaves a stand-in's at (0), for the equipped dev command.
+	std::string WornEffects(RE::Actor* a_actor)
+	{
+		std::string out;
+		const auto list = a_actor ? a_actor->inventoryList : nullptr;
+		if (!list) {
+			return out;
+		}
+		RE::BSAutoReadLock l{ list->rwLock };
+		for (auto& item : list->data) {
+			if (!item.object || item.object->GetFormType() != RE::ENUM_FORM_ID::kARMO) {
+				continue;
+			}
+			for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+				if (!stack->IsEquipped()) {
+					continue;
+				}
+				const auto extra = stack->extra ? stack->extra->GetByType<RE::ExtraInstanceData>() : nullptr;
+				const auto data = extra ? extra->data.get() : nullptr;
+				std::size_t count = 0;
+				if (data) {
+					const auto enchantments = static_cast<const RE::TESObjectARMO::InstanceData*>(data)->enchantments;
+					count = enchantments ? enchantments->size() : 0;
+				} else if (const auto armor = item.object->As<RE::TESObjectARMO>(); armor && armor->armorData.enchantments) {
+					count = armor->armorData.enchantments->size();  // no instance data: the base form's own
+				}
+				out += std::format("{}{:08X}:{}", out.empty() ? "" : ",", item.object->GetFormID(), count);
+				break;
+			}
+		}
+		return out;
 	}
 
 	bool WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)

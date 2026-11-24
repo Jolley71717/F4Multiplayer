@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -101,6 +102,36 @@ namespace StandInGear
 	inline bool IsPlain(const Protocol::ItemMods* a_theirs)
 	{
 		return a_theirs && a_theirs->templateIndex == NO_TEMPLATE && a_theirs->mods.empty();
+	}
+
+	// What becomes of the enchantments (object effects) the stand-in's copy of an item comes with: the ones its instance
+	// data lists, which is where an object mod puts the effect it adds (a legendary's, or a mod's own effect on an armor
+	// piece). A friend's effects run in their own game, on them; on the stand-in here they would run in ours, and an
+	// effect a plugin wrote for the one who wears the armor may act on "the player", our player here. A Nexus report had a
+	// stray chest and right arm piece on a player, in no Pip-Boy and holding those slots, whenever a friend's stand-in in an
+	// armor with a certain torso mod was near, and gone as it left; changing the torso mod ended it. Of all a mod changes
+	// on the stand-in's copy, only its effect can reach anyone but the stand-in. An effect may also reach past its wearer
+	// by itself (a cloak casts on whoever stands near, slow time slows the whole game). So a friend's armor goes on their
+	// stand-in without any: its look, its rating and its keywords are kept (they are the instance data's too, and the copy
+	// keeps every mod), its effects are not (docs/DESIGN.md: a hit on a stand-in is resisted by its armor, not by their
+	// legendary effects). Weapons keep theirs: a stand-in's shots are replayed by their enchantments (AttackKind,
+	// MuzzleFlash) and hit no one (InertImpact).
+	enum class Effects
+	{
+		kKeep,    // left as it is: no armor, or none listed
+		kEmpty,   // the copy's own list emptied
+		kDetach,  // the list is the base form's own (the engine left the copy pointing at it): the copy let go of it, the list
+		          // untouched, as it is every copy's of that armor, our player's too
+	};
+
+	// a_armor: the item is armor. a_count: the enchantments its copy's instance data lists. a_baseList: that list is the
+	// base form's own.
+	constexpr Effects LeaveOffEffects(bool a_armor, std::size_t a_count, bool a_baseList)
+	{
+		if (!a_armor || a_count == 0) {
+			return Effects::kKeep;
+		}
+		return a_baseList ? Effects::kDetach : Effects::kEmpty;
 	}
 
 	// How the stand-in gets one item of theirs.

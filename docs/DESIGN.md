@@ -411,6 +411,15 @@
   change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`), its old copies taken
   out the same way, stack by stack, before the new one goes in. Items with neither
   mods nor templates still go in by `additem`.
+  An armor piece goes on without the enchantments (object effects) its copy's instance data lists, the ones its mods
+  add, a legendary's or a mod's own (`StandInGear::LeaveOffEffects`; the copy's own list emptied, a list that is the
+  base form's never touched, only let go of): its mods, look, rating and keywords stay. A friend's effects run in
+  their game; on the stand-in they ran in ours, where an effect written for whoever wears the armor as "the player"
+  acts on our player (a Nexus report: a stray chest and right arm piece on a player, in no Pip-Boy, whenever a friend's
+  stand-in in an armor with a certain torso mod was near), and a cloak or slow time reaches past the stand-in. Guns keep
+  theirs (the shot replay reads them, and a stand-in's shots hit no one). An armor whose record itself carries an
+  effect, with no instance data on the copy, is not covered. Dev `equipped <ref>` lists `effects=item:count` for the
+  armor worn. Written ahead of its rig test: not yet tested in a game.
 - Weapon drawn/holstered follows the `kWeaponDrawn` state flag (`DrawWeaponMagicHands`).
 - Sneaking and moving (`kSneaking`): the weapon-away sneak (MTBehavior's `MTSneakIdleLocomotion_SM`) sets off
   from its sneak idle only on `moveStartAnimated` (its `moveStart` waits on a condition that never holds), so a
