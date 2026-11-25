@@ -1,7 +1,7 @@
 {
  "release": "0.22.1",
  "known_issues": [],
- "updated": "2026-11-25T17:18:48+00:00",
+ "updated": "2026-11-25T18:00:15+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2912,8 +2912,8 @@
    "title": "Joiner's own buildings at the host's Sanctuary invisible (but solid and counted) after 0.22.0",
    "kind": "bug",
    "priority": 1,
-   "stage": 4,
-   "note": "PR 582 draft; rig-tested: only covered pieces hidden"
+   "stage": 5,
+   "note": "Merged: only pieces the host's settlement covers are hidden; ships in 0.22.2"
   },
   {
    "id": "n22z",
