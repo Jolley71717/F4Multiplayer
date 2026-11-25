@@ -3,10 +3,12 @@
 #include "Config.h"
 #include "FormIds.h"
 #include "FormTranslate.h"
+#include "JoinProof.h"
 #include "MainThread.h"
 #include "Name.h"
 #include "Protocol.h"
 #include "Redact.h"
+#include <set>
 #include "game/UiAddressEntry.h"
 #include "LocalAddress.h"
 #include "Server.h"
@@ -135,6 +137,9 @@ namespace Session
 		// host), counted so the menu sees a new one; and the host removed us, or refused us for a ban (Leave after the poll).
 		std::optional<Protocol::HostInfo> hostInfo;
 		std::uint32_t                     hostInfoSerial = 0;
+		std::set<std::uint32_t>           joinersToldOf;  // the waiting joiners (HostInfo::Waiting::id) the HUD already said so for
+		// The hello we sent the connection that is up, kept to say again with the answer to a password challenge (kChallenge).
+		Protocol::Hello                   sentHello;
 		bool                              removedAfterPoll = false;
 		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
 		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
@@ -569,9 +574,30 @@ namespace Session
 					nextConnectAttempt = Clock::now() + answer.retryIn;
 					// Banned: trying again would be refused every time (and fill the host's log); the player joins again
 					// from the menu once the host has unbanned them.
-					if (msg->reason == Protocol::REJECT_BANNED) {
+					// Turned away by the host's hand (or not answered in time): the same, the host would be asked every minute.
+					if (msg->reason == Protocol::REJECT_BANNED || msg->reason == Protocol::REJECT_JOIN_REFUSED || msg->reason == Protocol::REJECT_JOIN_TIMEOUT) {
 						removedAfterPoll = true;
 					}
+				}
+				break;
+			case MessageType::kChallenge:
+				// The server wants the password proved: our hello again, with the answer in it (the password never leaves).
+				if (const auto msg = Protocol::DecodeChallenge(a_data); msg && !welcomed) {
+					const auto key = JoinProof::DeriveKey(Config::Get().password, msg->salt);
+					const auto answer = key ? JoinProof::Answer(*key, msg->nonce) : std::nullopt;
+					if (answer) {
+						auto hello = sentHello;
+						hello.password.clear();
+						hello.proof.assign(answer->begin(), answer->end());
+						SendOut(Protocol::Encode(hello), true);
+					} else {
+						REX::WARN("Session: the password challenge could not be answered");
+					}
+				}
+				break;
+			case MessageType::kJoinWait:
+				if (Protocol::DecodeJoinWait(a_data) && !welcomed) {
+					Notify("session.join_waiting");
 				}
 				break;
 			case MessageType::kRemoved:
@@ -586,6 +612,15 @@ namespace Session
 				if (const auto msg = Protocol::DecodeHostInfo(a_data); msg && hostedServer) {
 					hostInfo = *msg;
 					++hostInfoSerial;
+					// Someone by address waits for the host's word: said once on the HUD (the host controls list them).
+					std::set<std::uint32_t> still;
+					for (const auto& waiting : msg->waiting) {
+						still.insert(waiting.id);
+						if (joinersToldOf.insert(waiting.id).second) {
+							Hud::Notify(Text::Format("session.join_asks", { { "name", waiting.name } }));
+						}
+					}
+					joinersToldOf = std::move(still);
 				}
 				break;
 			case MessageType::kPlayerJoined:
@@ -1295,6 +1330,7 @@ namespace Session
 		options.port = settings.port;
 		options.maxPlayers = settings.maxPlayers;
 		options.password = settings.password;
+		options.approveJoins = true;  // a joiner by address waits for our word; Steam friends are not asked about
 		// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
 		options.udpLoopbackOnly = steamMode;
 		options.hostIdentity = Identity::Get();  // our Hello says this: the server knows our connection as the host's
@@ -1536,11 +1572,14 @@ namespace Session
 					hello.contentHash = contentHash;
 					hello.name = PlayerName();
 					sentName = hello.name;
-					hello.password = settings.password;
+					// Over a UDP connection to another machine the password never travels as typed: it answers the server's
+					// challenge (kChallenge). Steam's connection is private, and our own server is on this machine.
+					hello.password = (client == &udpClient && !hostedServer) ? std::string{} : settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = SessionSteps::OnHello(binding, WorldSync::Loot(), CurrentCharacter());
 					hello.identity = Identity::Get();
 					hello.plugins = plugins;
+					sentHello = hello;
 					SendOut(Protocol::Encode(hello), true);
 					hostMods.OnConnected();
 				}

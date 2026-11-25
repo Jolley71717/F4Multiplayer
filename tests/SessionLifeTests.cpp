@@ -170,6 +170,7 @@ TEST("session life: a friend whose Join lands before the host's game is told onc
 
 	// Anything else (a wrong password) is said at every try, and isn't tried every few seconds.
 	Game stranger{ machine, 0x57A, FRIEND_SOLO };
+	stranger.password = "wrong";
 	stranger.JoinFriend();
 	CHECK(!stranger.Retry());
 	CHECK(stranger.notices.size() == 2);

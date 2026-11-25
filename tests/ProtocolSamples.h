@@ -110,6 +110,7 @@ namespace ProtocolSamples
 		h.world.containerFrom = 77;
 		h.identity = 0xFEDCBA9876543210ull;
 		h.plugins = { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp" };
+		h.proof.assign(PROOF_SIZE, 0xA5);
 		return h;
 	}
 
@@ -366,7 +367,10 @@ namespace ProtocolSamples
 		s.push_back({ "HostInfoRequest", Encode(HostInfoRequest{}), D(DecodeHostInfoRequest) });
 		s.push_back({ "Removed", Encode(Removed{ RemovedReason::kBanned }), D(DecodeRemoved) });
 		s.push_back({ "HostInfo", Encode(HostInfo{ true, true, HostResult::kDone, HostAction::kBan, 2,
-			{ { 0x1111222233334444ull, "~3fa2c1", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", 1792000000 }, { 0x5555666677778888ull, "~0b1c2d", "", 1792000100 } } }), D(DecodeHostInfo) });
+			{ { 0x1111222233334444ull, "~3fa2c1", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", 1792000000 }, { 0x5555666677778888ull, "~0b1c2d", "", 1792000100 } },
+			{ { 7, "Alice" }, { 9, "ÐÐµÐ¹Ñ" } } }), D(DecodeHostInfo) });
+		s.push_back({ "Challenge", Encode(Challenge{ std::vector<std::uint8_t>(CHALLENGE_SALT_SIZE, 0x11), std::vector<std::uint8_t>(CHALLENGE_NONCE_SIZE, 0x22) }), D(DecodeChallenge) });
+		s.push_back({ "JoinWait", Encode(JoinWait{}), D(DecodeJoinWait) });
 		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" }, { "HDTextures.esm" } }), D(DecodeLoadOrder) });
 		for (const auto type : { MT::kReportDrop, MT::kDropPlaced }) {
 			s.push_back({ "Drop", Encode(MakeDrop(), type), D(DecodeDroppedItem) });
@@ -540,6 +544,8 @@ namespace ProtocolSamples
 		case MT::kLendFrame:
 		case MT::kReturnFrame:
 		case MT::kWelcome:
+		case MT::kChallenge:
+		case MT::kJoinWait:
 		case MT::kSessionWorld:
 		case MT::kRollLives:
 		case MT::kNpcIdentities:

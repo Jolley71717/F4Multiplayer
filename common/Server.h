@@ -28,6 +28,12 @@ public:
 		std::size_t   maxPlayers = 4;
 		std::string   password;  // empty = no password
 
+		// A joiner who comes by address (over a UDP connection from another machine: ServerTransport::Source) waits
+		// until the host's own game lets them in (HostAction::kAdmit), is turned away (kRefuse) or it takes too long.
+		// Steam friends, the host's own game and anyone returning to the session are never asked about. Off on a
+		// dedicated server, which has no host.
+		bool approveJoins = false;
+
 		// Accept UDP connections only from this machine (the host's own game), e.g. when friends
 		// connect through Steam instead.
 		bool udpLoopbackOnly = false;

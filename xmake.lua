@@ -96,7 +96,7 @@ target("F4MPCommon")
     analyze()
     add_packages("enet", { public = true })
     if is_plat("windows") then
-        add_syslinks("ws2_32", "winmm", { public = true })
+        add_syslinks("ws2_32", "winmm", "bcrypt", { public = true })
     end
 
 -- client plugin, loaded into the game by F4SE (Windows and MSVC only: it needs CommonLibF4 and the game)

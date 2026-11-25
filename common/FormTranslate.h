@@ -387,6 +387,8 @@ namespace FormTranslate
 		case MessageType::kRename:
 		case MessageType::kRequestLoadOrder:
 		case MessageType::kWelcome:
+		case MessageType::kChallenge:
+		case MessageType::kJoinWait:
 		case MessageType::kReject:
 		case MessageType::kPlayerLeft:
 		case MessageType::kPlayerReloaded:
