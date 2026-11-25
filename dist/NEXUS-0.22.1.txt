@@ -1,0 +1,2 @@
+Fixed: Vault 81's door no longer stays shut for a player who catches up on the intercom talk away from the vault's cave; the talk now waits until you reach the cave
+Same protocol as 0.22.0 (85): 0.22.1 and 0.22.0 can play together
