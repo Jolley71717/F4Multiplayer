@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-25T23:03:06+00:00",
+ "updated": "2026-11-25T23:25:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -582,6 +582,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 485
+  },
+  {
+   "id": "4gyo",
+   "title": "Armor with Tactical Military Equipment (Galac-tac REDUX) mods on custom armor: a friend's armor doesn't show or keeps switching to a default one",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report: modded armor attachments don't show on a friend"
   },
   {
    "id": "4mhu",
