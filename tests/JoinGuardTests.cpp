@@ -305,7 +305,7 @@ TEST("join challenge: an answer is good for its nonce only")
 TEST("join challenge: a Steam friend or the host's own game sends the password as before")
 {
 	Fixture f{ Options("hunter2", false) };
-	f.fake->SetIdentity(2, 76561198000000002ull);
+	f.fake->SetIdentity(2, 0x57EA000000000002ull);
 	auto hello = Fixture::MakeHello("Bob", 0xB0B);
 	hello.password = "hunter2";
 	CHECK(f.Join(2, hello));
@@ -411,7 +411,7 @@ TEST("join approval: a Steam friend and the host's own game are never asked abou
 {
 	Fixture f{ Options("", true) };
 	JoinHost(f);
-	f.fake->SetIdentity(2, 76561198000000002ull);
+	f.fake->SetIdentity(2, 0x57EA000000000002ull);
 	CHECK(f.Join(2, RemoteHello("Steamy", 0x5EA)));
 	CHECK(f.fake->Take(2).size() > 0u);
 	CHECK(!f.Logged("waits for the host"));
