@@ -183,7 +183,12 @@ TEST("server session: the wrong password is rejected, the right one gets in")
 	// No password at all: nothing proves one, so the joiner is asked to (kChallenge) and never gets in.
 	f.fake->Connect(2);
 	f.fake->Deliver(2, Protocol::Encode(Fixture::MakeHello("Nobody")));
+#ifdef _WIN32
 	CHECK(f.fake->WaitFor(2, Type(MT::kChallenge)));
+#else
+	// Off Windows the challenge can't be made (common/JoinProof.cpp): the joiner is refused instead.
+	CHECK(f.fake->WaitFor(2, Type(MT::kReject)));
+#endif
 	CHECK(Count(f.fake->Take(2), MT::kWelcome) == 0u);
 
 	auto right = Fixture::MakeHello("Alice");
