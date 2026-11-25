@@ -1,7 +1,7 @@
 {
  "release": "0.22.1",
  "known_issues": [],
- "updated": "2026-11-25T16:58:35+00:00",
+ "updated": "2026-11-25T17:18:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1016,14 +1016,6 @@
    "priority": 3,
    "stage": 0,
    "note": "Queued"
-  },
-  {
-   "id": "874h",
-   "title": "Idea: GOG version support (run on the GOG build; join GOG friends)",
-   "kind": "feature",
-   "priority": 4,
-   "stage": 0,
-   "note": "Idea: GOG version support"
   },
   {
    "id": "8bqc",
@@ -2920,8 +2912,8 @@
    "title": "Joiner's own buildings at the host's Sanctuary invisible (but solid and counted) after 0.22.0",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "PR 582 (draft) open"
+   "stage": 4,
+   "note": "PR 582 draft; rig-tested: only covered pieces hidden"
   },
   {
    "id": "n22z",
