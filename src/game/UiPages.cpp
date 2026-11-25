@@ -24,6 +24,16 @@
 #include <iterator>
 #include <random>
 
+// user32/kernel32 (windows.h clashes with CommonLibF4's names): the clipboard, for a pasted address or password.
+extern "C" {
+__declspec(dllimport) int __stdcall OpenClipboard(void* a_owner);
+__declspec(dllimport) int __stdcall CloseClipboard();
+__declspec(dllimport) void* __stdcall GetClipboardData(unsigned int a_format);
+__declspec(dllimport) void* __stdcall GlobalLock(void* a_memory);
+__declspec(dllimport) int __stdcall GlobalUnlock(void* a_memory);
+__declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int a_page, unsigned long a_flags, const wchar_t* a_wide, int a_wideLength, char* a_out, int a_outLength, const char* a_default, int* a_usedDefault);
+}
+
 namespace UiPages
 {
 	namespace
@@ -339,7 +349,7 @@ namespace UiPages
 					} else if (status.failure != Session::Status::Failure::kNone) {
 						std::string_view host;
 						std::uint16_t    port = settings.port;
-						UiAddressEntry::Split(status.address, host, port, settings.port);
+						static_cast<void>(UiAddressEntry::Split(status.address, host, port, settings.port));
 						body += "\n" + Text::Format(status.failure == Session::Status::Failure::kBadName ? "session.bad_name" : "session.no_answer", { { "port", port } });
 					}
 					break;
@@ -914,15 +924,15 @@ namespace UiPages
 		std::string ReadClipboard()
 		{
 			std::string text;
-			if (!OpenClipboard(nullptr)) {
+			if (!OpenClipboard(nullptr)) {  // 13 is CF_UNICODETEXT, 65001 CP_UTF8
 				return text;
 			}
-			if (const auto data = GetClipboardData(CF_UNICODETEXT)) {
+			if (const auto data = GetClipboardData(13)) {
 				if (const auto wide = static_cast<const wchar_t*>(GlobalLock(data))) {
 					const auto length = std::min<std::size_t>(wcsnlen(wide, 512), 512);
 					if (length > 0) {
-						text.resize(static_cast<std::size_t>(WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(length), nullptr, 0, nullptr, nullptr)));
-						WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(length), text.data(), static_cast<int>(text.size()), nullptr, nullptr);
+						text.resize(static_cast<std::size_t>(WideCharToMultiByte(65001, 0, wide, static_cast<int>(length), nullptr, 0, nullptr, nullptr)));
+						WideCharToMultiByte(65001, 0, wide, static_cast<int>(length), text.data(), static_cast<int>(text.size()), nullptr, nullptr);
 					}
 					GlobalUnlock(data);
 				}

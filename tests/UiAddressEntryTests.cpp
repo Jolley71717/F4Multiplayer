@@ -28,7 +28,7 @@ TEST("address entry: letters, digits, dots, dashes and a colon are taken; spaces
 		CHECK(UiAddressEntry::Add(typed, static_cast<unsigned char>(c)));
 	}
 	CHECK(typed == "Host-1.example:7779");
-	for (const std::uint32_t c : { ' ', '<', '>', '\t', '\n', 0u, '/', '_', '@', 0xE9u }) {
+	for (const std::uint32_t c : std::vector<std::uint32_t>{ ' ', '<', '>', '\t', '\n', 0, '/', '_', '@', 0xE9 }) {
 		CHECK(!UiAddressEntry::Add(typed, c));
 	}
 	CHECK(typed == "Host-1.example:7779");

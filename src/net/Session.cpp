@@ -1525,7 +1525,7 @@ namespace Session
 						failureTold = true;
 						std::string_view host;
 						std::uint16_t    port = Config::Get().port;
-						UiAddressEntry::Split(serverAddress, host, port, Config::Get().port);
+						static_cast<void>(UiAddressEntry::Split(serverAddress, host, port, Config::Get().port));
 						Notify(lastFailure == ClientConnection::Failure::kResolve ? "session.bad_name" : "session.no_answer", { { "port", port } });
 					}
 				}
