@@ -5,8 +5,20 @@
 #include <algorithm>
 #include <charconv>
 
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+using SockLen = int;
+#else
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
+using SOCKET = int;
+using SockLen = socklen_t;
+constexpr SOCKET INVALID_SOCKET = -1;
+inline int closesocket(SOCKET a_socket) { return ::close(a_socket); }
+#endif
 
 namespace LocalAddress
 {
@@ -54,14 +66,14 @@ namespace LocalAddress
 			return {};
 		}
 		std::string result;
-		const auto  sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		const SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 		if (sock != INVALID_SOCKET) {
 			sockaddr_in target{};
 			target.sin_family = AF_INET;
 			target.sin_port = htons(9);
 			inet_pton(AF_INET, "192.0.2.1", &target.sin_addr);  // a documentation address; a UDP connect sends nothing
 			sockaddr_in local{};
-			int         size = sizeof(local);
+			SockLen      size = sizeof(local);
 			if (::connect(sock, reinterpret_cast<const sockaddr*>(&target), sizeof(target)) == 0 &&
 				::getsockname(sock, reinterpret_cast<sockaddr*>(&local), &size) == 0) {
 				result = Text(local.sin_addr);
