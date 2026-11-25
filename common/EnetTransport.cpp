@@ -12,7 +12,7 @@ namespace
 	constexpr std::size_t MAX_PACKET_SIZE = 1024 * 1024;
 }
 
-std::unique_ptr<EnetServerTransport> EnetServerTransport::Create(std::uint16_t a_port, std::size_t a_maxPeers, bool a_loopbackOnly, std::string& a_error)
+std::unique_ptr<EnetServerTransport> EnetServerTransport::Create(std::uint16_t a_port, std::size_t a_maxPeers, bool a_loopbackOnly, std::string& a_error, const std::string& a_bindIp)
 {
 	if (a_maxPeers == 0 || a_maxPeers > ENET_PROTOCOL_MAXIMUM_PEER_ID) {
 		a_error = std::format("can't host {} connections", a_maxPeers);
@@ -23,7 +23,13 @@ std::unique_ptr<EnetServerTransport> EnetServerTransport::Create(std::uint16_t a
 		return nullptr;
 	}
 	ENetAddress address{};
-	if (a_loopbackOnly) {
+	if (!a_bindIp.empty()) {
+		if (enet_address_set_host_ip(&address, a_bindIp.c_str()) != 0) {
+			Net::Shutdown();
+			a_error = "not an address of this machine";
+			return nullptr;
+		}
+	} else if (a_loopbackOnly) {
 		enet_address_set_host_ip(&address, "127.0.0.1");
 	} else {
 		address.host = ENET_HOST_ANY;

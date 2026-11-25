@@ -121,6 +121,9 @@ namespace Config
 		// When hosting: the shared world is saved to disk and carried on next time (same load order).
 		bool saveSession = true;
 
+		// bDirectJoin: hosting with Steam, friends can also join with this PC's address (UDP iPort). Off: only Steam friends.
+		bool directJoin = false;
+
 		// bSpokenLines: the lines a friend's NPCs and a friend's own character say are heard, in the
 		// speaker's recorded voice, from your copy of the speaker (a plain sound there, never the
 		// dialogue system). Off: you see them as text only. The old keys for the console's Say

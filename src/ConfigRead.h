@@ -267,6 +267,8 @@ namespace Config
 				a_settings.friendsOnMapNames = detail::ParseBool(value);
 			} else if (key == "bSyncTime") {
 				a_settings.syncTime = detail::ParseBool(value);
+			} else if (key == "bDirectJoin") {
+				a_settings.directJoin = detail::ParseBool(value);
 			} else if (key == "bSaveSession") {
 				a_settings.saveSession = detail::ParseBool(value);
 			} else if (key == "bSpokenLines") {

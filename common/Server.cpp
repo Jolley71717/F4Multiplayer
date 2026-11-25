@@ -387,6 +387,20 @@ namespace
 	}
 }
 
+// What a closed direct listener leaves in its slot: connection keys hold the transport's index, so the slot stays.
+namespace
+{
+	class ClosedTransport final : public ServerTransport
+	{
+	public:
+		void Poll(std::vector<TransportEvent>&, int) override {}
+		void Send(PeerId, std::span<const std::uint8_t>, bool) override {}
+		void Disconnect(PeerId) override {}
+		void Close() override {}
+		[[nodiscard]] std::string Describe(PeerId) const override { return "closed"; }
+	};
+}
+
 // Every line goes through Redact::Scrub: the lines below name players by ID and mask addresses
 // already, so this only catches what a transport's description or an error text brings in.
 Server::Server(LogFn a_log) :
@@ -448,6 +462,23 @@ void Server::Stop()
 	transports.clear();
 	running = false;
 	log("server: stopped");
+}
+
+std::string Server::SetDirect(bool a_open, std::vector<std::string> a_ips)
+{
+	if (!running) {
+		return "the server is not running";
+	}
+	auto request = std::make_shared<DirectRequest>();
+	request->open = a_open;
+	request->ips = std::move(a_ips);
+	std::unique_lock lock{ directMutex };
+	directRequest = request;
+	if (!directDone.wait_for(lock, std::chrono::seconds(5), [&] { return request->done; })) {
+		directRequest.reset();
+		return "the server did not answer";
+	}
+	return request->error;
 }
 
 void Server::Run()
@@ -5334,9 +5365,85 @@ void Server::Run()
 		}
 	};
 
+	// Joins by address (SetDirect): the port opened on this machine's addresses beside the other transports. Each is a
+	// transport of its own, so the connections of the others (Steam friends, the host's own game) are never touched.
+	std::vector<std::size_t> directSlots;
+	const auto               applyDirect = [&] {
+        std::shared_ptr<DirectRequest> request;
+        {
+            std::lock_guard lock{ directMutex };
+            request = directRequest;
+        }
+        if (!request || request->done) {
+            return;
+        }
+        // Closes what is open: the players who came in over it go (as a dropped link), every other connection stays.
+        const auto closeAll = [&] {
+            std::size_t dropped = 0;
+            for (const auto slot : directSlots) {
+                std::vector<ConnectionKey> keys;
+                for (const auto& [key, player] : players) {
+                    if ((key >> 32) == slot) {
+                        keys.push_back(key);
+                    }
+                }
+                for (const auto key : keys) {
+                    const auto it = players.find(key);
+                    leave(it->second);
+                    unbindBudget(it->second);
+                    players.erase(it);
+                    ++dropped;
+                }
+                transports[slot] = std::make_unique<ClosedTransport>();
+            }
+            directSlots.clear();
+            directOpen = false;
+            return dropped;
+        };
+        if (!request->open) {
+            const auto dropped = closeAll();
+            log(std::format("server: joins by address closed ({} dropped)", dropped));
+        } else if (!directSlots.empty()) {
+            log("server: joins by address are open already");
+        } else {
+            for (const auto& ip : request->ips) {
+                std::string error;
+                auto        transport = EnetServerTransport::Create(options.port, options.maxPlayers + 2, false, error, ip);
+                if (!transport) {
+                    request->error = std::move(error);
+                    break;
+                }
+                // A slot a closed listener left is used again.
+                std::size_t slot = 0;
+                while (slot < transports.size() && !dynamic_cast<ClosedTransport*>(transports[slot].get())) {
+                    ++slot;
+                }
+                if (slot == transports.size()) {
+                    transports.push_back(std::move(transport));
+                } else {
+                    transports[slot] = std::move(transport);
+                }
+                directSlots.push_back(slot);
+            }
+            if (request->ips.empty()) {
+                request->error = "no network address found";
+            }
+            if (!request->error.empty()) {
+                closeAll();
+            } else {
+                directOpen = true;
+                log(std::format("server: joins by address open on UDP port {} ({} address(es))", options.port, directSlots.size()));
+            }
+        }
+        std::lock_guard lock{ directMutex };
+        request->done = true;
+        directDone.notify_all();
+    };
+
 	auto                        nextTick = Clock::now();
 	std::vector<TransportEvent> events;
 	while (!stopRequested) {
+		applyDirect();
 		for (std::size_t t = 0; t < transports.size(); ++t) {
 			events.clear();
 			// Only the first transport waits; the rest are checked without blocking.

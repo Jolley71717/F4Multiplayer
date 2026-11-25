@@ -37,6 +37,11 @@ namespace Session
 	[[nodiscard]] std::string StartHosting();
 	// Stops the hosted server; everyone in it is disconnected.
 	void StopHosting();
+
+	// Turns "join by address" on or off for a host who uses Steam: while hosting, the UDP port is opened (or closed) on this
+	// PC's addresses beside the running session, so nobody in it is dropped but those who came in by address. Written to the
+	// ini (bDirectJoin) either way. Returns "" or why it failed (nothing changed). Without Steam the port is always open.
+	[[nodiscard]] std::string SetDirectJoin(bool a_on);
 	// Leaves the session we joined (and its Steam lobby) and stops reconnecting.
 	void Leave();
 	// Dev only (`net drop`): as the link to the server dropping: the session ends here and the connection is tried again
@@ -67,6 +72,7 @@ namespace Session
 		Link          link = Link::kNone;
 		bool          hosting = false;
 		bool          steam = false;  // friends come through Steam (invites, Join Game)
+		bool          direct = false;  // hosting, and the UDP port is open to others (joins by address)
 		std::string   address;        // the server we're set to reach ("" = none)
 		std::string   rejectReason;   // why the last join was refused ("" = it wasn't)
 		bool          retrySoon = false;    // the next try comes in a few seconds (the host isn't in yet), not in a minute
