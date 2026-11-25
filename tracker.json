@@ -1,7 +1,7 @@
 {
  "release": "0.21.3",
  "known_issues": [],
- "updated": "2026-11-25T04:02:35+00:00",
+ "updated": "2026-11-25T04:04:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1022,8 +1022,8 @@
    "title": "Join by direct IP (and LAN) besides Steam",
    "kind": "feature",
    "priority": 3,
-   "stage": 1,
-   "note": "Being built: PR 1 of 4"
+   "stage": 2,
+   "note": "PR 1 of 4 open (draft, friend side)"
   },
   {
    "id": "8c9z",
