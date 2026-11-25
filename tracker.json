@@ -1,7 +1,7 @@
 {
- "release": "0.22.1",
+ "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-25T20:00:32+00:00",
+ "updated": "2026-11-25T20:51:38+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1383,6 +1383,14 @@
    "priority": 2,
    "stage": 1,
    "note": "Being worked"
+  },
+  {
+   "id": "bd27",
+   "title": "VM game's working set grows 1237 MB from the first combat to the end of the churn (soft limit 1000; was +1033 in 0.22.1's soak)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "bd5v",
@@ -2920,8 +2928,8 @@
    "title": "Joiner's own buildings at the host's Sanctuary invisible (but solid and counted) after 0.22.0",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Merged: only pieces the host's settlement covers are hidden; ships in 0.22.2"
+   "stage": 7,
+   "note": "Shipped in 0.22.2"
   },
   {
    "id": "n0e9",
