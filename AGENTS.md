@@ -9,7 +9,7 @@ and ask.
 ### Changes and merges
 
 - Work on a branch, open a pull request against `main`, never push to `main` directly. A PR that is reviewed (below)
-  and tested may be merged without asking the maintainer: keep things moving. Releases still follow the rc-and-soak
+  and tested may be merged without asking the maintainer: keep things moving. Releases still follow the rc-and-test
   rule below.
 - Every PR gets a code review at its current head before it merges: a PR comment starting "Code review at <sha>" and
   the `reviewed` label. New commits remove the label (`.github/workflows/review-label.yml`); review again.
@@ -27,11 +27,12 @@ and ask.
 
 ### Releases (docs/RELEASING.md)
 
-- A GitHub pre-release `vX.Y.Z-rcN` first, then the gate and the soak docs/RELEASING.md sets for that
-  rc's zip (the zip's DLL, not a rebuild), then `tools/promote.ps1 -Rc vX.Y.Z-rcN`. Never publish a release whose rc hasn't soaked.
+- A GitHub pre-release `vX.Y.Z-rcN` first, then the test docs/RELEASING.md sets for that rc's zip (the zip's DLL, not
+  a rebuild): the gate for a patch release, the gate and the 90-minute soak for a minor or major one. Then
+  `tools/promote.ps1 -Rc vX.Y.Z-rcN`. Never publish a release whose rc hasn't passed that test.
 - Release notes go to the maintainer before anything is published. Notes are for players: no issue-tracker ids or
   internal tooling.
-- Every release whose rc passed its soak goes to GitHub and Nexus both, without waiting for the maintainer's go. Nexus
+- Every release whose rc passed its test goes to GitHub and Nexus both, without waiting for the maintainer's go. Nexus
   uploads only through `gh workflow run nexus-upload.yml -f tag=vX.Y.Z`, never by hand, right after the GitHub
   release. The Nexus zip never holds `F4MPServer.exe`.
 
