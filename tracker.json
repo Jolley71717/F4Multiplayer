@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-25T20:51:38+00:00",
+ "updated": "2026-11-25T20:52:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2842,8 +2842,8 @@
    "title": "A box a friend builds in front of the host at a settlement fills with random items (and other dupes)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Player report: a friend's new box at a settlement fills with random items"
+   "stage": 1,
+   "note": "Being looked into"
   },
   {
    "id": "ml30",
@@ -3330,7 +3330,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 1,
-   "note": "Not reproduced on 0.20.3 (52 fast travels, 104 saves, 4 loads with both players' powered builds); waiting on a crash log from a player",
+   "note": "Being looked into",
    "pr": 291
   },
   {
