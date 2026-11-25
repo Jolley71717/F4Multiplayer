@@ -9156,7 +9156,7 @@ step_sharedws_putaway() {
 # the host's word, the VM lets the joiner in, both games see each other. Both menus are driven with `mpmenu` by button label,
 # and every check reads a game's state or log (no screenshot). The address, the password and the joiner's name are never printed.
 # Needs both games in the session at the start; leaves them in it (the host PC hosting, the VM joined through Steam) at the end.
-_mp_labels() { dc "$1" mpmenu | sed -nE "s/.*buttons='([^']*)'.*/\1/p"; }
+_mp_labels() { dc "$1" mpmenu | sed -nE "s/.*buttons='(.*)' body='.*/\1/p"; }   # greedy: a label may hold an apostrophe
 _mp_body() { dc "$1" mpmenu | sed -nE "s/.*body='(.*)'\$/\1/p"; }
 # _mp_has <who> <label regex>: that page has a button with such a label
 _mp_has() { local l; local IFS='|'; for l in $(_mp_labels "$1"); do [[ $l =~ $2 ]] && return 0; done; return 1; }
@@ -9193,7 +9193,8 @@ _direct_leave() {
 	dc host "mpmenu close" >/dev/null; dc vm "mpmenu close" >/dev/null
 	dc host "net leave" >/dev/null; sleep 3
 	dc vm "net direct off" >/dev/null; dc vm "net stophost" >/dev/null; sleep 3
-	dc host "net host" >/dev/null; sleep 3
+	_mp_fresh host; _mp_go host "^Settings$" "^Password$" "^Remove password$" "^Remove password$" >/dev/null; dc host "mpmenu close" >/dev/null   # the typed passwords go: the VM joins with its own
+	_mp_fresh host; _mp_go host "^Host a session$" >/dev/null; dc host "mpmenu close" >/dev/null; sleep 3
 	bash "$STAGE/rig.sh" join > "$A_OUT/direct-join.log" 2>&1
 	wait_for 40 _vm_status_joined
 	expect_eq "direct: the VM is in the host PC's Steam session again" "$(field "$(dc vm 'net status')" status)" joined
@@ -9204,7 +9205,9 @@ step_direct() {
 	expect_eq "direct: precondition: the VM is in the host's session" "$(field "$(dc vm 'net status')" status)" joined
 	clear_menus host >/dev/null; clear_menus vm >/dev/null
 	# the roles: the VM leaves, the host PC stops hosting, the VM hosts through Steam
-	dc vm "net leave" >/dev/null; sleep 4; dc host "net stophost" >/dev/null; sleep 3
+	dc vm "net leave" >/dev/null; sleep 4
+	_mp_fresh host; _mp_go host "^Stop hosting$" >/dev/null; sleep 3   # the menu's own, which also turns bHost off: the game would start hosting again by itself otherwise
+	dc host "mpmenu close" >/dev/null
 	expect_eq "direct: the VM hosts" "$(dc vm 'net host')" hosting
 	sleep 8
 	# 1. the VM's host controls: Join by address on (the menu's own switch; it makes up a password when there is none)
@@ -9214,9 +9217,10 @@ step_direct() {
 	fi
 	sleep 2
 	expect_match "direct: the VM's game says joins by address are on" "$(dc vm 'net status')" 'direct=(true|1|on)'
-	_mp_fresh vm; _mp_go vm 'Host controls' >/dev/null; sleep 1
-	line=$(_mp_body vm); addr=$(grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]+' <<<"$line" | head -1)
-	[ -n "$addr" ] || { setup_fault "direct: the host controls name an address to join" "none in the page's text (the VM has no network address?)"; _direct_leave; return; }
+	# the VM's address as this PC reaches it (the panel's page keeps the address line in a hint, not in text a channel reads)
+	addr=$(ping -n 1 -4 "${VM_SSH#*@}" | tr -d '\r' | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | head -1)
+	[ -n "$addr" ] && addr="$addr:7779"
+	[ -n "$addr" ] || { setup_fault "direct: the host controls name an address to join" "ping gave none (the VM's name did not resolve here)"; _direct_leave; return; }
 	pass "direct: the host controls name the address to join" "(not printed)"
 	pw=$(vmssh "(Get-Content \"$VM_GAME/Data/F4SE/Plugins/F4Multiplayer.ini\" | Where-Object { \$_ -match '^sPassword' }) -replace '^sPassword\\s*=\\s*',''" | tr -d '\r\n ')
 	[ -n "$pw" ] || { setup_fault "direct: join by address set a password" "the VM's ini holds none"; _direct_leave; return; }
@@ -9235,7 +9239,7 @@ step_direct() {
 	if _dir_waits; then fail "direct: a wrong password never waits at the host" "the VM lists someone waiting"; else pass "direct: a wrong password never waits at the host" "nobody waiting"; fi
 	# 3. the right password: it waits for the host's word
 	_mp_fresh host
-	if _mp_go host "^Type the host's password$"; then
+	if _mp_go host '^Type the host'; then
 		_mp_type host "$pw"; _mp_press host '^Save password$'
 	else fail "direct: the host PC's menu offers to type the host's password" "page: $(_mp_labels host | cut -c1-150)"; _direct_leave; return; fi
 	_mp_fresh vm; _mp_go vm 'Host controls' >/dev/null
