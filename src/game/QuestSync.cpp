@@ -20,6 +20,7 @@
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/PlacedScenes.h"
+#include "game/StageNeedsRef.h"
 #include "game/Papyrus.h"
 #include "game/Party.h"
 #include "game/Puppets.h"
@@ -215,6 +216,8 @@ namespace QuestSync
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
 		std::unordered_set<std::uint64_t>                trapWaitLogged;     // stages logged as waiting for the player to leave a trap's cells (StageRules::TRAPS)
 		std::unordered_set<std::uint64_t>                memoryWaitLogged;   // stages logged as waiting for the player to leave a memory (StageRules::MEMORY_PLACES, MEMORY_WAITS)
+		std::unordered_set<std::uint64_t>                refWaitLogged;      // stages logged as waiting for the reference their script acts on to load (StageNeedsRef)
+		StageNeedsRef::Settling                          refSettling;        // ... and since when each reference has been loaded
 		std::unordered_set<std::uint64_t>                eachWaitLogged;  // companion quests' kEach stages logged as waiting for their quest to start here
 		std::unordered_set<std::uint64_t>                eachSettleLogged;  // ... and as waiting for the game to settle (Companions::AliasesReadable)
 		// Stages logged as never done in time, once each while the game runs; gaveUp counts the rest. A stage that was to
@@ -1281,6 +1284,33 @@ namespace QuestSync
 			return true;
 		}
 
+		// Before a friend's stage is judged (SetHere): whether its script acts on a reference that isn't loaded here yet, or not for
+		// long (StageNeedsRef: Vault 81's talk opens the gear door, which takes its animation only while its 3D is loaded). Its quest
+		// waits, judged again at the next poll (logged once); the stage is set once the reference has been loaded for SETTLE. A
+		// reference this game doesn't have, or one deleted or disabled, holds nothing.
+		bool RefWaits(std::uint32_t a_quest, std::uint16_t a_stage, std::optional<StageRules::File> a_file, std::uint32_t a_local, const char* a_name, Clock::time_point a_now)
+		{
+			const auto row = a_file ? StageNeedsRef::Find(*a_file, a_local, a_stage) : nullptr;
+			const auto handler = row ? RE::TESDataHandler::GetSingleton() : nullptr;
+			const auto ref = handler ? handler->LookupForm<RE::TESObjectREFR>(row->ref, StageRules::FileName(*a_file)) : nullptr;
+			if (!ref || ref->IsDeleted() || ref->IsDisabled()) {
+				return false;
+			}
+			const auto key = Key(a_quest, a_stage);
+			if (refSettling.Ready(key, ref->Get3D() != nullptr, a_now)) {
+				refSettling.Done(key);
+				refWaitLogged.erase(key);
+				REX::INFO("QuestSync: {:08X} '{}' stage {}: {:08X}, {}, has been loaded for {} s; setting it now", a_quest, a_name ? a_name : "", a_stage, ref->GetFormID(), row->what,
+					std::chrono::duration_cast<std::chrono::seconds>(StageNeedsRef::SETTLE).count());
+				return false;
+			}
+			if (refWaitLogged.insert(key).second) {
+				REX::INFO("QuestSync: {:08X} '{}' stage {} waits: its script acts on {:08X}, {}, which isn't loaded here (or not for long); set once it has been for {} s",
+					a_quest, a_name ? a_name : "", a_stage, ref->GetFormID(), row->what, std::chrono::duration_cast<std::chrono::seconds>(StageNeedsRef::SETTLE).count());
+			}
+			return true;
+		}
+
 		// Before a friend's stage is set here: what its row says to write first (StageRules::PlanCarry), with the values that
 		// came with it. kSet: written here and there; kWait: its quest waits (CarryWaits said so before the stage was judged;
 		// logged there); kSkip: not set (logged).
@@ -2268,6 +2298,11 @@ namespace QuestSync
 			// A quest whose memory this player is going through (StageRules::MEMORY_WAITS: the memory's quest runs here): its
 			// friend's stages wait until they are out, before they are judged (a SOLO one is skipped then).
 			if (MemoryWaits(a_quest, a_stage, file, local, name)) {
+				return StageLog::Set::kQuestWaits;
+			}
+			// A stage whose script acts on a reference that must be loaded (StageNeedsRef: Vault 81's gear door): its quest waits
+			// until it is, so a catch-up away from the place doesn't use the stage up on a door that takes no animation.
+			if (RefWaits(a_quest, a_stage, file, local, name, a_now)) {
 				return StageLog::Set::kQuestWaits;
 			}
 			// A stopped quest the story manager starts from an event, started here through the game's own start (below): while a
@@ -3744,6 +3779,8 @@ namespace QuestSync
 		openingWaitLogged.clear();
 		trapWaitLogged.clear();
 		memoryWaitLogged.clear();
+		refWaitLogged.clear();
+		refSettling.Clear();
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
@@ -3809,6 +3846,8 @@ namespace QuestSync
 		openingWaitLogged.clear();
 		trapWaitLogged.clear();
 		memoryWaitLogged.clear();
+		refWaitLogged.clear();
+		refSettling.Clear();
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
