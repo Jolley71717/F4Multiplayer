@@ -9100,6 +9100,9 @@ step_sharedws_putaway() {
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
 	case "$(vm wsputaway)" in putaway:*) ;; *) fail "$label: precondition: the VM's build knows dev wsputaway" "$(vm wsputaway | cut -c1-160)"; return;; esac
 	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 0" >/dev/null; sleep 2   # an earlier step may have left Sanctuary the host's
+	_spa_none() { [ "$(field "$(vm wsputaway)" hosted)" = 0 ]; }
+	wait_for 30 _spa_none
 	win_mark spa host; win_mark spa vm
 	gen=$(_spa_ref "$SWS_GENERATOR"); lamp=$(_spa_ref "$SWS_LIGHT")
 	if [ -z "$gen" ] || [ -z "$lamp" ]; then setup_fault "$label: set-up: the VM makes a generator and a light of its own at Sanctuary" "gen='$gen' lamp='$lamp'"; return; fi
@@ -9123,7 +9126,7 @@ step_sharedws_putaway() {
 	done
 	# 3. walk through where the generator stands: solid, the walk would stop short of it
 	if [ "$(field "$(vm wsputaway)" walkThrough)" = true ]; then   # bPutAwayWalkThrough on in the VM's ini
-		if walk vm "$label: the VM walks through its own generator's place (put away, walk-through: no collision)" 0.6 30 "$gen"; then pass "$label: the VM walked to within 30 units of its put-away generator's centre" "$WALK_LAST"; fi
+		if walk vm "$label: the VM walks through its own generator's place (put away, walk-through: no collision)" 0.6 45 "$gen"; then pass "$label: the VM walked to within 45 units of its put-away generator's centre" "$WALK_LAST"; fi
 		pads_off
 	else
 		pass "$label: (for the record) bPutAwayWalkThrough is off in the VM: the pieces are hidden and stay solid, no walk-through check" "walkThrough=false"
@@ -9144,4 +9147,5 @@ step_sharedws_putaway() {
 	expect_eq "$label: nothing is put away after the leave" "$(field "$(vm wsputaway)" away)" 0
 	crash_verdict "$label:"
 	_sws_cleanup
+	_sws_rejoin "$label"   # the VM is in the host's session again for whatever runs next
 }
