@@ -1,7 +1,7 @@
 {
  "release": "0.22.1",
  "known_issues": [],
- "updated": "2026-11-25T18:00:15+00:00",
+ "updated": "2026-11-25T20:00:32+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -259,6 +259,14 @@
    "priority": 4,
    "stage": 7,
    "note": "Fixed and shipped."
+  },
+  {
+   "id": "1yxy",
+   "title": "1.0: full co-op playthrough, Vault 111 to the ending, two players",
+   "kind": "feature",
+   "priority": 1,
+   "stage": 0,
+   "note": "Planned for 1.0: two players through the whole main story"
   },
   {
    "id": "1zyv",
@@ -2914,6 +2922,14 @@
    "priority": 1,
    "stage": 5,
    "note": "Merged: only pieces the host's settlement covers are hidden; ships in 0.22.2"
+  },
+  {
+   "id": "n0e9",
+   "title": "1.0 release: full soak, fresh install guide, protocol freeze for 1.0.x",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": "Planned for 1.0"
   },
   {
    "id": "n22z",
