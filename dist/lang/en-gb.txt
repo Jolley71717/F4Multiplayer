@@ -193,6 +193,7 @@ quest.hostile_companion = {player}'s choice turns {faction} on you: {companion} 
 quest.hostile_companion_unnamed = {player}'s choice turns a faction on you: {companion} leaves you, as the game's kick-out has it
 quest.a_companion = your companion
 workshop.rescued = What you kept in a friend's container is in your inventory
+workshop.putaway = Your own pieces that the host's settlement already shows are hidden for this session. They come back when it ends.
 workshop.shared.built = Built as the host's piece: on their grid, in their settlement
 workshop.shared.wired = Wired on the host's grid
 workshop.shared.not_owned = This isn't a settlement the host owns: the piece is your own

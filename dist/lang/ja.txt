@@ -190,6 +190,7 @@ quest.hostile_companion = {player}の選択で{faction}が敵対します: ゲ�
 quest.hostile_companion_unnamed = {player}の選択である勢力が敵対します: ゲームの追放処理と同じく{companion}はあなたのもとを去ります
 quest.a_companion = あなたの仲間
 workshop.rescued = フレンドのコンテナに入れていたアイテムはインベントリにあります
+workshop.putaway = ホストの居住地にすでに表示されているあなたの建築物は、このセッションの間は非表示です。終了すると元に戻ります。
 workshop.shared.built = ホストの設備として建設しました：ホストの電力網、ホストの居住地に
 workshop.shared.wired = ホストの電力網に配線しました
 workshop.shared.not_owned = この居住地はホストのものではありません：この設備はあなたのものです

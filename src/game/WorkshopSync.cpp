@@ -1110,6 +1110,7 @@ namespace WorkshopSync
 		// kept as our own in this session (the host was away): they stand.
 		PutAway::Away             putAway;
 		std::set<std::uint32_t>   keptOwnPieces;
+		bool                      putAwayNoted = false;  // the HUD note on the first put-away of the session was shown
 		Clock::time_point         nextPutAway{};
 		std::uint64_t             putAwayShown = 0;  // pieces shown again (leaving, a workbench the host lost)
 		std::uint64_t             putAwayDone = 0;   // calls to cull and switch a piece's collision off
@@ -1629,11 +1630,14 @@ namespace WorkshopSync
 			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return !IsWorkshopObject(a_ref); });
 		}
 
+		bool PutAwayEligibleHere(RE::TESObjectREFR& a_ref);
+
 		// A piece of ours, the same object, at the friend's piece's spot: their save and ours share a past.
 		bool OursAt(const Protocol::WorkshopItem& a_item)
 		{
-			// (a piece put away for the session is not ours standing for the host's: it would leave a hole where the host's goes)
-			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr && !putAway.Has(a_ref->GetFormID()); }) != nullptr;
+			// (a piece put away for the session, or one that would be once the host's copy stands over it, is not ours standing for
+			// the host's: the copy is made over it, and covers it)
+			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr && !putAway.Has(a_ref->GetFormID()) && !PutAwayEligibleHere(*a_ref); }) != nullptr;
 		}
 
 		// One of our copies of a friend's piece, the same object, near the spot: WorkshopApply::TwinOf's quick look, before it
@@ -7183,6 +7187,7 @@ namespace WorkshopSync
 		void ResetShared()
 		{
 			PutAwayShowAll("leaving the session");
+			putAwayNoted = false;
 			keptOwnPieces.clear();
 			for (const auto& build : requests.Builds()) {
 				DropPending(build, "leaving");
@@ -7228,6 +7233,7 @@ namespace WorkshopSync
 		void ForgetShared()
 		{
 			PutAwayShowAll("the world is gone");
+			putAwayNoted = false;
 			keptOwnPieces.clear();
 			requests.Clear();
 			adoptLater.clear();
@@ -8218,7 +8224,17 @@ namespace WorkshopSync
 			return a_bench != 0 && PutAwayActive() && hostSettlements.Owns(a_bench);
 		}
 
-		// Whether a piece found in a host-owned workbench's list is put away: built before the session, ours, standing.
+		bool PutAwayPieceOf(RE::TESObjectREFR& a_ref, std::uint32_t a_bench);
+
+		bool PutAwayEligibleHere(RE::TESObjectREFR& a_ref)
+		{
+			const auto bench = BenchOf(a_ref);
+			const auto id = bench ? bench->GetFormID() : 0;
+			return id != 0 && PutsAwayAt(id) && PutAwayPieceOf(a_ref, id);
+		}
+
+		// Whether a piece found in a host-owned workbench's list is one of ours to put away: built before the session, ours, standing
+		// (whether it is put away is PutAwayCovered's too).
 		bool PutAwayPieceOf(RE::TESObjectREFR& a_ref, std::uint32_t a_bench)
 		{
 			if (a_ref.As<RE::Actor>()) {
@@ -8228,6 +8244,33 @@ namespace WorkshopSync
 			return piece.bench == a_bench && PutAway::Eligible({ .ref = piece.ref, .bench = piece.bench, .buildable = piece.buildable, .copy = piece.copy, .off = piece.off,
 										 .madeNow = IsPendingPiece(piece.ref) || keptOwnPieces.contains(piece.ref) },
 				true);
+		}
+
+		// Whether one of the host's pieces (our copy of it) of the same base, at the same workbench, stands at the piece's spot
+		// (PutAway::COVER_TOLERANCE): only then does hiding ours leave no hole.
+		bool PutAwayCovered(RE::TESObjectREFR& a_ref, std::uint32_t a_bench)
+		{
+			const auto tes = RE::TES::GetSingleton();
+			if (!tes) {
+				return false;
+			}
+			const PutAway::Spot        piece{ BaseIdOf(a_ref), a_bench, a_ref.data.location.x, a_ref.data.location.y, a_ref.data.location.z };
+			std::vector<PutAway::Spot> stand;
+			const RE::NiPoint3         at = a_ref.data.location;
+			tes->ForEachReferenceInRange(at, PutAway::COVER_TOLERANCE * 2.0f, [&](RE::TESObjectREFR* a_other) {
+				if (a_other && a_other != &a_ref && (a_other->GetFormID() >> 24) == 0xFF && !a_other->IsDisabled() && !a_other->IsDeleted() && IsCopy(a_other) &&
+					!InGraveyard(a_other)) {
+					// (a copy is linked to no workbench: the workbench its report named is kept beside it, and only the host's pieces count)
+					std::uint32_t bench = 0;
+					{
+						std::scoped_lock l{ copyIdsLock };
+						bench = HostsCopy(a_other->GetFormID()) ? copyBenches.Of(a_other->GetFormID()) : 0;
+					}
+					stand.push_back({ BaseIdOf(*a_other), bench, a_other->data.location.x, a_other->data.location.y, a_other->data.location.z });
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return PutAway::Covered(piece, stand);
 		}
 
 		void PutAwayFrame(Clock::time_point a_now)
@@ -8289,12 +8332,16 @@ namespace WorkshopSync
 				}
 				looked.push_back(id);
 				for (const auto& item : items) {
-					if (!PutAwayPieceOf(*item, id)) {
+					if (!PutAwayPieceOf(*item, id) || !PutAwayCovered(*item, id)) {
 						continue;
 					}
 					const auto root = item->Get3D();
 					if (putAway.Want(item->GetFormID(), id, reinterpret_cast<std::uintptr_t>(root))) {
 						++putAwayDone;
+						if (!putAwayNoted) {
+							putAwayNoted = true;
+							Hud::Notify(Text::Get("workshop.putaway"));
+						}
 						PutAwayHide(*item, true, Config::Get().putAwayWalkThrough);
 						if (--budget == 0) {
 							whole = false;  // the rest next frame (what is told already costs nothing then)

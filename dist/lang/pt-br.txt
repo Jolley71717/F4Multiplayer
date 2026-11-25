@@ -173,6 +173,7 @@ quest.hostile_companion = A escolha de {player} vira {faction} contra você: {co
 quest.hostile_companion_unnamed = A escolha de {player} vira uma facção contra você: {companion} deixa você, como na expulsão do jogo
 quest.a_companion = seu companheiro
 workshop.rescued = O que você guardou no contêiner de um amigo está no seu inventário
+workshop.putaway = Suas peças que o assentamento do anfitrião já mostra ficam ocultas durante esta sessão. Elas voltam quando ela termina.
 workshop.shared.built = Construído como peça do anfitrião: na rede elétrica dele, no assentamento dele
 workshop.shared.wired = Conectado à rede elétrica do anfitrião
 workshop.shared.not_owned = Este assentamento não é do anfitrião: a peça é sua
