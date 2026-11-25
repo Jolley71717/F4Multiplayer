@@ -1,7 +1,7 @@
 {
  "release": "0.21.3",
  "known_issues": [],
- "updated": "2026-11-25T02:00:24+00:00",
+ "updated": "2026-11-25T03:41:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1023,7 +1023,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 1,
-   "note": "Planned for 0.18.0: join by a typed address, with a required password that is never sent readable, host approval of each joiner, and a tested way to play without showing your IP"
+   "note": "Being built: PR 1 of 4"
   },
   {
    "id": "8c9z",
@@ -1126,6 +1126,14 @@
    "stage": 7,
    "note": "shipped in 0.21.2",
    "pr": 563
+  },
+  {
+   "id": "94j8",
+   "title": "Rig/shared workshop: sharedws-power fails on 0.21.3 too: the host's unwired light in a VM-wired pylon's range is not powered in 20 s, and the VM's copy shows no power",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "957u",
