@@ -4224,7 +4224,7 @@ namespace WorkshopSync
 
 		bool PickBlockedHook(RE::TESObjectREFR& a_ref)
 		{
-			// A piece put away for the session is not to be picked (hidden and walk-through: nothing to aim at).
+			// A piece put away for the session is not to be picked (hidden: nothing to aim at).
 			const bool away = putAway.Has(a_ref.GetFormID());
 			const bool blocked = originalIsBlocked(a_ref) || away;
 			const bool admit = blocked && !away && AdmitsCopy(a_ref);

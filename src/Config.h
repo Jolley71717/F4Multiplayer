@@ -217,7 +217,7 @@ namespace Config
 		bool sharedRolls = true;
 
 		// Not a host's rule: at a settlement the host owns, your own pieces built before the session are put away for the session
-		// (hidden and walk-through, never deleted, moved or disabled: PutAway.h), so the host's version of it is the one in the way
+		// (hidden, solid unless bPutAwayWalkThrough, never deleted, moved or disabled: PutAway.h), so the host's version of it is the one in the way
 		// of nothing. Off: both versions stand superimposed, as before (bPutAwayOwnSettlements).
 		bool putAwayOwnSettlements = true;
 		// ...and, with the one above, also walk-through: their collision is switched off too. Off by default: a loose object resting on
