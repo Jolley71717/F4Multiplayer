@@ -1,7 +1,7 @@
 {
  "release": "0.22.0",
  "known_issues": [],
- "updated": "2026-11-25T12:10:21+00:00",
+ "updated": "2026-11-25T12:11:01+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3007,6 +3007,14 @@
    "stage": 7,
    "note": "Merged",
    "pr": 495
+  },
+  {
+   "id": "o15w",
+   "title": "Vault 81 door open for the friend, shut for the host after both reload a save from before the intercom talk (GitHub #571)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report (GitHub #571): Vault 81 door out of step after both reload"
   },
   {
    "id": "oadc",
