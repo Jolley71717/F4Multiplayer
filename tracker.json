@@ -1,7 +1,7 @@
 {
- "release": "0.21.3",
+ "release": "0.22.0",
  "known_issues": [],
- "updated": "2026-11-25T08:36:36+00:00",
+ "updated": "2026-11-25T12:09:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1022,8 +1022,8 @@
    "title": "Join by direct IP (and LAN) besides Steam",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
-   "note": "Join by address: all on main (menu, password check, host approval, docs); ships in 0.22.0",
+   "stage": 7,
+   "note": "Shipped in 0.22.0 (2026-11-25)",
    "pr": 576
   },
   {
@@ -3281,8 +3281,8 @@
    "title": "Shared bench: settlements the host doesn't own aren't shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
-   "note": "Step 1 merged (a friend's own buildings at the host's settlements are hidden for the session); ships in 0.22.0; step 2 later"
+   "stage": 7,
+   "note": "Stage 1 (your pieces hidden at host-owned settlements) shipped in 0.22.0; stage 2 later"
   },
   {
    "id": "qx9n",
