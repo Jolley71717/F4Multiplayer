@@ -1,7 +1,7 @@
 {
  "release": "0.22.1",
  "known_issues": [],
- "updated": "2026-11-25T16:45:37+00:00",
+ "updated": "2026-11-25T16:46:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1818,6 +1818,14 @@
    "note": ""
   },
   {
+   "id": "er6q",
+   "title": "Test America Rising 2 (Legacy of the Enclave) in co-op on the rig",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "To test: America Rising 2 in co-op (player question)"
+  },
+  {
    "id": "esyh",
    "title": "Rig check: quest actors compares creatures read before the fight, but the landfill fight refills its aliases (false FAIL)",
    "kind": "bug",
@@ -2904,8 +2912,8 @@
    "title": "Joiner's own buildings at the host's Sanctuary invisible (but solid and counted) after 0.22.0",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "Player report: a joiner's own buildings at the host's settlement are invisible after 0.22.0"
+   "stage": 1,
+   "note": "Taken: put away only pieces the host's copy covers"
   },
   {
    "id": "n22z",
