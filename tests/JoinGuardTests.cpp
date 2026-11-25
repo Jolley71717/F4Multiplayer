@@ -431,6 +431,13 @@ TEST("join approval: a joiner who was let in and comes back is not asked again; 
 	REQUIRE(welcome);
 	f.fake->Drop(2);
 	REQUIRE(f.fake->Settle());
+	// His identity from another address is no one the host let in: that one waits (a game identity isn't a secret).
+	f.fake->SetSource(5, REMOTE_B);
+	f.fake->Connect(5);
+	f.fake->Deliver(5, Protocol::Encode(RemoteHello("Bob", 0xB0B)));
+	CHECK(f.fake->WaitFor(5, Type(MT::kJoinWait)));
+	f.fake->Drop(5);
+	REQUIRE(f.fake->Settle());
 	f.fake->SetSource(3, REMOTE_A);
 	CHECK(f.Join(3, RemoteHello("Bob", 0xB0B)));  // no wait
 	// The host kicks him: coming again means asking again.

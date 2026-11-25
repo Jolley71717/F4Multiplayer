@@ -540,6 +540,9 @@ void Server::Run()
 	struct Member
 	{
 		std::uint64_t     account = 0;
+		// The remote address it came from (Player::source, 0 = Steam or this machine): a game identity isn't a secret, so
+		// one who came by address is taken back only from that address (or the host asked again).
+		std::uint64_t     source = 0;
 		Clock::time_point lastSeen{};
 	};
 	std::unordered_map<std::uint64_t, Member> members;
@@ -1730,7 +1733,7 @@ void Server::Run()
 			// (Not the saved identities: those hold everyone who ever joined, before a restart too.)
 			inSession = inSession || [&] {
 				const auto member = hello->identity != 0 ? members.find(hello->identity) : members.end();
-				return member != members.end() && member->second.account == a_player.transportId && !removed.contains(hello->identity) &&
+				return member != members.end() && member->second.account == a_player.transportId && member->second.source == a_player.source && !removed.contains(hello->identity) &&
 				       (a_player.transportId == 0 || !removedAccounts.contains(a_player.transportId));
 			}();
 			if (locked && !inSession) {
@@ -1880,7 +1883,7 @@ void Server::Run()
 					members.erase(oldest);
 				}
 			}
-			members[hello->identity] = { a_player.transportId, Clock::now() };
+			members[hello->identity] = { a_player.transportId, a_player.source, Clock::now() };
 		}
 
 		// Every letter of every script stays (a Cyrillic or CJK character name); what can't be shown goes (common/Name.h).
