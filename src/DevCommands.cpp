@@ -2473,6 +2473,43 @@ namespace DevCommands
 			return DescribeRef(ref) + std::format(" formFlags={:08X} extraFlags={:X}", ref->formFlags, Equipment::ExtraFlagsOf(ref)) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
+		// openstate <refHex>: a reference's open state as the game reads it (none, open, opening, closed, closing; a gear door, an
+		// elevator, a lid), whether its 3D is loaded (an unloaded door doesn't take an open animation), disabled and its cell.
+		std::string OpenState(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: usage: openstate <refHex> (no such reference)";
+			}
+			using Open = RE::BGSOpenCloseForm::OPEN_STATE;
+			const auto  state = RE::BGSOpenCloseForm::GetOpenState(ref);
+			const char* name = "none";
+			switch (state) {
+			case Open::kOpen:
+				name = "open";
+				break;
+			case Open::kOpening:
+				name = "opening";
+				break;
+			case Open::kClosed:
+				name = "closed";
+				break;
+			case Open::kClosing:
+				name = "closing";
+				break;
+			default:
+				break;
+			}
+			const auto  cell = ref->GetParentCell();
+			const auto  root = ref->Get3D();
+			// A gear door's open pose isn't in the state the game reads (it stays "closed" after the door's animation): the 3D's
+			// own bound moves, so it is read too. Compare it with the same door's before the stage that opens it.
+			const auto  bound = root ? std::format(" bound=({:.0f},{:.0f},{:.0f}) r={:.0f}", root->worldBound.center.x, root->worldBound.center.y, root->worldBound.center.z, root->worldBound.fRadius) :
+			                           std::string{};
+			return std::format("ref={:08X} open={} ({}) 3d={} disabled={} cell={:08X}", ref->GetFormID(), name, std::to_underlying(state), root != nullptr, ref->IsDisabled(),
+				cell ? cell->GetFormID() : 0) + bound;
+		}
+
 		// standin <refHex>: how an actor is drawn, for a stand-in a friend cannot see: its 3D (loaded, culled, fade, flags, how
 		// many children drawn and culled, the face node), its cell against the player's (and the cell's state), its process
 		// level, and whose stand-in it is.
@@ -5369,6 +5406,7 @@ namespace DevCommands
 			Entry{ "launchlog", LaunchLogCommand },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
+			Entry{ "openstate", OpenState },
 			Entry{ "gate", Gate },
 			Entry{ "scriptvars", ScriptVars },
 			Entry{ "scripts", ScriptsCommand },
