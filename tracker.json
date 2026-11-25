@@ -1,7 +1,7 @@
 {
  "release": "0.22.1",
  "known_issues": [],
- "updated": "2026-11-25T16:57:53+00:00",
+ "updated": "2026-11-25T16:58:35+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2920,8 +2920,8 @@
    "title": "Joiner's own buildings at the host's Sanctuary invisible (but solid and counted) after 0.22.0",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Taken: put away only pieces the host's copy covers"
+   "stage": 2,
+   "note": "PR 582 (draft) open"
   },
   {
    "id": "n22z",
