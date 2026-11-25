@@ -77,6 +77,18 @@ namespace Config
 		}
 	}
 
+	// What the log says of a line the menu wrote: a password and an address are never in it (players share their logs).
+	[[nodiscard]] inline std::string_view ShownValue(std::string_view a_key, std::string_view a_value)
+	{
+		if (a_key == "sPassword") {
+			return a_value.empty() ? "(none)" : "(a password)";
+		}
+		if (a_key == "sServerAddress") {
+			return a_value.empty() ? "(none)" : "(an address)";
+		}
+		return a_value;
+	}
+
 	// Reads a_text ("key = value" lines; '#' or ';' start a comment) into a_settings: a key it has sets its setting,
 	// the last line of a key counting; a key it lacks leaves the setting as a_settings has it. A leading UTF-8 byte
 	// order mark (Notepad's, or the shipped file's of old) is ignored.

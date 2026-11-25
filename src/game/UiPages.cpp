@@ -6,6 +6,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/UiKeyNames.h"
+#include "game/UiAddressEntry.h"
 #include "game/UiPasswordEntry.h"
 #include "game/UiSettingsRows.h"
 #include "game/UiPanel.h"
@@ -82,7 +83,19 @@ namespace UiPages
 		bool                keyWaiting = false;  // the same for the panel, asked for with the menu key
 		bool                inPanel = false;  // the pages go to the panel (MPMenu) rather than to message boxes
 		std::string         typedPassword;           // the password page's text so far
-		bool                typingPassword = false;  // that page is showing, with the keys going to it
+		// A dialog to type in is showing, with the keys going to it: the password, or the address to join.
+		enum class Typing
+		{
+			kNone,
+			kPassword,
+			kAddress
+		};
+		Typing              typing = Typing::kNone;
+		std::string         typedAddress;  // the address dialog's text so far: whole in its box, nowhere else, never logged
+		// The join-by-address page shows the recent addresses whole while its button is held (and for a moment, so a tap shows too).
+		bool                onAddressPage = false;
+		bool                addressesShown = false;
+		std::chrono::steady_clock::time_point addressesShownAt{};
 		UiPanel::Page        nextPage;         // what the next page has besides its text and rows, in the panel: Show takes it, panel or not
 
 		// "Join a friend" first asks Steam for the friends' rich presence (a host's names their lobby,
@@ -179,7 +192,9 @@ namespace UiPages
 				UiPanel::SetPage(std::move(page));
 				UiPanel::CaptureKey(false);
 				UiPanel::CaptureText(false);
-				typingPassword = false;
+				typing = Typing::kNone;
+				onAddressPage = false;
+				addressesShown = false;
 				return;
 			}
 			const auto manager = RE::MessageMenuManager::GetSingleton();
@@ -293,7 +308,7 @@ namespace UiPages
 				const auto name = Steam::NameOf(id);
 				return name.empty() ? Text::Format("menu.address_steam_unnamed", { { "id", id } }) : Text::Format("menu.address_steam_named", { { "player", name } });
 			}
-			return a_address;
+			return UiAddressEntry::Masked(a_address, Config::Get().port);  // an address is never shown whole outside its own box
 		}
 
 		std::string StatusBody()
@@ -321,6 +336,11 @@ namespace UiPages
 					body += Text::Format(status.inWorld ? "menu.connecting" : "menu.join_waiting", { { "address", DescribeAddress(status.address) } });
 					if (!status.rejectReason.empty()) {
 						body += "\n" + Text::Format(status.retrySoon ? "menu.refused_soon" : "menu.refused_later", { { "reason", Text::Reject(status.rejectReason) } });
+					} else if (status.failure != Session::Status::Failure::kNone) {
+						std::string_view host;
+						std::uint16_t    port = settings.port;
+						UiAddressEntry::Split(status.address, host, port, settings.port);
+						body += "\n" + Text::Format(status.failure == Session::Status::Failure::kBadName ? "session.bad_name" : "session.no_answer", { { "port", port } });
 					}
 					break;
 				case Session::Status::Link::kConnected:
@@ -535,6 +555,10 @@ namespace UiPages
 			} else {
 				Config::Mutable().password = a_password;
 				Config::Write("sPassword", a_password);
+				// A join the host refused for the password tries again with the new one at once.
+				if (Session::GetStatus().link == Session::Status::Link::kConnecting) {
+					Session::RetryNow();
+				}
 				ShowPasswordPage();
 			}
 		}
@@ -559,7 +583,7 @@ namespace UiPages
 			nextPage.input = true;
 			nextPage.inputText = typedPassword;
 			ShowDialog(Text::Get("menu.hc_password_button"), Text::Get("menu.pw_save_hint"), std::move(rows));
-			typingPassword = true;
+			typing = Typing::kPassword;
 			UiPanel::CaptureText(true);
 		}
 
@@ -826,6 +850,12 @@ namespace UiPages
 			} else if (status.hostWaiting) {
 				entries.push_back({ Text::Get("menu.stop_hosting"), StopHosting });  // bHost off: it won't start
 			} else if (status.link != Session::Status::Link::kNone) {
+				if (status.link == Session::Status::Link::kConnecting && status.rejectReason == "Wrong password") {
+					entries.push_back({ Text::Get("menu.type_password"), [] {
+										   typedPassword.clear();
+										   ShowPasswordInput();
+									   } });
+				}
 				entries.push_back({ Text::Get("menu.leave"), [] { Session::Leave(); ShowMain(); } });
 				entries.push_back({ Text::Get("menu.join_other"), [] { RequestJoin(0); } });
 			} else {
@@ -858,6 +888,99 @@ namespace UiPages
 			mainShowing = true;
 			mainPage = a_page;
 			mainStatus = MainPageNow();
+		}
+
+		// Joins an address (a typed one, or a recent one). The HUD and the menu say it masked.
+		void JoinByAddress(const std::string& a_address)
+		{
+			switch (Session::JoinAddress(a_address)) {
+			case Session::JoinError::kHosting:
+				Popup(Text::Get("session.hosting_cant_join"));
+				return;
+			case Session::JoinError::kHostWaits:
+				Popup(Text::Get("session.host_waits_for_world"));
+				return;
+			case Session::JoinError::kNone:
+				break;
+			}
+			Hud::Notify(Text::Format("menu.connecting_hud", { { "address", UiAddressEntry::Masked(a_address, Config::Get().port) } }));
+			ShowMain();
+		}
+
+		// --- Join by address. The address is never logged and shows masked everywhere but the box it is typed in (and the
+		// recent list while its button is held).
+
+		// What the clipboard holds as text, at most a few hundred characters; "" for anything else. Nothing of it is logged.
+		std::string ReadClipboard()
+		{
+			std::string text;
+			if (!OpenClipboard(nullptr)) {
+				return text;
+			}
+			if (const auto data = GetClipboardData(CF_UNICODETEXT)) {
+				if (const auto wide = static_cast<const wchar_t*>(GlobalLock(data))) {
+					const auto length = std::min<std::size_t>(wcsnlen(wide, 512), 512);
+					if (length > 0) {
+						text.resize(static_cast<std::size_t>(WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(length), nullptr, 0, nullptr, nullptr)));
+						WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(length), text.data(), static_cast<int>(text.size()), nullptr, nullptr);
+					}
+					GlobalUnlock(data);
+				}
+			}
+			CloseClipboard();
+			return text;
+		}
+
+		void ShowJoinByAddress(bool a_reveal);
+
+		// The dialog to type an address in: the whole address shows, as it comes.
+		void ShowAddressInput(std::string a_hint)
+		{
+			std::vector<Button> rows{ { Text::Get("menu.back"), [] {
+										   typedAddress.clear();
+										   ShowJoinByAddress(false);
+									   } } };
+			rows.push_back({ Text::Get("menu.addr_join"), [] {
+								if (!UiAddressEntry::Valid(typedAddress)) {
+									nextPage.keepRow = true;
+									ShowAddressInput(Text::Get("menu.addr_bad"));
+									return;
+								}
+								JoinByAddress(std::exchange(typedAddress, {}));
+							} });
+			nextPage.input = true;
+			nextPage.inputText = UiAddressEntry::ShownTail(typedAddress);
+			ShowDialog(Text::Get("menu.join_by_address"), a_hint.empty() ? Text::Get("menu.addr_hint") : a_hint, std::move(rows));
+			typing = Typing::kAddress;
+			UiPanel::CaptureText(true);
+		}
+
+		void ShowJoinByAddress(bool a_reveal)
+		{
+			const auto&         recent = Config::RecentAddresses();
+			const auto          port = Config::Get().port;
+			std::vector<Button> entries;
+			entries.push_back({ Text::Get("menu.addr_type"), [] {
+								   typedAddress.clear();
+								   ShowAddressInput({});
+							   } });
+			for (const auto& address : recent) {
+				entries.push_back({ a_reveal ? address : UiAddressEntry::Masked(address, port), [address] { JoinByAddress(address); } });
+			}
+			if (!recent.empty()) {
+				entries.push_back({ Text::Get("menu.addr_show"), [] {
+									   addressesShownAt = std::chrono::steady_clock::now();
+									   nextPage.keepRow = true;
+									   ShowJoinByAddress(true);
+								   } });
+				entries.push_back({ Text::Get("menu.addr_forget"), [] {
+									   Config::ForgetAddresses();
+									   ShowJoinByAddress(false);
+								   } });
+			}
+			ShowPaged(Text::Get("menu.addr_page"), std::move(entries), 0, [](std::size_t) { ShowJoinByAddress(false); }, { Text::Get("menu.back"), [] { ShowJoin(0); } });
+			onAddressPage = true;  // after Show, which clears them
+			addressesShown = a_reveal;
 		}
 
 		void ShowJoin(std::size_t a_page)
@@ -893,13 +1016,23 @@ namespace UiPages
 				}
 			}
 			if (!settings.serverAddress.empty()) {
+				const auto shown = DescribeAddress(settings.serverAddress);
 				if (!inPanel) {
-					body += "\n" + Text::Format("menu.ini_address", { { "address", settings.serverAddress } });
+					body += "\n" + Text::Format("menu.ini_address", { { "address", shown } });
 				}
-				entries.push_back({ Text::Format("menu.join_address", { { "address", settings.serverAddress } }), [address = settings.serverAddress] {
+				entries.push_back({ Text::Format("menu.join_address", { { "address", shown } }), [address = settings.serverAddress, shown] {
 									   Session::ConnectTo(address);
-									   Hud::Notify(Text::Format("menu.connecting_hud", { { "address", address } }));
+									   Hud::Notify(Text::Format("menu.connecting_hud", { { "address", shown } }));
 								   } });
+			}
+			if (inPanel) {
+				entries.push_back({ Text::Get("menu.join_by_address"), [] { ShowJoinByAddress(false); } });
+			} else {
+				// The message box can't type: it takes the two most recent addresses.
+				const auto& recent = Config::RecentAddresses();
+				for (std::size_t i = 0; i < recent.size() && i < 2; ++i) {
+					entries.push_back({ Text::Format("menu.join_address", { { "address", UiAddressEntry::Masked(recent[i], settings.port) } }), [address = recent[i]] { JoinByAddress(address); } });
+				}
 			}
 			if (inPanel) {
 				entries.push_back({ Text::Get("menu.look_again"), [] { RequestJoin(0); } });
@@ -1105,16 +1238,52 @@ namespace UiPages
 
 	void PanelTyped(std::uint32_t a_key, std::uint32_t a_character)
 	{
-		if (!inPanel || !typingPassword) {
+		if (!inPanel || typing == Typing::kNone) {
 			return;
 		}
+		const bool address = typing == Typing::kAddress;
+		auto&      typed = address ? typedAddress : typedPassword;
 		if (a_key == UiKeyNames::BACKSPACE) {
-			if (typedPassword.empty()) {
+			if (typed.empty()) {
 				return;
 			}
-			typedPassword.pop_back();
-		} else if (!UiPasswordEntry::Add(typedPassword, a_character, Protocol::MAX_PASSWORD_LENGTH)) {
+			typed.pop_back();
+		} else if (address ? !UiAddressEntry::Add(typed, a_character) : !UiPasswordEntry::Add(typed, a_character, Protocol::MAX_PASSWORD_LENGTH)) {
 			return;
+		}
+		nextPage.keepRow = true;
+		if (address) {
+			ShowAddressInput({});
+		} else {
+			ShowPasswordInput();
+		}
+	}
+
+	void PanelPasted()
+	{
+		if (!inPanel || typing == Typing::kNone) {
+			return;
+		}
+		const auto text = ReadClipboard();  // nothing of it is logged
+		if (typing == Typing::kAddress) {
+			const auto address = UiAddressEntry::FromClipboard(text);
+			nextPage.keepRow = true;
+			if (address.empty()) {
+				ShowAddressInput(Text::Get("menu.addr_pasted_bad"));
+			} else {
+				typedAddress = address;  // a paste replaces what was typed
+				ShowAddressInput({});
+			}
+			return;
+		}
+		// A password: the first line, the same characters a typed one may hold, as many as fit.
+		const auto line = text.substr(0, text.find_first_of("\r\n"));
+		if (line.empty()) {
+			return;
+		}
+		typedPassword.clear();
+		for (const unsigned char c : line) {
+			UiPasswordEntry::Add(typedPassword, c, Protocol::MAX_PASSWORD_LENGTH);
 		}
 		nextPage.keepRow = true;
 		ShowPasswordInput();
@@ -1190,6 +1359,12 @@ namespace UiPages
 			const auto page = pendingJoin->page;
 			pendingJoin.reset();
 			ShowJoin(page);
+		}
+		// The recent addresses show whole while the show button is held (Enter, or the left mouse button: its row was pressed
+		// with one of them), and for three seconds at least so a tap shows them too; then they are masked again.
+		if (addressesShown && onAddressPage && inPanel && std::chrono::steady_clock::now() - addressesShownAt >= 3s && !Hotkeys::Held(UiKeyNames::ENTER) && !Hotkeys::Held(0x01)) {
+			nextPage.keepRow = true;
+			ShowJoinByAddress(false);
 		}
 		if (pendingHost) {
 			const auto info = Session::HostControls();

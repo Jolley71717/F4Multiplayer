@@ -345,6 +345,11 @@ namespace UiPanel
 				}
 				if (a_event && typing && a_event->QJustPressed() && a_event->device.get() == RE::INPUT_DEVICE::kKeyboard) {
 					const auto key = a_event->QIDCode();
+					// Ctrl+V: the clipboard goes in the box. Read on the main thread; nothing of it is logged, and it does not repeat.
+					if (key == 'V' && (GetAsyncKeyState(0x11) & 0x8000) != 0) {
+						MainThread::Post([] { UiPages::PanelPasted(); });
+						return;
+					}
 					const auto character = key == UiKeyNames::ENTER || key == UiKeyNames::ESCAPE || key == UiKeyNames::TAB ? 0 : CharacterOf(key);
 					if (character != 0 || key == UiKeyNames::BACKSPACE) {
 						repeatKey = key;
