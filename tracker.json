@@ -1,7 +1,7 @@
 {
  "release": "0.22.1",
  "known_issues": [],
- "updated": "2026-11-25T16:46:39+00:00",
+ "updated": "2026-11-25T16:57:53+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1016,6 +1016,14 @@
    "priority": 3,
    "stage": 0,
    "note": "Queued"
+  },
+  {
+   "id": "874h",
+   "title": "Idea: GOG version support (run on the GOG build; join GOG friends)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Idea: GOG version support"
   },
   {
    "id": "8bqc",
