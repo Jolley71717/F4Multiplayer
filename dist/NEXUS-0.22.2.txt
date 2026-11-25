@@ -1,0 +1,2 @@
+Fixed: Your own buildings at a friend's settlement no longer vanish; a piece of yours is hidden only where the friend's settlement has the same piece at the same spot
+Same protocol as 0.22.0 and 0.22.1 (85): they can play together
