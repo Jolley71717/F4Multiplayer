@@ -109,7 +109,7 @@ Russian and Ukrainian show on a game in any
 language: the game's fonts have Cyrillic letters, Ukrainian's і, ї, є and ґ included. Japanese and Chinese need the game itself in that language: an
 English game has no font for them and shows boxes instead (a friend's name written in them shows as boxes too). Arabic is not shipped: the game has no Arabic font and does not shape right-to-left text, so it waits for a font mod to be proven (a reviewed file is ready in the repository).
 
-Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through Steam's relays,
+Friends join through Steam: no ports, IP addresses or VPNs (joining by an address you type is described below). Traffic goes through Steam's relays,
 so nobody sees anyone's IP address. Only Steam friends of the host (or players the host invites)
 can join. Optionally set the same `sPassword` for everyone.
 
@@ -286,8 +286,8 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `bRunInBackground` (true): your game keeps running when you alt-tab, while you are in a session or from the moment
   you start hosting or accept a join (so the main menu and the load before it go on too).
 - `bFastLoading` (true) and `iFastLoadingSeconds` (20): faster loading screens.
-- `sTransport` (auto), `sServerAddress` (empty) and `bHost`: how you join or host. See
-  [Without Steam](#without-steam-lan-or-vpn).
+- `sTransport` (auto), `sServerAddress` (empty), `bDirectJoin` (false) and `bHost`: how you join or host. See
+  [Joining by address](#joining-by-address-without-steam-friends-on-a-lan-or-over-a-vpn).
 
 The rest (`bMenuIcons`, `iHangSeconds`, `bHangDump`, `sLogLevel`, `bDevChannel`, `iDevChannelPort`) is for the
 mod's developers and bug reports: leave them alone unless you are asked to change one.
@@ -322,11 +322,21 @@ so they survive restarts; the file holds salted hashes, never names or Steam IDs
 banned player by a short alias (`~3fa2c1`). Deleting the file lifts every ban. Only the host can do
 any of this: the server refuses the commands from anyone else.
 
-### Without Steam (LAN or VPN)
+### Joining by address (without Steam friends, on a LAN or over a VPN)
 
-Everyone sets `sTransport = enet`. Friends set `sServerAddress` to the host's IP address. The
-host's game listens on UDP port 7779; allow it when Windows Firewall asks. Over the internet the
-host also forwards UDP 7779 on their router.
+Steam is still the easy way. Joining by address is for friends who can't use Steam's friends list, or who are on the same network.
+
+**The host** keeps hosting through Steam, then opens the F1 menu, *Host controls*, and turns on *Join by address*. The mod makes up a password if you have none, and shows the address friends type (for example `192.168.1.20:7779`). Turn it off the same way: friends who joined through Steam stay, friends who joined by address are dropped.
+
+**A friend** opens the F1 menu, *Join a friend*, *Join by address*, types or pastes the host's address (`:7779` is only needed if the host changed `iPort`) and chooses *Join*. The password is the one in their multiplayer settings (F1, *Settings*, *Password*); if it is wrong the menu offers *Type the host's password*. The password is never sent as typed. Addresses are hidden on screen except while you type them, and the menu keeps the last few you joined.
+
+**The host lets each friend in by hand.** When a friend joins, the host's menu shows *Waiting to join* under *Host controls*. Choose *Let in* or *Turn away*. The friend waits up to a minute. Too many wrong passwords from one address are refused for a few minutes.
+
+**Firewall and router.** The host's PC must accept UDP port 7779 coming in; Windows asks the first time, allow it. On the same network the host's local address (like `192.168.1.20`) is all a friend needs. Over the internet the host has to forward UDP 7779 on their router and give out their public address, which also tells friends where they live: a VPN such as Tailscale is simpler and safer (everyone installs it, and the host gives out their Tailscale address). Free web tunnels such as Cloudflare's don't carry UDP, so they don't work.
+
+Everyone in the session needs the same version of the mod.
+
+**By hand (the older way).** Without Steam at all, everyone sets `sTransport = enet` in their `F4Multiplayer.ini`, and friends set `sServerAddress` to the host's address. The host's game listens on UDP port 7779. This is also how to join a dedicated server.
 
 Each player keeps their own save, character and inventory.
 
@@ -617,7 +627,7 @@ welcome.
 
 `F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story] [--safe-quests]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
-`sServerAddress`.
+`sServerAddress`, or by address from the F1 menu (see [Joining by address](#joining-by-address-without-steam-friends-on-a-lan-or-over-a-vpn)).
 
 Its console takes commands while it runs: `players` lists who is in (by number), `kick <n>` and
 `ban <n>` remove one, `bans` lists the bans and `unban <n>`, `unban ~alias` or `unban all` lifts

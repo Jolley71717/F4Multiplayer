@@ -9149,3 +9149,117 @@ step_sharedws_putaway() {
 	_sws_cleanup
 	_sws_rejoin "$label"   # the VM is in the host's session again for whatever runs next
 }
+
+# ---- direct: joining by a typed address ----------------------------------------------------------------------------------
+# The VM hosts through Steam with "Join by address" on (the menu's Host controls), the host PC joins by the typed address
+# (so the host PC needs no firewall rule: only the VM's port is reached). A wrong password is refused, the right one waits for
+# the host's word, the VM lets the joiner in, both games see each other. Both menus are driven with `mpmenu` by button label,
+# and every check reads a game's state or log (no screenshot). The address, the password and the joiner's name are never printed.
+# Needs both games in the session at the start; leaves them in it (the host PC hosting, the VM joined through Steam) at the end.
+_mp_labels() { dc "$1" mpmenu | sed -nE "s/.*buttons='(.*)' body='.*/\1/p"; }   # greedy: a label may hold an apostrophe
+_mp_body() { dc "$1" mpmenu | sed -nE "s/.*body='(.*)'\$/\1/p"; }
+# _mp_has <who> <label regex>: that page has a button with such a label
+_mp_has() { local l; local IFS='|'; for l in $(_mp_labels "$1"); do [[ $l =~ $2 ]] && return 0; done; return 1; }
+# _mp_press <who> <label regex>: presses the first button whose label matches (button 0 is the page's way back); 1 when there is none
+_mp_press() {
+	local i=0 l; local IFS='|'
+	for l in $(_mp_labels "$1"); do
+		if [[ $l =~ $2 ]]; then dc "$1" "mpmenu press $i" >/dev/null; sleep 1.2; return 0; fi
+		i=$((i + 1))
+	done
+	return 1
+}
+# _mp_go <who> <label regex>...: presses each in turn, waiting up to 8 s for each to be on the page; 1 (naming the one) when one never comes
+_mp_go() {
+	local who=$1 re; shift
+	for re in "$@"; do
+		wait_for 8 _mp_has "$who" "$re" || { echo "no button '$re' on that page of $who's menu"; return 1; }
+		_mp_press "$who" "$re"
+	done
+}
+# _mp_fresh <who>: that game's menu closed and opened again at its first page
+_mp_fresh() { dc "$1" "mpmenu close" >/dev/null; sleep 1; dc "$1" focus >/dev/null; dc "$1" "mpmenu panel" >/dev/null; sleep 1.5; }
+# _mp_type <who> <text>: types in the dialog showing
+_mp_type() { dc "$1" "mpmenu type $2" >/dev/null; sleep 0.8; }
+_dir_status() { dc host 'net status' | grep -oE "status=[a-z]+|reject='[^']*'" | tr '\n' ' '; }
+_dir_reject() { [[ $(dc host 'net status') == *"reject='Wrong password'"* ]]; }
+_dir_joined() { [ "$(field "$(dc host 'net status')" status)" = joined ]; }
+_dir_waits() { _mp_has vm 'Waiting to join: 1'; }
+_dir_sees() { [ "$(grep -oE "puppet=FF[0-9A-F]+" <<<"$(dc "$1" 'net status')" | sort -u | wc -l)" -ge 1 ]; }
+_vm_status_joined() { [ "$(field "$(dc vm 'net status')" status)" = joined ]; }
+# _direct_leave: the host PC leaves, the VM turns joins by address off and stops hosting, then the usual set-up again (the host PC
+# hosts through Steam, the VM joins it): rig.sh join. The ini files are put back by the rig's backup restore, not here.
+_direct_leave() {
+	dc host "mpmenu close" >/dev/null; dc vm "mpmenu close" >/dev/null
+	dc host "net leave" >/dev/null; sleep 3
+	dc vm "net direct off" >/dev/null; dc vm "net stophost" >/dev/null; sleep 3
+	_mp_fresh host; _mp_go host "^Settings$" "^Password$" "^Remove password$" "^Remove password$" >/dev/null; dc host "mpmenu close" >/dev/null   # the typed passwords go: the VM joins with its own
+	_mp_fresh host; _mp_go host "^Host a session$" >/dev/null; dc host "mpmenu close" >/dev/null; sleep 3
+	bash "$STAGE/rig.sh" join > "$A_OUT/direct-join.log" 2>&1
+	wait_for 40 _vm_status_joined
+	expect_eq "direct: the VM is in the host PC's Steam session again" "$(field "$(dc vm 'net status')" status)" joined
+}
+step_direct() {
+	section "direct (the VM hosts with join by address on, the host PC joins by the typed address)"
+	local addr pw line f wrong=wrongpw7
+	expect_eq "direct: precondition: the VM is in the host's session" "$(field "$(dc vm 'net status')" status)" joined
+	clear_menus host >/dev/null; clear_menus vm >/dev/null
+	# the roles: the VM leaves, the host PC stops hosting, the VM hosts through Steam
+	dc vm "net leave" >/dev/null; sleep 4
+	_mp_fresh host; _mp_go host "^Stop hosting$" >/dev/null; sleep 3   # the menu's own, which also turns bHost off: the game would start hosting again by itself otherwise
+	dc host "mpmenu close" >/dev/null
+	expect_eq "direct: the VM hosts" "$(dc vm 'net host')" hosting
+	sleep 8
+	# 1. the VM's host controls: Join by address on (the menu's own switch; it makes up a password when there is none)
+	_mp_fresh vm
+	if ! _mp_go vm 'Host controls' 'Join by address: [Oo]ff' '^Turn on$'; then
+		fail "direct: the VM's menu turns join by address on" "page: $(_mp_labels vm | cut -c1-150)"; _direct_leave; return
+	fi
+	sleep 2
+	expect_match "direct: the VM's game says joins by address are on" "$(dc vm 'net status')" 'direct=(true|1|on)'
+	# the VM's address as this PC reaches it (the panel's page keeps the address line in a hint, not in text a channel reads)
+	addr=$(ping -n 1 -4 "${VM_SSH#*@}" | tr -d '\r' | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | head -1)
+	[ -n "$addr" ] && addr="$addr:7779"
+	[ -n "$addr" ] || { setup_fault "direct: the host controls name an address to join" "ping gave none (the VM's name did not resolve here)"; _direct_leave; return; }
+	pass "direct: the host controls name the address to join" "(not printed)"
+	pw=$(vmssh "(Get-Content \"$VM_GAME/Data/F4SE/Plugins/F4Multiplayer.ini\" | Where-Object { \$_ -match '^sPassword' }) -replace '^sPassword\\s*=\\s*',''" | tr -d '\r\n ')
+	[ -n "$pw" ] || { setup_fault "direct: join by address set a password" "the VM's ini holds none"; _direct_leave; return; }
+	pass "direct: join by address made the VM host a password" "(not printed)"
+	log_mark vm; log_mark host
+	# 2. the host PC: a wrong password, then a typed address
+	_mp_fresh host
+	_mp_go host '^Settings$' '^Password$' '^(Set a|Change) password$' || { fail "direct: the host PC's menu reaches the password box" "page: $(_mp_labels host | cut -c1-150)"; _direct_leave; return; }
+	_mp_type host "$wrong"; _mp_press host '^Save password$'
+	_mp_fresh host
+	_mp_go host '^Join a friend$' '^Join by address$' '^Type an address$' || { fail "direct: the host PC's menu reaches the address box" "page: $(_mp_labels host | cut -c1-150)"; _direct_leave; return; }
+	_mp_type host "$addr"; _mp_press host '^Join$'
+	if wait_for 25 _dir_reject; then pass "direct: a wrong password is refused" "$(_dir_status)"
+	else fail "direct: a wrong password is refused" "host PC: $(_dir_status)"; fi
+	_mp_fresh vm; _mp_go vm 'Host controls' >/dev/null; sleep 1
+	if _dir_waits; then fail "direct: a wrong password never waits at the host" "the VM lists someone waiting"; else pass "direct: a wrong password never waits at the host" "nobody waiting"; fi
+	# 3. the right password: it waits for the host's word
+	_mp_fresh host
+	if _mp_go host '^Type the host'; then
+		_mp_type host "$pw"; _mp_press host '^Save password$'
+	else fail "direct: the host PC's menu offers to type the host's password" "page: $(_mp_labels host | cut -c1-150)"; _direct_leave; return; fi
+	_mp_fresh vm; _mp_go vm 'Host controls' >/dev/null
+	if wait_for 30 _dir_waits; then pass "direct: the right password waits for the host's word" "the VM's host controls list one waiting"
+	else fail "direct: the right password waits for the host's word" "VM page: $(_mp_labels vm | cut -c1-150); host PC $(_dir_status)"; _direct_leave; return; fi
+	if _dir_joined; then fail "direct: nobody is in before the host lets them" "the host PC already says joined"; else pass "direct: nobody is in before the host lets them" "$(_dir_status)"; fi
+	# 4. the host lets them in: the row of the one waiting (its name), then Let in
+	_mp_press vm '^Waiting to join: 1$'; sleep 0.5
+	dc vm "mpmenu press 1" >/dev/null; sleep 1.2   # button 0 is Back, 1 the one waiting
+	_mp_press vm '^Let .* in$' || fail "direct: the VM's menu has a Let in button" "page: $(_mp_labels vm | cut -c1-150)"
+	if wait_for 30 _dir_joined; then pass "direct: let in, the host PC joins" "status=joined"
+	else fail "direct: let in, the host PC joins" "host PC: $(_dir_status)"; fi
+	sleep 6
+	wait_for 20 _dir_sees host; wait_for 20 _dir_sees vm
+	expect_eq "direct: the host PC sees the VM's player" "$(_dir_sees host && echo yes || echo no)" yes
+	expect_eq "direct: the VM sees the host PC's player" "$(_dir_sees vm && echo yes || echo no)" yes
+	# the plugin logs: no line holds the password (it is proved, never sent or logged)
+	f=$(log_delta_file vm)
+	if grep -qF "$pw" "$f" "$(log_delta_file host)" 2>/dev/null; then fail "direct: no log holds the password" "a log line names it"; else pass "direct: no log holds the password" "checked both logs"; fi
+	if grep -qiE 'by address|waiting for the host|let in|admit' "$f"; then pass "direct: the VM's log records the join by address" "$(grep -ciE 'by address|waiting for the host|let in|admit' "$f") line(s)"
+	else warn "direct: the VM's log records the join by address" "no line about it in the VM's log since the set-up"; fi
+	_direct_leave
+}
