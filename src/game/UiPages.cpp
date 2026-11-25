@@ -474,6 +474,7 @@ namespace UiPages
 		void ShowPasswordPage();
 		void ShowHostPlayers(std::size_t a_page);
 		void ShowBans(std::size_t a_page);
+		void ShowJoinWaiting(std::size_t a_page);
 
 		// Sends a_command, then shows a_show once the server has answered (a_done hears the answer first), or after a
 		// moment without one. Not hosting any more: the main page.
@@ -805,6 +806,36 @@ namespace UiPages
 			ShowPaged(body, std::move(entries), a_page, ShowBans, { Text::Get("menu.back"), [] { ShowHostControls(0); } });
 		}
 
+		// One joiner by address who waits for the host: let in, or turned away (the server tells them).
+		void ShowJoinAsk(std::uint32_t a_id, const std::string& a_name)
+		{
+			const auto answer = [a_id](Protocol::HostAction a_action) {
+				return [a_id, a_action] { HostDo({ a_action, a_id }, [] { ShowJoinWaiting(0); }); };
+			};
+			Show(Text::Format("menu.join_ask", { { "name", a_name } }),
+				{ { Text::Get("menu.back"), [] { ShowJoinWaiting(0); } }, { Text::Format("menu.join_let_in", { { "name", a_name } }), answer(Protocol::HostAction::kAdmit) },
+					{ Text::Format("menu.join_refuse", { { "name", a_name } }), answer(Protocol::HostAction::kRefuse) } });
+		}
+
+		// The joiners by address who wait for the host's word, a button each.
+		void ShowJoinWaiting(std::size_t a_page)
+		{
+			const auto info = Session::HostControls();
+			if (!info || info->waiting.empty()) {
+				Show(Text::Get("menu.join_nobody"), { { Text::Get("menu.back"), [] { ShowHostControls(0); } } });
+				return;
+			}
+			std::vector<Button> entries;
+			std::string         body = Text::Get("menu.join_pick");
+			for (const auto& waiting : info->waiting) {
+				if (!inPanel) {
+					body += "\n" + waiting.name;
+				}
+				entries.push_back({ waiting.name, [id = waiting.id, name = waiting.name] { ShowJoinAsk(id, name); } });
+			}
+			ShowPaged(body, std::move(entries), a_page, ShowJoinWaiting, { Text::Get("menu.back"), [] { ShowHostControls(0); } });
+		}
+
 		// The host controls' first page: the session's lock, password and bans, and a button for each.
 		void ShowHostControls(std::size_t a_page)
 		{
@@ -830,6 +861,10 @@ namespace UiPages
 			const auto directLine = status.direct && status.steam ? DirectLine(*info) : std::string{};
 			const auto body = inPanel ? std::string{} : lockLine + "\n" + PasswordLine(*info) + "\n" + bansLine + (directLine.empty() ? "" : "\n" + directLine);
 			std::vector<Button> entries;
+			if (!info->waiting.empty()) {
+				// First, so the host sees it: someone by address waits to be let in.
+				entries.push_back({ Text::Format("menu.join_asks", { { "n", info->waiting.size() } }), [] { ShowJoinWaiting(0); }, Text::Get("menu.join_pick") });
+			}
 			entries.push_back({ Text::Format("menu.hc_players", { { "n", others } }), [] { ShowHostPlayers(0); }, Text::Get("menu.hc_pick_player") });
 			entries.push_back({ Text::Get(info->locked ? "menu.hc_unlock" : "menu.hc_lock"), [locked = info->locked, a_page] {
 								   HostDo({ locked ? Protocol::HostAction::kUnlock : Protocol::HostAction::kLock }, [a_page] {

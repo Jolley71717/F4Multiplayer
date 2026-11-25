@@ -180,9 +180,11 @@ TEST("server session: the wrong password is rejected, the right one gets in")
 	CHECK(f.fake->WaitDisconnected(1));
 	CHECK(f.Logged("wrong password from fake 1"));
 
-	const auto none = JoinRejected(f, 2, Protocol::Encode(Fixture::MakeHello("Nobody")));
-	REQUIRE(none);
-	CHECK(none->reason == "Wrong password");
+	// No password at all: nothing proves one, so the joiner is asked to (kChallenge) and never gets in.
+	f.fake->Connect(2);
+	f.fake->Deliver(2, Protocol::Encode(Fixture::MakeHello("Nobody")));
+	CHECK(f.fake->WaitFor(2, Type(MT::kChallenge)));
+	CHECK(Count(f.fake->Take(2), MT::kWelcome) == 0u);
 
 	auto right = Fixture::MakeHello("Alice");
 	right.password = "hunter2";
@@ -274,6 +276,7 @@ TEST("server session: a rejected first player doesn't start a session")
 	Fixture f{ options };
 	auto wrong = Fixture::MakeHello("Mallory");
 	wrong.contentHash = 0x9999;
+	wrong.password = "nope";
 	REQUIRE(JoinRejected(f, 1, Protocol::Encode(wrong)));
 
 	// The rejected hello's load order was not taken as the session's.

@@ -609,7 +609,9 @@ TEST("host controls: the dedicated server's console kicks, bans, unbans, locks a
 	auto right = Fixture::MakeHello("Carol", 0xCA201);
 	right.password = "open sesame";
 	CHECK(f.Join(6, right));
-	const auto wrong = JoinRefused(f, 7, Fixture::MakeHello("Dave", 0xDA5E));
+	auto nope = Fixture::MakeHello("Dave", 0xDA5E);
+	nope.password = "open sesame!";
+	const auto wrong = JoinRefused(f, 7, nope);
 	REQUIRE(wrong);
 	CHECK(wrong->reason == "Wrong password");
 	f.server.Console("password -");

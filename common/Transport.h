@@ -49,4 +49,10 @@ public:
 	// Who the peer is, as the transport itself knows them (a Steam ID), or 0 when it can't say (UDP). A
 	// client can't choose it, so the server keeps each player's budgets under it across reconnects.
 	[[nodiscard]] virtual std::uint64_t Identity(PeerId) const { return 0; }
+
+	// A value that is the same for every connection from one remote address, and 0 when there is none to tell (this
+	// machine, Steam). A UDP peer's password never travels readable and the host decides on it by hand; a source of 0
+	// doesn't need either (nothing readable crosses a wire, or Steam's own connection is private) and is never limited
+	// (common/JoinGuard.h). Salted: never logged or saved, only compared.
+	[[nodiscard]] virtual std::uint64_t Source(PeerId) const { return 0; }
 };

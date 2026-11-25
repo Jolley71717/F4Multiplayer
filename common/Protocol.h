@@ -175,7 +175,14 @@ namespace Protocol
 	// 84: each rack weapon says which rack holds it in its owner's game (RackWeapon::rackBase and rackX, rackY, rackZ, new
 	// fields at the end of each entry): its base and its place, so a game shows it only where a rack of that base stands at
 	// that spot, not wherever any rack stands near. No new message ids, no welcome bytes. 83 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 84;
+	// 85: a join over UDP no longer sends the password as typed. A server holding a password answers a hello that doesn't
+	// prove it with kChallenge (a salt and a nonce, Challenge); the joiner says hello again with Hello::proof, an HMAC of
+	// the nonce under a key made from the password (common/JoinProof.h). Steam joins still send the password in the hello
+	// (Steam's connection is private). And the host lets each joiner who comes by address in by hand: kJoinWait tells the
+	// joiner it waits, HostInfo::waiting lists them for the host's game, HostAction::kAdmit and kRefuse answer, a refusal
+	// or a wait too long is a Reject (REJECT_JOIN_REFUSED, REJECT_JOIN_TIMEOUT). The hello has the new field at its end.
+	// No welcome bytes, no session layout change. 84 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 85;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -188,6 +195,10 @@ namespace Protocol
 	// The plugins a host lets differ (sIgnoredPlugins) that kLoadOrder carries: far more than a host lists.
 	inline constexpr std::size_t   MAX_IGNORED_PLUGINS = 64;
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
+	// The password challenge (common/JoinProof.h): the server's salt and nonce, and the joiner's answer.
+	inline constexpr std::size_t   CHALLENGE_SALT_SIZE = 16;
+	inline constexpr std::size_t   CHALLENGE_NONCE_SIZE = 32;
+	inline constexpr std::size_t   PROOF_SIZE = 32;
 	inline constexpr std::size_t   MAX_LINE_LENGTH = 200;  // a spoken line (subtitle text)
 
 	// How a Reject's reason for the load order starts (LoadOrderDifference). The joiner's game names the plugins that
@@ -203,6 +214,13 @@ namespace Protocol
 	// the session. The joining game knows both: a banned one stops trying, a locked-out one tries again in a minute.
 	inline constexpr std::string_view REJECT_BANNED = "The host has banned you from this session";
 	inline constexpr std::string_view REJECT_LOCKED = "The session is locked: the host isn't letting anyone new in";
+
+	// A Reject's reason for a joiner by address the host turned away, one the host didn't answer in time (or couldn't ask:
+	// too many wait already), and one whose address gave too many wrong passwords. Text only: older clients show them as
+	// they come. The joining game stops trying after the first two (the player joins again from the menu).
+	inline constexpr std::string_view REJECT_JOIN_REFUSED = "The host didn't let you in";
+	inline constexpr std::string_view REJECT_JOIN_TIMEOUT = "The host didn't answer in time. Try again later.";
+	inline constexpr std::string_view REJECT_TOO_MANY = "Too many wrong passwords from your address. Try again in a few minutes.";
 
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
@@ -378,6 +396,8 @@ namespace Protocol
 
 		// server -> client
 		kWelcome = 101,
+		kChallenge = 157,  // the password's challenge: a salt and a nonce to answer in a hello again (Challenge)
+		kJoinWait = 161,   // the host is deciding whether to let you in (the type alone); a reject or the welcome follows
 		kReject = 102,
 		kPlayerJoined = 103,
 		kPlayerLeft = 104,
@@ -553,6 +573,20 @@ namespace Protocol
 		// The load order (plugin file names, in order: ComparedLoadOrder), so a refusal can say which plugins differ
 		// and a joiner can be sent the session's to compare with its own (kLoadOrder). At most MAX_PLUGINS.
 		std::vector<std::string> plugins;
+		// The answer to a server's kChallenge (protocol 85), PROOF_SIZE bytes; empty in a hello that answers none. With it the
+		// password field is empty (a join over UDP never sends the password).
+		std::vector<std::uint8_t> proof;
+	};
+
+	// kChallenge: what a server holding a password asks of a hello that doesn't prove it: HMAC-SHA256 of the nonce under
+	// PBKDF2-HMAC-SHA256(password, salt) (common/JoinProof.h). The salt is the server's for its run; the nonce is new for
+	// each connection and good for one answer.
+	struct Challenge
+	{
+		std::vector<std::uint8_t> salt;   // CHALLENGE_SALT_SIZE bytes
+		std::vector<std::uint8_t> nonce;  // CHALLENGE_NONCE_SIZE bytes
+
+		bool operator==(const Challenge&) const = default;
 	};
 
 	// The session's load order as the server has it (the host's hello's, or a dedicated server's first arrival's), for a
@@ -718,10 +752,12 @@ namespace Protocol
 		kLock = 4,         // nobody new may join (those in the session stay)
 		kUnlock = 5,
 		kSetPassword = 6,  // password; "" = none
+		kAdmit = 7,        // playerId: a joiner by address who waits (HostInfo::Waiting::id): let in
+		kRefuse = 8,       // playerId: the same, turned away
 	};
 	[[nodiscard]] constexpr bool IsHostAction(std::uint8_t a_value)
 	{
-		return a_value >= static_cast<std::uint8_t>(HostAction::kKick) && a_value <= static_cast<std::uint8_t>(HostAction::kSetPassword);
+		return a_value >= static_cast<std::uint8_t>(HostAction::kKick) && a_value <= static_cast<std::uint8_t>(HostAction::kRefuse);
 	}
 
 	struct HostCommand
@@ -766,6 +802,8 @@ namespace Protocol
 	// Bans kHostInfo carries (the list on disk may hold more; the menu pages through these).
 	inline constexpr std::size_t MAX_BANS_SENT = 64;
 	inline constexpr std::size_t MAX_ALIAS_LENGTH = 16;
+	// Joiners by address kHostInfo says wait for the host, and the most the server lets wait at once.
+	inline constexpr std::size_t MAX_WAITING_SENT = 8;
 
 	// kHostInfo: the host controls' state, sent to the host's own game when it joins, after each change and when asked.
 	struct HostInfo
@@ -779,12 +817,21 @@ namespace Protocol
 
 			bool operator==(const Ban&) const = default;
 		};
+		// A joiner by address the host has to decide on.
+		struct Waiting
+		{
+			std::uint32_t id = 0;  // what kAdmit and kRefuse name; not a player id
+			std::string   name;
+
+			bool operator==(const Waiting&) const = default;
+		};
 		bool             locked = false;
 		bool             password = false;  // a password is set (not which: the host's game has it)
 		HostResult       result = HostResult::kNone;
 		HostAction       action = HostAction::kKick;  // the command result answers (when it isn't kNone)
 		std::uint32_t    bans = 0;  // how many there are (at most MAX_BANS_SENT of them in list)
 		std::vector<Ban> list;
+		std::vector<Waiting> waiting;  // at most MAX_WAITING_SENT, the oldest first
 
 		bool operator==(const HostInfo&) const = default;
 	};
@@ -2883,7 +2930,48 @@ namespace Protocol
 		// one of those still reads the hello whole and says the version differs. The list follows.
 		w.U8(0);
 		WritePlugins(w, a_msg.plugins);
+		w.Bytes(a_msg.proof);
 		return w.Data();
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Challenge& a_msg)
+	{
+		Writer w{ MessageType::kChallenge };
+		w.Bytes(a_msg.salt);
+		w.Bytes(a_msg.nonce);
+		return w.Data();
+	}
+
+	inline std::optional<Challenge> DecodeChallenge(std::span<const std::uint8_t> a_data)
+	{
+		Reader    r{ a_data };
+		Challenge msg;
+		r.U8();
+		msg.salt = r.Bytes(CHALLENGE_SALT_SIZE);
+		msg.nonce = r.Bytes(CHALLENGE_NONCE_SIZE);
+		if (!r.Ok() || !r.AtEnd() || msg.salt.size() != CHALLENGE_SALT_SIZE || msg.nonce.size() != CHALLENGE_NONCE_SIZE) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// kJoinWait: the type alone.
+	struct JoinWait
+	{};
+
+	inline std::vector<std::uint8_t> Encode(JoinWait)
+	{
+		return Writer{ MessageType::kJoinWait }.Data();
+	}
+
+	inline std::optional<JoinWait> DecodeJoinWait(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return JoinWait{};
 	}
 
 	// A hello of another version (or with another magic) is read up to its version only: the rest may be laid out
@@ -2912,7 +3000,8 @@ namespace Protocol
 			return std::nullopt;  // the old list's place, empty since version 35
 		}
 		auto plugins = ReadPlugins(r);
-		if (!plugins || !r.Ok()) {
+		msg.proof = r.Bytes(PROOF_SIZE);
+		if (!plugins || !r.Ok() || (!msg.proof.empty() && msg.proof.size() != PROOF_SIZE)) {
 			return std::nullopt;
 		}
 		msg.plugins = std::move(*plugins);
@@ -3047,6 +3136,12 @@ namespace Protocol
 			w.Str(ban.name, MAX_NAME_LENGTH);
 			w.U64(ban.bannedAt);
 		}
+		const auto waiting = (std::min)(a_msg.waiting.size(), MAX_WAITING_SENT);
+		w.U8(static_cast<std::uint8_t>(waiting));
+		for (std::size_t i = 0; i < waiting; ++i) {
+			w.U32(a_msg.waiting[i].id);
+			w.Str(a_msg.waiting[i].name, MAX_NAME_LENGTH);
+		}
 		return w.Data();
 	}
 
@@ -3074,6 +3169,16 @@ namespace Protocol
 			ban.name = r.Str(MAX_NAME_LENGTH);
 			ban.bannedAt = r.U64();
 			msg.list.push_back(std::move(ban));
+		}
+		const auto waiting = r.U8();
+		if (!r.Ok() || waiting > MAX_WAITING_SENT) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < waiting && r.Ok(); ++i) {
+			HostInfo::Waiting one;
+			one.id = r.U32();
+			one.name = r.Str(MAX_NAME_LENGTH);
+			msg.waiting.push_back(std::move(one));
 		}
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;

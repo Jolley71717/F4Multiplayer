@@ -4,6 +4,8 @@
 #include "DropStore.h"
 #include "EnetTransport.h"
 #include "FormIds.h"
+#include "JoinGuard.h"
+#include "JoinProof.h"
 #include "NpcHealths.h"
 #include "Name.h"
 #include "AttackBook.h"
@@ -147,6 +149,8 @@ namespace
 	constexpr auto XP_REPORT_INTERVAL = std::chrono::milliseconds(500);
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
+	// How long a joiner by address waits for the host to let them in.
+	constexpr auto APPROVAL_TIMEOUT = std::chrono::seconds(60);
 	// A player who hits or talks to an NPC another player runs takes it over, at most every Options::takeoverCooldown.
 	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
 	// A player's game that has an NPC alive which the session has dead (it hit it, offered to run it, or it hit their
@@ -335,6 +339,24 @@ namespace
 		// their game said hello with.
 		std::uint64_t              transportId = 0;
 		std::uint64_t              helloId = 0;
+		// The join guard (common/JoinGuard.h): the remote address they come from (Transport::Source; 0 = none to tell), and
+		// whether their connection still counts as one that isn't in (until welcomed or gone).
+		std::uint64_t              source = 0;
+		bool                       guardOpen = false;
+		// The password challenge: the nonce they were sent (good for one answer), when, and that their password proved
+		// right on this connection (it isn't asked again when the host lets them in).
+		JoinProof::Nonce           nonce{};
+		bool                       challenged = false;
+		Clock::time_point          challengedAt{};
+		bool                       passwordOk = false;
+		// The host's approval of a joiner by address: waiting for the answer (their hello is kept to be handled then, the
+		// name is as the host sees it), and the number the host's answer names.
+		bool                       awaiting = false;
+		bool                       approved = false;
+		std::uint32_t              askId = 0;
+		Clock::time_point          askedAt{};
+		std::string                askName;
+		std::vector<std::uint8_t>  askHello;
 		// Host commands they sent without being the host: refused, and logged once per BUDGET_LOG_INTERVAL.
 		Clock::time_point          hostRefusedLogged{};
 		std::size_t                hostRefused = 0;
@@ -422,7 +444,8 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 
 	// Allow a couple of extra connections so full servers can still send a rejection.
 	std::string error;
-	auto        enet = EnetServerTransport::Create(options.port, options.maxPlayers + 2, options.udpLoopbackOnly, error);
+	// A port a network can reach gets a few more, so a couple of idle strangers can't hold every one (JoinGuard).
+	auto        enet = EnetServerTransport::Create(options.port, options.maxPlayers + 2 + (options.udpLoopbackOnly ? 0 : 6), options.udpLoopbackOnly, error);
 	if (!enet) {
 		log("server: " + error);
 		return false;
@@ -498,6 +521,15 @@ void Server::Run()
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length). The host can change it (HostCommand).
 	auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
+	// The password's answer to a challenge: the key it makes under this run's salt, made when the first challenge needs it
+	// and again after the password changes (common/JoinProof.h).
+	JoinGuard                                 joinGuard;
+	JoinProof::Salt                           joinSalt{};
+	std::optional<JoinProof::Key>             joinKey;
+	std::uint32_t                             nextAskId = 1;
+	std::size_t                               turnedAway = 0;  // connects the guard refused since its last log line
+	Clock::time_point                         turnedAwayLogged{};
+	static_cast<void>(JoinProof::Random(joinSalt));
 	// Host controls: nobody new joins while locked (not saved: a restart opens it again) but those who joined during
 	// this server run and dropped out, and the host's bans.
 	bool                        locked = false;
@@ -946,6 +978,13 @@ void Server::Run()
 		}
 	};
 
+	// A connection that counted as not yet in (JoinGuard::MayConnect) stops counting: welcomed, or gone.
+	const auto settle = [&](Player& a_player) {
+		if (std::exchange(a_player.guardOpen, false)) {
+			joinGuard.OnSettled(a_player.source);
+		}
+	};
+
 	const auto disconnect = [&](Player& a_player) {
 		a_player.kicked = true;
 		const auto transport = static_cast<std::size_t>(a_player.key >> 32);
@@ -1070,6 +1109,15 @@ void Server::Run()
 		info.result = a_result;
 		info.action = a_action;
 		info.bans = static_cast<std::uint32_t>(bans.Size());
+		for (const auto& [key, player] : players) {
+			if (player.awaiting && !player.kicked) {
+				info.waiting.push_back({ player.askId, player.askName });
+			}
+		}
+		std::ranges::sort(info.waiting, {}, &Protocol::HostInfo::Waiting::id);
+		if (info.waiting.size() > Protocol::MAX_WAITING_SENT) {
+			info.waiting.resize(Protocol::MAX_WAITING_SENT);
+		}
 		for (auto it = bans.Entries().rbegin(); it != bans.Entries().rend() && info.list.size() < Protocol::MAX_BANS_SENT; ++it) {
 			info.list.push_back({ it->Id(), it->Alias(), it->name, it->bannedAt });
 		}
@@ -1629,6 +1677,21 @@ void Server::Run()
 		tellViewsClosed(storage.Left(a_player.id));
 	};
 
+	// Asks a joiner to answer a nonce (Protocol::Challenge): the answer comes in a hello again.
+	const auto sendChallenge = [&](Player& a_player, Clock::time_point a_now) {
+		if (!joinKey) {
+			joinKey = JoinProof::DeriveKey(password, joinSalt);
+		}
+		if (!joinKey || !JoinProof::Random(a_player.nonce)) {
+			log("server: the password challenge could not be made; a joiner was refused");
+			reject(a_player, "The server could not check the password");
+			return;
+		}
+		a_player.challenged = true;
+		a_player.challengedAt = a_now;
+		send(a_player.key, Protocol::Encode(Protocol::Challenge{ { joinSalt.begin(), joinSalt.end() }, { a_player.nonce.begin(), a_player.nonce.end() } }), true);
+	};
+
 	// a_again: a hello on a connection already in the session (their game restarted; see welcome).
 	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data, bool a_again) {
 		const auto hello = Protocol::DecodeHello(a_data);
@@ -1645,6 +1708,13 @@ void Server::Run()
 		// another PC connects from this machine too.
 		const bool local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
 		                   transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
+		const auto now = Clock::now();
+		// Too many wrong passwords from this address lately: nothing else is said to it.
+		if (!local && joinGuard.Blocked(a_player.source, now)) {
+			reject(a_player, Protocol::REJECT_TOO_MANY);
+			return;
+		}
+		bool inSession = a_again;
 		// The host's bans, and the lock, before the password: a banned player isn't told whether theirs is right. The
 		// host's own game is never refused for either.
 		if (!local) {
@@ -1658,7 +1728,7 @@ void Server::Run()
 			// they come back. They must come by the Steam account they joined with (a game identity isn't a secret), and
 			// not be someone the host kicked or banned, by identity or by account: that is being removed, not dropping out.
 			// (Not the saved identities: those hold everyone who ever joined, before a restart too.)
-			const bool inSession = a_again || [&] {
+			inSession = inSession || [&] {
 				const auto member = hello->identity != 0 ? members.find(hello->identity) : members.end();
 				return member != members.end() && member->second.account == a_player.transportId && !removed.contains(hello->identity) &&
 				       (a_player.transportId == 0 || !removedAccounts.contains(a_player.transportId));
@@ -1669,9 +1739,51 @@ void Server::Run()
 				return;
 			}
 		}
-		if (!password.empty() && hello->password != password) {
-			log(std::format("server: wrong password from {}", describe(a_player.key)));
-			reject(a_player, "Wrong password");
+		if (!password.empty() && !a_player.passwordOk) {
+			const auto bytes = [](const std::string& a_text) { return std::span<const std::uint8_t>{ reinterpret_cast<const std::uint8_t*>(a_text.data()), a_text.size() }; };
+			if (a_player.source == 0 && !hello->password.empty() && hello->proof.empty()) {
+				// Steam's own connection is private, and nothing readable leaves this machine on a loopback one: the password
+				// as typed does for those.
+				if (!JoinProof::Equal(bytes(hello->password), bytes(password))) {
+					log(std::format("server: wrong password from {}", describe(a_player.key)));
+					reject(a_player, "Wrong password");
+					return;
+				}
+			} else if (hello->proof.empty() || !a_player.challenged) {
+				// Over UDP from another machine the password never travels: the joiner answers a nonce instead.
+				sendChallenge(a_player, now);
+				return;
+			} else {
+				a_player.challenged = false;  // one answer for each nonce
+				const auto expected = joinKey ? JoinProof::Answer(*joinKey, a_player.nonce) : std::nullopt;
+				if (!expected || !JoinProof::Equal(*expected, hello->proof)) {
+					joinGuard.OnWrongPassword(a_player.source, now);
+					log(std::format("server: wrong password from {}", describe(a_player.key)));
+					reject(a_player, "Wrong password");
+					return;
+				}
+			}
+			a_player.passwordOk = true;
+		}
+		// A joiner by address waits for the host to let them in: the host's own game has to be there to ask. Anyone who was in
+		// this run (and wasn't kicked) is let back in without asking again.
+		if (options.approveJoins && !local && a_player.source != 0 && !inSession && !a_player.approved) {
+			const bool hostIn = std::ranges::any_of(players, [](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.local; });
+			const auto waiting = std::ranges::count_if(players, [](const auto& a_entry) { return a_entry.second.awaiting; });
+			if (!hostIn) {
+				reject(a_player, Protocol::REJECT_HOST_NOT_READY);
+			} else if (waiting >= static_cast<std::ptrdiff_t>(Protocol::MAX_WAITING_SENT)) {
+				reject(a_player, Protocol::REJECT_JOIN_TIMEOUT);  // too many wait already: try again later
+			} else {
+				a_player.awaiting = true;
+				a_player.askId = nextAskId++;
+				a_player.askedAt = now;
+				a_player.askName = Name::Shown(hello->name, a_player.id);
+				a_player.askHello.assign(a_data.begin(), a_data.end());
+				send(a_player.key, Protocol::Encode(Protocol::JoinWait{}), true);
+				log("server: a joiner by address waits for the host to let them in");
+				tellHost(Protocol::HostResult::kNone, Protocol::HostAction::kKick);
+			}
 			return;
 		}
 		if (welcomedCount() == 0) {
@@ -1733,6 +1845,7 @@ void Server::Run()
 					leave(stale->second);
 					disconnect(stale->second);
 					unbindBudget(stale->second);
+					settle(stale->second);
 					players.erase(stale);
 				}
 				a_player.id = known->second;
@@ -1792,6 +1905,7 @@ void Server::Run()
 			}
 		}
 		a_player.welcomed = true;
+		settle(a_player);
 		a_player.local = local;
 		a_player.plugins = hello->plugins;
 		a_player.storageMapper.reset();  // made again for these plugins
@@ -4868,6 +4982,7 @@ void Server::Run()
 			fresh.connectedAt = Clock::now();
 			fresh.rate = a_player.rate;
 			fresh.transportId = a_player.transportId;
+			fresh.source = a_player.source;
 			fresh.hostRefusedLogged = a_player.hostRefusedLogged;
 			fresh.hostRefused = a_player.hostRefused;
 			a_player = std::move(fresh);
@@ -4955,7 +5070,28 @@ void Server::Run()
 	// Never the password itself in the log.
 	const auto setPassword = [&](std::string_view a_password, std::string_view a_by) {
 		password = std::string{ a_password.substr(0, Protocol::MAX_PASSWORD_LENGTH) };
+		joinKey.reset();  // made again, under the new password, at the next challenge
 		log(password.empty() ? std::format("server: the password was removed by {}", a_by) : std::format("server: the password was changed by {}", a_by));
+		return Protocol::HostResult::kDone;
+	};
+
+	// The host's answer for a joiner by address who waits (a_askId: HostInfo::Waiting::id).
+	const auto decideJoin = [&](std::uint32_t a_askId, bool a_admit, std::string_view a_by) {
+		const auto it = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.awaiting && !a_entry.second.kicked && a_entry.second.askId == a_askId; });
+		if (it == players.end()) {
+			return Protocol::HostResult::kNoSuchPlayer;
+		}
+		auto& player = it->second;
+		player.awaiting = false;
+		auto hello = std::exchange(player.askHello, {});
+		if (a_admit) {
+			log(std::format("server: {} let a joiner by address in", a_by));
+			player.approved = true;
+			welcome(player, hello);
+		} else {
+			log(std::format("server: {} turned a joiner by address away", a_by));
+			reject(player, Protocol::REJECT_JOIN_REFUSED);
+		}
 		return Protocol::HostResult::kDone;
 	};
 
@@ -4974,6 +5110,10 @@ void Server::Run()
 			return setLocked(false, a_by);
 		case HostAction::kSetPassword:
 			return setPassword(a_command.password, a_by);
+		case HostAction::kAdmit:
+			return decideJoin(a_command.playerId, true, a_by);
+		case HostAction::kRefuse:
+			return decideJoin(a_command.playerId, false, a_by);
 		}
 		return Protocol::HostResult::kNone;
 	};
@@ -5105,6 +5245,10 @@ void Server::Run()
 		}
 		switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
 		case MessageType::kHello:
+			// Waiting for the host's answer: their hello is kept, and says no more.
+			if (a_player.awaiting) {
+				break;
+			}
 			// Every hello brings a world state and the rest of a welcome. A game saying hello again and again
 			// (rejoining in a loop) gets that no more often than its budget has world states: the latest
 			// hello waits until it refills (the tick). When the transport can't name them (UDP), the budget is the
@@ -5390,6 +5534,7 @@ void Server::Run()
                 for (const auto key : keys) {
                     const auto it = players.find(key);
                     leave(it->second);
+                    settle(it->second);
                     unbindBudget(it->second);
                     players.erase(it);
                     ++dropped;
@@ -5408,7 +5553,7 @@ void Server::Run()
         } else {
             for (const auto& ip : request->ips) {
                 std::string error;
-                auto        transport = EnetServerTransport::Create(options.port, options.maxPlayers + 2, false, error, ip);
+                auto        transport = EnetServerTransport::Create(options.port, options.maxPlayers + 8, false, error, ip);
                 if (!transport) {
                     request->error = std::move(error);
                     break;
@@ -5454,9 +5599,22 @@ void Server::Run()
 				case TransportEvent::Type::kConnect:
 					{
 						if (const auto old = players.find(key); old != players.end()) {
+							settle(old->second);
 							unbindBudget(old->second);
 						}
 						Player player;
+						player.source = transports[t]->Source(event.peer);
+						if (!joinGuard.MayConnect(player.source, Clock::now())) {
+							// Too many from one address at once or in a minute: turned away before it costs anything.
+							transports[t]->Disconnect(event.peer);
+							++turnedAway;
+							if (const auto when = Clock::now(); when - turnedAwayLogged >= std::chrono::minutes(1)) {
+								log(std::format("server: turned away {} connections from addresses that connect too often", std::exchange(turnedAway, 0)));
+								turnedAwayLogged = when;
+							}
+							break;
+						}
+						player.guardOpen = player.source != 0;
 						player.key = key;
 						player.id = nextId++;
 						player.connectedAt = Clock::now();
@@ -5477,9 +5635,14 @@ void Server::Run()
 						if (it->second.local && it->second.welcomed) {
 							saveRequested = true;
 						}
+						const bool wasAwaiting = it->second.awaiting;
 						leave(it->second);
+						settle(it->second);
 						unbindBudget(it->second);
 						players.erase(it);
+						if (wasAwaiting) {
+							tellHost(Protocol::HostResult::kNone, Protocol::HostAction::kKick);  // one fewer waits
+						}
 						// The clock belonged to someone who's gone; the next player brings their own.
 						if (welcomedCount() == 0) {
 							worldTime.reset();
@@ -5514,9 +5677,25 @@ void Server::Run()
 		}
 
 		for (auto& [key, player] : players) {
-			if (!player.welcomed && !player.kicked && player.waitingHello.empty() && now - player.connectedAt > HELLO_TIMEOUT) {
+			if (!player.welcomed && !player.kicked && !player.awaiting && player.waitingHello.empty() && now - (player.challenged ? player.challengedAt : player.connectedAt) > HELLO_TIMEOUT) {
 				log(std::format("server: dropping {} (no hello)", describe(key)));
 				disconnect(player);
+			}
+		}
+		// Joiners the host hasn't answered: turned away, said to them, and the host's list shrinks.
+		{
+			bool changed = false;
+			for (auto& [key, player] : players) {
+				if (player.awaiting && !player.kicked && now - player.askedAt > APPROVAL_TIMEOUT) {
+					log("server: a joiner by address was not answered in time");
+					player.awaiting = false;
+					player.askHello.clear();
+					reject(player, Protocol::REJECT_JOIN_TIMEOUT);
+					changed = true;
+				}
+			}
+			if (changed) {
+				tellHost(Protocol::HostResult::kNone, Protocol::HostAction::kKick);
 			}
 		}
 

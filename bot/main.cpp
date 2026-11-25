@@ -27,6 +27,7 @@
 // Exit codes: 0 ok, 2 bad arguments, 3 rejected, 4 disconnected by the server, 5 never welcomed
 // before --seconds ran out.
 
+#include "JoinProof.h"
 #include "Net.h"
 #include "Protocol.h"
 
@@ -331,6 +332,7 @@ int main(int argc, char* argv[])
 	bool       welcomed = false;
 	bool       everWelcomed = false;  // (--rejoin-loop can end waiting for a welcome)
 	std::uint32_t sequence = 0;
+	Protocol::Hello sentHello;  // kept to say again with the answer to a password challenge
 
 	for (;;) {
 		ENetEvent event;
@@ -338,12 +340,26 @@ int main(int argc, char* argv[])
 			switch (event.type) {
 			case ENET_EVENT_TYPE_CONNECT:
 				std::cout << "connected, sending hello\n";
-				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world, .identity = identity }), true);
+				sentHello = Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world, .identity = identity };
+				Net::Send(peer, Protocol::Encode(sentHello), true);
 				break;
 			case ENET_EVENT_TYPE_RECEIVE:
 				{
 					const std::span<const std::uint8_t> data{ event.packet->data, event.packet->dataLength };
 					switch (Protocol::PeekType(data).value_or(Protocol::MessageType{})) {
+					case Protocol::MessageType::kChallenge:
+						// A server holding a password wants it proved: the hello again, with the answer in place of the password.
+						if (const auto msg = Protocol::DecodeChallenge(data)) {
+							const auto key = JoinProof::DeriveKey(password, msg->salt);
+							const auto answer = key ? JoinProof::Answer(*key, msg->nonce) : std::nullopt;
+							if (answer) {
+								auto hello = sentHello;
+								hello.password.clear();
+								hello.proof.assign(answer->begin(), answer->end());
+								Net::Send(peer, Protocol::Encode(hello), true);
+							}
+						}
+						break;
 					case Protocol::MessageType::kWelcome:
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << (msg->friendlyFire ? " (friendly fire)" : "") << (msg->sharedStory ? " (shared story)" : "") << std::endl;

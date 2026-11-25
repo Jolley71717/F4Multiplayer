@@ -326,6 +326,9 @@ namespace Text
 			{ "Server is full", "reject.full" },
 			{ "The host has banned you from this session", "reject.banned" },               // Protocol::REJECT_BANNED
 			{ "The session is locked: the host isn't letting anyone new in", "reject.locked" },  // Protocol::REJECT_LOCKED
+			{ "The host didn't let you in", "reject.join_refused" },                         // Protocol::REJECT_JOIN_REFUSED
+			{ "The host didn't answer in time. Try again later.", "reject.join_timeout" },   // Protocol::REJECT_JOIN_TIMEOUT
+			{ "Too many wrong passwords from your address. Try again in a few minutes.", "reject.too_many" },  // Protocol::REJECT_TOO_MANY
 		};
 		for (const auto& [english, key] : WHOLE) {
 			if (a_reason == english) {

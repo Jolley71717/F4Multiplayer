@@ -2217,10 +2217,11 @@ TEST("protocol: Hello carries the load order, capped, and refuses too many plugi
 	CHECK(capped->plugins.size() == MAX_PLUGINS);
 
 	hello.plugins.clear();
+	hello.proof.clear();
 	auto packet = Encode(hello);
-	// The count's two bytes are last when the list is empty.
-	packet[packet.size() - 2] = static_cast<std::uint8_t>((MAX_PLUGINS + 1) & 0xFF);
-	packet[packet.size() - 1] = static_cast<std::uint8_t>((MAX_PLUGINS + 1) >> 8);
+	// The count's two bytes are last but the proof's two (its length, 0) when the list is empty.
+	packet[packet.size() - 4] = static_cast<std::uint8_t>((MAX_PLUGINS + 1) & 0xFF);
+	packet[packet.size() - 3] = static_cast<std::uint8_t>((MAX_PLUGINS + 1) >> 8);
 	CHECK(!DecodeHello(packet));
 }
 
@@ -2303,8 +2304,9 @@ TEST("protocol: a hello of another version is read up to its version, so an olde
 	// A hello of this version with something in the old list's place is not one this version wrote.
 	auto none = MakeHello();
 	none.plugins.clear();
+	none.proof.clear();
 	auto broken = Encode(none);
-	broken[broken.size() - 3] = 1;  // the byte before the list's two-byte count
+	broken[broken.size() - 5] = 1;  // the byte before the list's two-byte count, which the proof's two-byte length follows
 	CHECK(DecodeHello(Encode(none)));
 	CHECK(!DecodeHello(broken));
 }

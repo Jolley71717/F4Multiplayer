@@ -142,6 +142,8 @@ public:
 	void SetAddress(PeerId a_peer, std::string a_address) { std::lock_guard lock{ mutex }; addresses[a_peer] = std::move(a_address); }
 	// Who a_peer is to the transport (as Steam knows a friend by their Steam ID); 0 = can't say.
 	void SetIdentity(PeerId a_peer, std::uint64_t a_identity) { std::lock_guard lock{ mutex }; identities[a_peer] = a_identity; }
+	// Which remote address a_peer comes from, as the transport's Source says (0 = this machine or Steam, the default).
+	void SetSource(PeerId a_peer, std::uint64_t a_source) { std::lock_guard lock{ mutex }; sources[a_peer] = a_source; }
 
 	// --- the server's side ---
 
@@ -200,6 +202,13 @@ public:
 		return it != identities.end() ? it->second : 0;
 	}
 
+	[[nodiscard]] std::uint64_t Source(PeerId a_peer) const override
+	{
+		std::lock_guard lock{ mutex };
+		const auto it = sources.find(a_peer);
+		return it != sources.end() ? it->second : 0;
+	}
+
 private:
 	void Push(TransportEvent a_event)
 	{
@@ -216,4 +225,5 @@ private:
 	std::uint64_t                 polls = 0;  // times the server came for events
 	std::map<PeerId, std::string> addresses;
 	std::map<PeerId, std::uint64_t> identities;
+	std::map<PeerId, std::uint64_t> sources;
 };

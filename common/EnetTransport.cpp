@@ -127,6 +127,23 @@ bool EnetServerTransport::IsLocal(PeerId a_peer) const
 	return std::string_view{ ip } == "127.0.0.1" || std::string_view{ ip } == "::1";
 }
 
+std::uint64_t EnetServerTransport::Source(PeerId a_peer) const
+{
+	const auto it = peers.find(a_peer);
+	if (it == peers.end() || IsLocal(a_peer)) {
+		return 0;
+	}
+	// FNV-1a over the address, keyed with this run's salt: the same for every connection from one address, and nothing
+	// that could be looked up from it.
+	char ip[64]{};
+	enet_address_get_host_ip(&it->second->address, ip, sizeof(ip));
+	std::uint64_t hash = 0xCBF29CE484222325ull ^ Redact::Salt();
+	for (const char c : std::string_view{ ip }) {
+		hash = (hash ^ static_cast<std::uint8_t>(c)) * 0x100000001B3ull;
+	}
+	return hash | 1;  // never 0: that means no source
+}
+
 std::string EnetServerTransport::Describe(PeerId a_peer) const
 {
 	const auto it = peers.find(a_peer);
