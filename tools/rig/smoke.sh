@@ -143,6 +143,7 @@ fi
 run radiants  step_radiants
 run drops_stay step_drops stay  # opt-in (--only drops_stay): giving an item with the giver staying on it, taken by a press on the giver's stand-in
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
+run direct    step_direct     # opt-in (--only direct): the VM hosts with join by address on, the host PC joins by the typed address (wrong password refused, the right one waits, the VM lets it in); changes both inis, so back them up first
 run workshop-together step_workshop_together  # opt-in (--only workshop-together): the host's build (quiet + wsfinish: the engine's placed event) reaches a friend in and out of workshop mode at Sanctuary (console placement, SetOwnedByPlayer)
 run sharedws-power step_sharedws_power  # opt-in (--only sharedws-power): the shared workshop's build and wire hand-over, with in-session saves (throwaway saves)
 run sharedws-prereq step_sharedws_prereq  # opt-in (--only sharedws-prereq): a deleted copy stays deleted across cell reloads, a save and a solo load; machinegun turrets shared, their buried copies survive two loads (throwaway saves)
