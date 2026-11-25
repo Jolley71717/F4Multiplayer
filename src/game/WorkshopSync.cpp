@@ -10,6 +10,7 @@
 #include "game/EngineRefs.h"
 #include "game/HostRules.h"
 #include "game/LinkedTargets.h"
+#include "game/PutAway.h"
 #include "game/RemoteEdits.h"
 #include "game/SavedCopies.h"
 #include "game/SavedScraps.h"
@@ -195,6 +196,10 @@ namespace WorkshopSync
 		// whether a piece of ours waits for the host's answer (its moves and scraps are not reported meanwhile).
 		bool HandOver(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench);
 		bool IsPendingPiece(std::uint32_t a_id);
+		// A friend's own pieces at the host's settlements put away (PutAway, defined below): whether this workbench is one whose
+		// pieces of ours are, and all of them shown again.
+		bool PutsAwayAt(std::uint32_t a_bench);
+		void PutAwayShowAll(const char* a_why);
 		const char* PendingNoticeOf(std::uint32_t a_id);  // the notice for a key on a copy something is asked of already (a scrap or a store)
 		// A move (SharedMove, defined with the shared workshop): a report of the host's piece whose copy our player holds in
 		// workshop mode is kept until the copy is let go (true: kept, not applied now).
@@ -1101,6 +1106,14 @@ namespace WorkshopSync
 		std::uint64_t            gridNamedFrame = ~0ull;
 		std::unordered_set<std::uint32_t> gridNamed;  // what the benches' grids name, as of gridNamedFrame
 
+		// A friend's own pieces at the host's settlements, put away for the session (PutAway.h), and the ones of ours that were
+		// kept as our own in this session (the host was away): they stand.
+		PutAway::Away             putAway;
+		std::set<std::uint32_t>   keptOwnPieces;
+		Clock::time_point         nextPutAway{};
+		std::uint64_t             putAwayShown = 0;  // pieces shown again (leaving, a workbench the host lost)
+		std::uint64_t             putAwayDone = 0;   // calls to cull and switch a piece's collision off
+
 		RE::BGSKeyword* WorkshopItemKeyword()
 		{
 			return RE::TESForm::GetFormByID<RE::BGSKeyword>(WORKSHOP_ITEM_KEYWORD);
@@ -1619,7 +1632,8 @@ namespace WorkshopSync
 		// A piece of ours, the same object, at the friend's piece's spot: their save and ours share a past.
 		bool OursAt(const Protocol::WorkshopItem& a_item)
 		{
-			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr; }) != nullptr;
+			// (a piece put away for the session is not ours standing for the host's: it would leave a hole where the host's goes)
+			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr && !putAway.Has(a_ref->GetFormID()); }) != nullptr;
 		}
 
 		// One of our copies of a friend's piece, the same object, near the spot: WorkshopApply::TwinOf's quick look, before it
@@ -2364,7 +2378,11 @@ namespace WorkshopSync
 		void OfferBuilt(std::uint32_t a_id)
 		{
 			if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) }) {
-				builtWalk.Offer(PieceOf(*ref));
+				const auto piece = PieceOf(*ref);
+				if (PutsAwayAt(piece.bench)) {
+					return;  // a guest's own piece at the host's settlement stays out of the session (bShareGuestBuilds or not): put away
+				}
+				builtWalk.Offer(piece);
 			}
 		}
 
@@ -4206,8 +4224,10 @@ namespace WorkshopSync
 
 		bool PickBlockedHook(RE::TESObjectREFR& a_ref)
 		{
-			const bool blocked = originalIsBlocked(a_ref);
-			const bool admit = blocked && AdmitsCopy(a_ref);
+			// A piece put away for the session is not to be picked (hidden: nothing to aim at).
+			const bool away = putAway.Has(a_ref.GetFormID());
+			const bool blocked = originalIsBlocked(a_ref) || away;
+			const bool admit = blocked && !away && AdmitsCopy(a_ref);
 			if (const auto hit = PickHitOf(a_ref.GetFormID())) {
 				hit->verdict = !blocked ? HitVerdict::kTested : admit ? HitVerdict::kAdmitted : HitVerdict::kBlocked;
 			}
@@ -5264,6 +5284,7 @@ namespace WorkshopSync
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.piece);
 			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.bench);
+			keptOwnPieces.insert(a_pending.piece);  // stays standing for the session (PutAway.h): it is not a piece from before it
 			if (ref && bench && !ref->IsDeleted() && !ref->IsDisabled() && ReportRef(ref, bench, Protocol::WorkshopOp::kPlaced)) {
 				SettleLater(ref, bench);
 			}
@@ -7161,6 +7182,8 @@ namespace WorkshopSync
 		// our game), and the host's unfinished pieces for friends go too.
 		void ResetShared()
 		{
+			PutAwayShowAll("leaving the session");
+			keptOwnPieces.clear();
 			for (const auto& build : requests.Builds()) {
 				DropPending(build, "leaving");
 			}
@@ -7204,6 +7227,8 @@ namespace WorkshopSync
 		// A save was loaded, or the world is gone: what waited was the old world's.
 		void ForgetShared()
 		{
+			PutAwayShowAll("the world is gone");
+			keptOwnPieces.clear();
 			requests.Clear();
 			adoptLater.clear();
 			heldBuilds.clear();
@@ -8125,6 +8150,179 @@ namespace WorkshopSync
 			}
 			const auto rank = hostSettlements.LocalLeader();
 			hostRank.store(rank ? static_cast<int>(*rank) : -1, std::memory_order_release);
+		}
+
+		// ---- A friend's own pieces at the host's settlements, put away for the session (PutAway.h) ----
+		//
+		// In a friend's game under the shared workshop: each of the host's settlements (hostSettlements) that is loaded has its
+		// list of workshop items read a few times a second; our own pieces from before the session in it (never a copy, never
+		// one made or kept in the session, never an actor) are culled, and with bPutAwayWalkThrough their collision is switched
+		// off too. Only those two things: a node's culled flag and a body's collision switch are not saved, so nothing is
+		// disabled, moved, unlinked or deleted, and nothing needs undoing in a save. (Collision stays by default: a loose object
+		// resting on a piece falls when it goes, and where it lands is saved, measured on the rig.) A 3D made anew (a cell loaded again) is told again; leaving the session,
+		// a settlement the host loses and the switch turned off show them again.
+
+		constexpr auto PUT_AWAY_EVERY = std::chrono::milliseconds(500);
+
+		bool PutAwayActive()
+		{
+			return !hosting && PutAway::Active(Config::Get().putAwayOwnSettlements, HandsOver());
+		}
+
+		// Culled (again each time: a 3D that is loaded again comes back shown), and, when a_collision, its collision off.
+		void PutAwayHide(RE::TESObjectREFR& a_ref, bool a_cull, bool a_collision)
+		{
+			if (const auto root = a_ref.Get3D()) {
+				if (a_cull && !root->GetAppCulled()) {
+					root->SetAppCulled(true);
+				}
+				if (a_collision) {
+					RE::bhkWorld::EnableCollision(root, false, true, true);
+				}
+			}
+		}
+
+		// Shown, and solid again. a_root: the 3D we switched the collision of off; a 3D made since has its own collision.
+		void PutAwayShow(RE::TESObjectREFR& a_ref, std::uintptr_t a_root, bool a_force = false)
+		{
+			if (const auto root = a_ref.Get3D()) {
+				if (root->GetAppCulled()) {
+					root->SetAppCulled(false);
+				}
+				if (a_root == reinterpret_cast<std::uintptr_t>(root) && (Config::Get().putAwayWalkThrough || a_force)) {
+					RE::bhkWorld::EnableCollision(root, true, true, true);
+				}
+			}
+		}
+
+		void PutAwayShowThese(const std::vector<PutAway::Release>& a_these, const char* a_why)
+		{
+			for (const auto& one : a_these) {
+				if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(one.ref) }; ref && !ref->IsDeleted()) {
+					PutAwayShow(*ref, one.root);
+				}
+			}
+			if (!a_these.empty()) {
+				putAwayShown += a_these.size();
+				REX::INFO("WorkshopSync: shown again, {} pieces of ours put away ({})", a_these.size(), a_why);
+			}
+		}
+
+		void PutAwayShowAll(const char* a_why)
+		{
+			PutAwayShowThese(putAway.All(), a_why);
+		}
+
+		bool PutsAwayAt(std::uint32_t a_bench)
+		{
+			return a_bench != 0 && PutAwayActive() && hostSettlements.Owns(a_bench);
+		}
+
+		// Whether a piece found in a host-owned workbench's list is put away: built before the session, ours, standing.
+		bool PutAwayPieceOf(RE::TESObjectREFR& a_ref, std::uint32_t a_bench)
+		{
+			if (a_ref.As<RE::Actor>()) {
+				return false;  // (turrets, robots and settlers are not handled: they stand)
+			}
+			const auto piece = PieceOf(a_ref);
+			return piece.bench == a_bench && PutAway::Eligible({ .ref = piece.ref, .bench = piece.bench, .buildable = piece.buildable, .copy = piece.copy, .off = piece.off,
+										 .madeNow = IsPendingPiece(piece.ref) || keptOwnPieces.contains(piece.ref) },
+				true);
+		}
+
+		void PutAwayFrame(Clock::time_point a_now)
+		{
+			if (!PutAwayActive()) {
+				if (putAway.Size() > 0) {
+					PutAwayShowAll(Config::Get().putAwayOwnSettlements ? "no longer the host's settlements" : "bPutAwayOwnSettlements is off");
+				}
+				return;
+			}
+			if (a_now < nextPutAway) {
+				return;
+			}
+			nextPutAway = a_now + PUT_AWAY_EVERY;
+			const auto&                hosted = hostSettlements.Owned();
+			std::vector<std::uint32_t> looked;
+			std::size_t                budget = PutAway::PER_FRAME;
+			bool                       whole = true;
+			putAway.Begin();
+			for (const auto id : hosted) {
+				const RE::NiPointer<RE::TESObjectREFR> bench{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
+				if (!bench) {
+					continue;
+				}
+				if (!IsWorkbenchAnchor(bench.get())) {
+					continue;  // not a workbench to us: its pieces are not read
+				}
+				const auto children = bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+				std::vector<RE::NiPointer<RE::TESObjectREFR>> items;
+				if (children) {
+					for (const auto& child : children->linkedChildren) {
+						if (child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD) {
+							if (auto ref = child.REFR.get(); ref && !Protocol::IsShareableRef(ref->GetFormID())) {
+								items.push_back(std::move(ref));
+							}
+						}
+					}
+				}
+				// ...and the pieces our game made in the bench's own cell that are linked to it, listed or not (a piece linked by the
+				// console, as the rig does, is not always in the list; a built one is: this only adds)
+				if (const auto cell = bench->GetParentCell()) {
+					std::vector<std::uint32_t> made;
+					{
+						const RE::BSAutoLock l{ cell->spinLock };
+						for (const auto& ref : cell->references) {
+							if (ref && (ref->GetFormID() >> 24) == 0xFF) {
+								made.push_back(ref->GetFormID());
+							}
+						}
+					}
+					for (const auto made_id : made) {
+						if (std::ranges::any_of(items, [&](const auto& a_item) { return a_item->GetFormID() == made_id; })) {
+							continue;
+						}
+						if (auto ref = RE::NiPointer<RE::TESObjectREFR>{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(made_id) }) {
+							items.push_back(std::move(ref));
+						}
+					}
+				}
+				looked.push_back(id);
+				for (const auto& item : items) {
+					if (!PutAwayPieceOf(*item, id)) {
+						continue;
+					}
+					const auto root = item->Get3D();
+					if (putAway.Want(item->GetFormID(), id, reinterpret_cast<std::uintptr_t>(root))) {
+						++putAwayDone;
+						PutAwayHide(*item, true, Config::Get().putAwayWalkThrough);
+						if (--budget == 0) {
+							whole = false;  // the rest next frame (what is told already costs nothing then)
+							break;
+						}
+					} else if (root) {
+						PutAwayHide(*item, true, false);
+					}
+				}
+				if (!whole) {
+					break;
+				}
+			}
+			if (!whole) {
+				nextPutAway = a_now;  // not a whole look: nothing is shown again on it either
+				return;
+			}
+			PutAwayShowThese(putAway.End(looked, hosted), "no longer listed or no longer the host's");
+			for (const auto& [bench, count] : putAway.Changed()) {
+				REX::INFO("WorkshopSync: put away {} of our own pieces at workbench {:08X} while the host's settlement stands in the session", count, bench);
+			}
+		}
+
+		// The dev command (wsputaway): what is put away, and a piece hidden or shown by hand for the experiment.
+		std::string DescribePutAwayState()
+		{
+			return std::format("putaway: active={} switch={} walkThrough={} away={} shown={} calls={} keptOwn={} hosted={}", PutAwayActive(), Config::Get().putAwayOwnSettlements, Config::Get().putAwayWalkThrough, putAway.Size(), putAwayShown, putAwayDone,
+				keptOwnPieces.size(), hostSettlements.Owned().size());
 		}
 
 		// The main thread, every frame of a session: the hooks' view (hookView). In workshop mode at a settlement while requests
@@ -9611,6 +9809,7 @@ namespace WorkshopSync
 		ReportMovedWires(now);
 		DrawShapedWires(now);
 		SharedFrame(now, a_host);
+		PutAwayFrame(now);
 		PowerFrame(now);
 		DamageFrame(now);
 		ResourceFrame(now);
@@ -10285,6 +10484,34 @@ namespace WorkshopSync
 		return std::format("{} copies ({} loaded), found again={}, graveyard={} ({} not loaded), lightsMade={}", copies.size(), loaded, refound, graveyard.size(), unloaded,
 			       copyLightsMade.load()) +
 		       list;
+	}
+
+	std::string DescribePutAway()
+	{
+		MainThread::Assert("WorkshopSync::DescribePutAway");
+		return DescribePutAwayState();
+	}
+
+	std::string PutAwayByHand(RE::TESObjectREFR* a_ref, std::string_view a_mode)
+	{
+		MainThread::Assert("WorkshopSync::PutAwayByHand");
+		if (!a_ref) {
+			return "error: no such reference";
+		}
+		if (a_mode == "cull" || a_mode == "both") {
+			PutAwayHide(*a_ref, true, a_mode == "both");
+		} else if (a_mode == "collision") {
+			PutAwayHide(*a_ref, false, true);
+		} else if (a_mode == "off") {
+			const auto root = a_ref->Get3D();
+			PutAwayShow(*a_ref, reinterpret_cast<std::uintptr_t>(root), true);
+		} else if (a_mode != "status") {
+			return "error: usage: wsputaway [<refHex> [cull|collision|both|off]]";
+		}
+		const auto root = a_ref->Get3D();
+		const bool away = putAway.Has(a_ref->GetFormID());
+		return std::format("{:08X}: 3D={} culled={} away={} at ({:.1f}, {:.1f}, {:.1f}) mode={}", a_ref->GetFormID(), root != nullptr, root && root->GetAppCulled(), away, a_ref->data.location.x, a_ref->data.location.y,
+			a_ref->data.location.z, a_mode);
 	}
 
 	std::string DescribePower()

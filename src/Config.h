@@ -216,6 +216,15 @@ namespace Config
 		// hooks out when something goes wrong (bSharedRolls).
 		bool sharedRolls = true;
 
+		// Not a host's rule: at a settlement the host owns, your own pieces built before the session are put away for the session
+		// (hidden, solid unless bPutAwayWalkThrough, never deleted, moved or disabled: PutAway.h), so the host's version of it is the one in the way
+		// of nothing. Off: both versions stand superimposed, as before (bPutAwayOwnSettlements).
+		bool putAwayOwnSettlements = true;
+		// ...and, with the one above, also walk-through: their collision is switched off too. Off by default: a loose object resting on
+		// one (a mug on a table) then falls, and where it lands is saved in your game (measured on the rig). Off, the pieces are
+		// hidden but stay solid (bPutAwayWalkThrough).
+		bool putAwayWalkThrough = false;
+
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;
 
