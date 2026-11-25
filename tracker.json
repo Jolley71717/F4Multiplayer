@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-25T20:52:44+00:00",
+ "updated": "2026-11-25T23:03:06+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2842,8 +2842,8 @@
    "title": "A box a friend builds in front of the host at a settlement fills with random items (and other dupes)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being looked into"
+   "stage": 2,
+   "note": "Reproduced on the rig (the host's own copy of a friend's locker-type box came out full); fix in PR 592"
   },
   {
    "id": "ml30",
