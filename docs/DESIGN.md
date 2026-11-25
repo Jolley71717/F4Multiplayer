@@ -4654,6 +4654,12 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 `UiPages.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
 menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
 
+
+A joiner's address is never logged or shown whole: `UiAddressEntry::Masked` for the status line, the HUD and the recent list,
+`Config::ShownValue` for the settings log line, and `Session::Describe` prints `own`, `steam` or `udp` in place of it. A connection
+that ends before the welcome carries a `ClientConnection::Failure` (name not found, no answer within 8 seconds), which the menu
+turns into one line of help. The name lookup runs on a thread of its own so leaving or joining elsewhere never waits for it.
+The recent addresses are in `F4Multiplayer_recent.txt` beside the ini.
 ## The settings file (src/Config.cpp, src/ConfigRead.h, common/IniFile.h, dist/F4Multiplayer.ini)
 
 `Data\F4SE\Plugins\F4Multiplayer.ini` is the player's file, and the zip does not hold it: shipped (0.21.0 and

@@ -269,4 +269,11 @@ namespace Config
 	// the rest of the file, comments included, stays as the player left it). Main thread only.
 	Settings& Mutable();
 	bool      Write(std::string_view a_key, std::string_view a_value);
+
+	// The addresses joined from the menu, newest first (at most five), kept in a file of their own beside the settings
+	// file (F4Multiplayer_recent.txt), not in it: sharing the ini never shares an address. No password is kept anywhere,
+	// and none is rejoined at the next start. Main thread only. The log says only how many.
+	const std::vector<std::string>& RecentAddresses();
+	void                            RememberAddress(std::string_view a_address);
+	void                            ForgetAddresses();
 }

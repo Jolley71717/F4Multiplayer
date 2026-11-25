@@ -7,6 +7,7 @@
 #include "Name.h"
 #include "Protocol.h"
 #include "Redact.h"
+#include "game/UiAddressEntry.h"
 #include "Server.h"
 #include "TimeScaleBook.h"
 #include "Text.h"
@@ -123,6 +124,10 @@ namespace Session
 		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
 		Refusals          refusals;  // why the server last turned us away, and when to try again
+		// The connection to a typed address: why none came up (told once on the HUD), and whether the welcome puts it in the recent list.
+		ClientConnection::Failure lastFailure = ClientConnection::Failure::kNone;
+		bool                      failureTold = false;
+		bool                      joiningTyped = false;
 		ModDiff::Tracker  hostMods;  // our mods compared with the host's, once its list came (kLoadOrder)
 		bool              shuttingDown = false;  // the game is quitting (Shutdown): nothing more is done
 		// Host controls: the server's last word on its lock, password and bans (kHostInfo, to our own game only while we
@@ -500,6 +505,9 @@ namespace Session
 						break;
 					}
 					welcomed = true;
+					if (std::exchange(joiningTyped, false)) {
+						Config::RememberAddress(serverAddress);  // only an address that was joined is kept
+					}
 					sentEquipment.reset();
 					sentFace.reset();
 					localId = msg->playerId;
@@ -1187,6 +1195,9 @@ namespace Session
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};
 			refusals.Clear();
+			lastFailure = ClientConnection::Failure::kNone;
+			failureTold = false;
+			joiningTyped = false;
 			SessionSteps::OnServerChanged(binding, WorldSync::Loot());
 			hostMods.Reset();  // what we knew of the last host's mods
 		}
@@ -1427,6 +1438,10 @@ namespace Session
 		status.hosting = hostedServer && hostedServer->Running();
 		status.steam = steamMode;
 		status.address = serverAddress;
+		if (status.link == Status::Link::kConnecting && refusals.Last().empty()) {
+			status.failure = lastFailure == ClientConnection::Failure::kResolve ? Status::Failure::kBadName :
+			                 lastFailure == ClientConnection::Failure::kNoAnswer ? Status::Failure::kNoAnswer : Status::Failure::kNone;
+		}
 		status.rejectReason = refusals.Last();
 		status.retrySoon = refusals.RetrySoon();
 		status.inWorld = InGame();
@@ -1484,6 +1499,7 @@ namespace Session
 			switch (event.type) {
 			case ClientConnection::Event::Type::kConnected:
 				{
+					lastFailure = ClientConnection::Failure::kNone;
 					const auto& settings = Config::Get();
 					Protocol::Hello hello;
 					hello.contentHash = contentHash;
@@ -1499,7 +1515,20 @@ namespace Session
 				}
 				break;
 			case ClientConnection::Event::Type::kDisconnected:
-				OnDisconnected();
+				{
+					const bool wasWelcomed = welcomed;
+					OnDisconnected();
+					lastFailure = event.failure;
+					// A friend who typed a wrong address is told once; the game goes on trying every few seconds.
+					const bool nothingCame = lastFailure == ClientConnection::Failure::kResolve || lastFailure == ClientConnection::Failure::kNoAnswer;
+					if (!wasWelcomed && nothingCame && !failureTold && !hostedServer && !serverAddress.empty() && !SteamTransport::ParseAddress(serverAddress)) {
+						failureTold = true;
+						std::string_view host;
+						std::uint16_t    port = Config::Get().port;
+						static_cast<void>(UiAddressEntry::Split(serverAddress, host, port, Config::Get().port));
+						Notify(lastFailure == ClientConnection::Failure::kResolve ? "session.bad_name" : "session.no_answer", { { "port", port } });
+					}
+				}
 				break;
 			case ClientConnection::Event::Type::kPacket:
 				Receive(event.data);
@@ -2029,7 +2058,7 @@ namespace Session
 			break;
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
-			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
+			       status, localId, hostedServer && hostedServer->Running(), serverAddress.empty() ? "" : hostedServer ? "own" : SteamTransport::ParseAddress(serverAddress) ? "steam" : "udp", contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + EffectTasks::Describe() + " " + ExitInventory::Describe() + " " + KillBlasts::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + RackDisplays::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FriendMap::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
 	}
@@ -2083,10 +2112,36 @@ namespace Session
 		return out;
 	}
 
+	JoinError JoinAddress(std::string a_address)
+	{
+		if (hostedServer) {
+			return JoinError::kHosting;
+		}
+		// (As for a Steam join: with bHost, our hosting starts once we're in the world, and would take us back.)
+		if (Config::Get().host) {
+			return JoinError::kHostWaits;
+		}
+		Steam::Leave();
+		SwitchServer(std::move(a_address));
+		joiningTyped = true;
+		return JoinError::kNone;
+	}
+
+	void RetryNow()
+	{
+		refusals.Clear();
+		nextConnectAttempt = {};
+	}
+
 	void ConnectTo(std::string a_address)
 	{
+		// Our own game would be pointed away from its own server.
+		if (hostedServer) {
+			Notify("session.hosting_cant_join");
+			return;
+		}
 		// (As for a Steam join: with bHost, our hosting starts once we're in the world, and would take us back.)
-		if (!hostedServer && Config::Get().host) {
+		if (Config::Get().host) {
 			Notify("session.host_waits_for_world");
 			return;
 		}

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,10 @@ namespace Net
 
 	// Sends a packet on the reliable channel or the unreliable state channel.
 	void Send(ENetPeer* a_peer, std::span<const std::uint8_t> a_data, bool a_reliable);
+
+	// Splits "host" or "host:port" (exactly one colon means a port; a port of 0 or not a number fails, so does an empty host).
+	// Pure: no lookup.
+	bool SplitAddress(std::string_view a_hostAndPort, std::uint16_t a_defaultPort, std::string& a_host, std::uint16_t& a_port);
 
 	// Resolves "host" or "host:port". Returns false if the host can't be resolved.
 	bool ResolveAddress(const std::string& a_hostAndPort, std::uint16_t a_defaultPort, ENetAddress& a_out);

@@ -31,6 +31,10 @@ namespace UiPages
 	// Main thread. A key pressed while a password is being typed: a_key its virtual key, a_character what it types (0: nothing).
 	void PanelTyped(std::uint32_t a_key, std::uint32_t a_character);
 
+	// Main thread. Ctrl+V while a password or an address is being typed: the clipboard goes in the box (an address only if the
+	// whole text is one).
+	void PanelPasted();
+
 	// Carries out the button pressed on the page showing and shows what follows. Every frame.
 	void Frame();
 

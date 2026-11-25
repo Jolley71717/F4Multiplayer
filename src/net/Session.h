@@ -71,6 +71,14 @@ namespace Session
 		std::string   rejectReason;   // why the last join was refused ("" = it wasn't)
 		bool          retrySoon = false;    // the next try comes in a few seconds (the host isn't in yet), not in a minute
 		bool          inWorld = false;      // a game is loaded: no connection is tried before that
+		// Why no connection came up yet, for an address typed in the menu: the name was not found, or nothing answered.
+		enum class Failure
+		{
+			kNone,
+			kBadName,
+			kNoAnswer
+		};
+		Failure failure = Failure::kNone;
 		bool          hostWaiting = false;  // bHost, but not hosting yet: it starts once we're in the world, out of Vault 111
 	};
 	[[nodiscard]] Status GetStatus();
@@ -97,6 +105,17 @@ namespace Session
 	// Test mode: shows a puppet that copies the local player's movement, offset to the side.
 	void SetEcho(bool a_enabled, float a_offsetX = 150.0f, float a_offsetY = 0.0f);
 
+	// The menu's "join by address": leaves a Steam lobby or another session first, and joins the address (one
+	// UiAddressEntry::Valid took). It is remembered (Config::RememberAddress) once the host's welcome comes, not before.
+	enum class JoinError
+	{
+		kNone,
+		kHosting,   // our game hosts: it would be pointed away from its own server
+		kHostWaits  // bHost is on and hosting starts in the world
+	};
+	JoinError JoinAddress(std::string a_address);
+	// The next connection try comes now (after the password was typed), not when a refusal's wait ends.
+	void RetryNow();
 	// Test: leaves the current session and connects to another address ("ip[:port]" or "steam:<id>").
 	void ConnectTo(std::string a_address);
 	// Test: handles these bytes as if the server had sent them (the dev "fuzz" command), in our own numbering: they are

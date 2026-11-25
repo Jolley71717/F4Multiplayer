@@ -13,6 +13,15 @@ public:
 		kConnected,  // transport is up; the server may still reject the Hello
 	};
 
+	// Why a connection ended before or after it was up. Nothing here names an address: the log and the menu say what it was.
+	enum class Failure : std::uint8_t
+	{
+		kNone,
+		kResolve,   // the name could not be found
+		kNoAnswer,  // nothing answered in time, or the peer went away before the connection was up
+		kLost,      // it was up, and ended
+	};
+
 	struct Event
 	{
 		enum class Type
@@ -24,6 +33,7 @@ public:
 
 		Type                      type;
 		std::vector<std::uint8_t> data;
+		Failure                   failure = Failure::kNone;  // with kDisconnected: why the connection ended, when it was not by our own Disconnect
 	};
 
 	ClientConnection() = default;
@@ -101,10 +111,10 @@ protected:
 		inbox.push_back(std::move(a_event));
 	}
 
-	void Finish()
+	void Finish(Failure a_failure = Failure::kNone)
 	{
 		status = Status::kDisconnected;
-		Push({ Event::Type::kDisconnected, {} });
+		Push({ Event::Type::kDisconnected, {}, a_failure });
 	}
 
 	std::atomic<bool>   stopRequested{ false };

@@ -163,6 +163,8 @@ At run time:
   Pip-Boy and VATS. It holds back the menu's own events too, so the arrows or D-pad and Enter or A are read as keys while it's on. The game
   gives a menu only a key's press and release, so the key repeat and the caret are ours. Nothing typed is logged. The left stick moves no
   page of the panel with the dev channel's virtual pad; the D-pad does.
+  Ctrl+V in a typing dialog (the address's or the password's) is read in `OnButtonEvent` and posted as `UiPages::PanelPasted`; the
+  clipboard is read on the main thread and nothing of it is logged.
 - **Threads.** Flash objects are written only inside a menu's own update (`AdvanceMovie`, hooked in its vtable for
   the main and pause menus, as the compass does for the HUD) or by the menu's own movie; anything that touches the
   game goes to the main thread (`MainThread::Post`).

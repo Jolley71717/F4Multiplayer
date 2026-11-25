@@ -42,24 +42,30 @@ namespace Net
 		}
 	}
 
-	bool ResolveAddress(const std::string& a_hostAndPort, std::uint16_t a_defaultPort, ENetAddress& a_out)
+	bool SplitAddress(std::string_view a_hostAndPort, std::uint16_t a_defaultPort, std::string& a_host, std::uint16_t& a_port)
 	{
-		std::string   host = a_hostAndPort;
-		std::uint16_t port = a_defaultPort;
+		a_host = a_hostAndPort;
+		a_port = a_defaultPort;
 
 		// "host:port", but leave bare IPv6-looking strings alone.
-		if (const auto colon = host.rfind(':'); colon != std::string::npos && host.find(':') == colon) {
-			const auto portStr = host.substr(colon + 1);
+		if (const auto colon = a_host.rfind(':'); colon != std::string::npos && a_host.find(':') == colon) {
+			const auto    portStr = a_host.substr(colon + 1);
 			std::uint16_t parsed{};
 			const auto [ptr, ec] = std::from_chars(portStr.data(), portStr.data() + portStr.size(), parsed);
 			if (ec != std::errc{} || ptr != portStr.data() + portStr.size() || parsed == 0) {
 				return false;
 			}
-			port = parsed;
-			host.resize(colon);
+			a_port = parsed;
+			a_host.resize(colon);
 		}
+		return !a_host.empty();
+	}
 
-		if (host.empty() || enet_address_set_host(&a_out, host.c_str()) != 0) {
+	bool ResolveAddress(const std::string& a_hostAndPort, std::uint16_t a_defaultPort, ENetAddress& a_out)
+	{
+		std::string   host;
+		std::uint16_t port{};
+		if (!SplitAddress(a_hostAndPort, a_defaultPort, host, port) || enet_address_set_host(&a_out, host.c_str()) != 0) {
 			return false;
 		}
 		a_out.port = port;

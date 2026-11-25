@@ -118,6 +118,19 @@ connects to it directly (the UDP/LAN case). With nobody to list, the page says h
 are online and how many are in Fallout 4, so you can tell where the list
 stops.
 
+**Join by address.** Below the friends, the *Join by address* row opens a page with *Type an address*, up to five
+recent addresses (newest first), *Show the addresses (hold)* and *Forget these addresses*. The typing dialog is the
+password's (`UiAddressEntry.h` says what may be typed): Ctrl+V pastes the clipboard's first line when it is an
+address, and *Join* checks the text before it connects. The address shows whole only in that box; the status line,
+the HUD, the recent rows and the log show it masked (`192.0.2.x:7779`, or `(name):7779` for a host name), and the
+show button reveals the recent rows while it is held (Enter or the left mouse button down; three seconds at least,
+so a tap shows them too). Only an address that was joined (the host's welcome came) is remembered: in
+`F4Multiplayer_recent.txt` beside the ini, never in it, and never with a password. Nothing is rejoined at the next
+start. When nothing answers in 8 seconds the status line and the HUD say so once ("No answer from that address..."),
+and a name that does not resolve says so; the game keeps trying every 5 seconds. A refusal for the password adds a
+*Type the host's password* row that retries at once. A gamepad cannot type; the message-box fallback lists the two
+most recent addresses.
+
 A host appears on this page only if the joiner's Steam shows them as playing Fallout 4: Steam
 shares rich presence and lobby membership for a friend only inside the game it sees them in. The
 check is the host's own Steam profile: it must say "In-Game: Fallout 4" while they host. Two things

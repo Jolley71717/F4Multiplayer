@@ -6,6 +6,7 @@
 #include "Platform.h"
 #include "SessionLevel.h"
 #include "StorySetting.h"
+#include "game/UiAddressEntry.h"
 
 namespace Config
 {
@@ -116,8 +117,8 @@ namespace Config
 	{
 		// The whole file is read and written back (IniFile::SaveValue): it's a few kilobytes, and keeping the player's
 		// comments and ordering matters more than speed here (a menu click, not a frame).
-		// The password never goes in the log (players share their logs): only whether one is set.
-		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
+		// The password and an address never go in the log (players share their logs): only whether one is set.
+		const std::string_view shown = ShownValue(a_key, a_value);
 		switch (IniFile::SaveValue(IniPath() /* the one Load read or wrote */, a_key, a_value, Defaults())) {
 		case IniFile::Saved::Written:
 			REX::INFO("Config: wrote {} = {}", a_key, shown);
@@ -135,5 +136,52 @@ namespace Config
 		}
 		REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
 		return false;
+	}
+}
+
+namespace Config
+{
+	namespace
+	{
+		constexpr auto RECENT_FILE = "F4Multiplayer_recent.txt";
+
+		std::filesystem::path RecentPath()
+		{
+			return IniPath().parent_path() / RECENT_FILE;
+		}
+
+		std::vector<std::string> recent;
+		bool                     recentLoaded = false;
+	}
+
+	const std::vector<std::string>& RecentAddresses()
+	{
+		if (!recentLoaded) {
+			recentLoaded = true;
+			recent = UiAddressEntry::ReadFile(RecentPath());
+		}
+		return recent;
+	}
+
+	void RememberAddress(std::string_view a_address)
+	{
+		RecentAddresses();
+		UiAddressEntry::Remember(recent, a_address);
+		if (UiAddressEntry::WriteFile(RecentPath(), recent)) {
+			REX::INFO("Config: {} recent address(es) kept", recent.size());  // never the addresses
+		} else {
+			REX::WARN("Config: the recent addresses could not be written to {}", RECENT_FILE);
+		}
+	}
+
+	void ForgetAddresses()
+	{
+		recentLoaded = true;
+		recent.clear();
+		if (UiAddressEntry::WriteFile(RecentPath(), recent)) {
+			REX::INFO("Config: recent addresses forgotten");
+		} else {
+			REX::WARN("Config: {} could not be removed", RECENT_FILE);
+		}
 	}
 }
