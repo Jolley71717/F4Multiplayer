@@ -9122,8 +9122,12 @@ step_sharedws_putaway() {
 		expect_eq "$label: $r stays enabled and standing (a save holds it as before)" "$(field "$(vm "refinfo $r")" disabled)$(field "$(vm "wsinfo $r")" deleted)" "falsefalse"
 	done
 	# 3. walk through where the generator stands: solid, the walk would stop short of it
-	if walk vm "$label: the VM walks through its own generator's place (put away: no collision)" 0.6 30 "$gen"; then pass "$label: the VM walked to within 30 units of its put-away generator's centre" "$WALK_LAST"; fi
-	pads_off
+	if [ "$(field "$(vm wsputaway)" walkThrough)" = true ]; then   # bPutAwayWalkThrough on in the VM's ini
+		if walk vm "$label: the VM walks through its own generator's place (put away, walk-through: no collision)" 0.6 30 "$gen"; then pass "$label: the VM walked to within 30 units of its put-away generator's centre" "$WALK_LAST"; fi
+		pads_off
+	else
+		pass "$label: (for the record) bPutAwayWalkThrough is off in the VM: the pieces are hidden and stay solid, no walk-through check" "walkThrough=false"
+	fi
 	# 4. the host puts nothing away
 	if grep -qE "WorkshopSync: put away" "$(win_read spa host)"; then fail "$label: the host's game puts nothing away" "$(grep -E 'WorkshopSync: put away' "$(win_read spa host)" | tail -1 | cut -c1-200)"; else pass "$label: the host's game puts nothing away" "no line"; fi
 	# 5. the host loses Sanctuary: shown again; regains it: put away again

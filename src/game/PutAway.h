@@ -13,7 +13,8 @@
 //
 // A friend and the host who both own Sanctuary each have their own version of it. In a session everyone sees the host's: the
 // host's pieces are our copies (SharedWorkshop), so our own, built before the session, would stand through them. For the
-// session they are hidden and walk-through: the scene-graph node is culled and the collision of its bodies is switched off.
+// session they are hidden, and with bPutAwayWalkThrough walk-through: the scene-graph node is culled and the collision of its bodies is switched off
+// (off by default: a loose object resting on a piece falls when its support goes, and where it lands is saved).
 // Never disabled, deleted, moved, unlinked from the workbench or given a keyword: neither a node's culled flag nor a body's
 // collision switch is part of a saved reference, so a save made meanwhile (or a crash) holds every piece as before, and
 // nothing has to be undone in a save hook. Leaving the session (or the host losing the settlement) shows them again.

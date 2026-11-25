@@ -5594,9 +5594,12 @@ adopted; per-workbench owners for dedicated servers.
 A friend and the host who both own Sanctuary each have their own version of it. Under the shared workshop everyone sees the host's
 (its pieces are the friend's copies), so the friend's own, built before the session, would stand through them. In a friend's game,
 while the shared workshop hands pieces over, each settlement the host owns (`hostSettlements`, told since 0.17.0) that is loaded has
-its workshop items read four times a second (`PutAwayFrame`). Our own pieces from before the session in them are put away: the
-scene-graph node is culled (`SetAppCulled`) and the collision of its bodies is switched off (`bhkWorld::EnableCollision`), the two
-calls `RemotePlayers` makes for a power armor frame. A piece counts when `BuiltWalk::Built` says it is one our player built (not a
+its workshop items, and the pieces its cell holds that are linked to it, read twice a second (`PutAwayFrame`). Our own pieces from before the session in them are put away: the
+scene-graph node is culled (`SetAppCulled`) and, with `bPutAwayWalkThrough`, the collision of its bodies is switched off
+(`bhkWorld::EnableCollision`): the two calls `RemotePlayers` makes for a power armor frame. The collision switch is off by default:
+measured on the rig, a loose object resting on a piece (a bottle cap on a generator) fell the piece's height to the floor when the
+piece's collision went off, and a loose object's new place is saved, so the pieces stay solid (hidden, not walk-through) unless the
+player asks for walk-through. A piece counts when `BuiltWalk::Built` says it is one our player built (not a
 copy, not switched off, linked to the workbench) and it is not an actor and not one made or kept in this session (a build waiting
 for the host's answer, or kept as ours because the host was away: it stands).
 
@@ -5613,7 +5616,7 @@ each settlement and "shown again" when they come back; the dev command `wsputawa
 `cull`, `collision`, `both` or `off`, hides or shows one by hand. Rig: `sharedws-putaway`.
 
 Not covered: our own settlers, turrets and robots (actors) stand around the host's settlement in the friend's game; a loose object
-resting on a put-away piece, whose collision is off, falls (see the PR for what was measured); the stage 2 rule (one owner per
+resting on a put-away piece falls only with `bPutAwayWalkThrough` (freezing loose objects first is not built); the stage 2 rule (one owner per
 settlement, a friend-owned settlement shown to everyone) is not here.
 
 ### Settlers at the host's settlement: a job is a request (src/game/SettlerRequests.h, common/SettlerRoster.h, WorkshopSync.cpp)

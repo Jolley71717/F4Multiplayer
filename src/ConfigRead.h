@@ -225,6 +225,8 @@ namespace Config
 				a_settings.groupDifficulty = detail::ParsePercent(a_say, key, value, Protocol::SessionRules::MAX_GROUP_DIFFICULTY, a_settings.groupDifficulty);
 			} else if (key == "bPutAwayOwnSettlements") {
 				a_settings.putAwayOwnSettlements = detail::ParseBool(value);
+			} else if (key == "bPutAwayWalkThrough") {
+				a_settings.putAwayWalkThrough = detail::ParseBool(value);
 			} else if (key == "bSharedRolls") {
 				a_settings.sharedRolls = detail::ParseBool(value);
 			} else if (key == "bHideTutorials") {

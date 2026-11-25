@@ -8156,12 +8156,13 @@ namespace WorkshopSync
 		//
 		// In a friend's game under the shared workshop: each of the host's settlements (hostSettlements) that is loaded has its
 		// list of workshop items read a few times a second; our own pieces from before the session in it (never a copy, never
-		// one made or kept in the session, never an actor) are culled and have their collision switched off. Only those two
-		// things: a node's culled flag and a body's collision switch are not saved, so nothing is disabled, moved, unlinked or
-		// deleted, and nothing needs undoing in a save. A 3D made anew (a cell loaded again) is told again; leaving the session,
+		// one made or kept in the session, never an actor) are culled, and with bPutAwayWalkThrough their collision is switched
+		// off too. Only those two things: a node's culled flag and a body's collision switch are not saved, so nothing is
+		// disabled, moved, unlinked or deleted, and nothing needs undoing in a save. (Collision stays by default: a loose object
+		// resting on a piece falls when it goes, and where it lands is saved, measured on the rig.) A 3D made anew (a cell loaded again) is told again; leaving the session,
 		// a settlement the host loses and the switch turned off show them again.
 
-		constexpr auto PUT_AWAY_EVERY = std::chrono::milliseconds(250);
+		constexpr auto PUT_AWAY_EVERY = std::chrono::milliseconds(500);
 
 		bool PutAwayActive()
 		{
@@ -8182,13 +8183,13 @@ namespace WorkshopSync
 		}
 
 		// Shown, and solid again. a_root: the 3D we switched the collision of off; a 3D made since has its own collision.
-		void PutAwayShow(RE::TESObjectREFR& a_ref, std::uintptr_t a_root)
+		void PutAwayShow(RE::TESObjectREFR& a_ref, std::uintptr_t a_root, bool a_force = false)
 		{
 			if (const auto root = a_ref.Get3D()) {
 				if (root->GetAppCulled()) {
 					root->SetAppCulled(false);
 				}
-				if (a_root == reinterpret_cast<std::uintptr_t>(root)) {
+				if (a_root == reinterpret_cast<std::uintptr_t>(root) && (Config::Get().putAwayWalkThrough || a_force)) {
 					RE::bhkWorld::EnableCollision(root, true, true, true);
 				}
 			}
@@ -8251,10 +8252,10 @@ namespace WorkshopSync
 				if (!bench) {
 					continue;
 				}
-				if (!bench->extraList || !bench->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop)) {
+				if (!IsWorkbenchAnchor(bench.get())) {
 					continue;  // not a workbench to us: its pieces are not read
 				}
-				const auto children = bench->extraList->GetByType<RE::ExtraLinkedRefChildren>();
+				const auto children = bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
 				std::vector<RE::NiPointer<RE::TESObjectREFR>> items;
 				if (children) {
 					for (const auto& child : children->linkedChildren) {
@@ -8262,6 +8263,27 @@ namespace WorkshopSync
 							if (auto ref = child.REFR.get(); ref && !Protocol::IsShareableRef(ref->GetFormID())) {
 								items.push_back(std::move(ref));
 							}
+						}
+					}
+				}
+				// ...and the pieces our game made in the bench's own cell that are linked to it, listed or not (a piece linked by the
+				// console, as the rig does, is not always in the list; a built one is: this only adds)
+				if (const auto cell = bench->GetParentCell()) {
+					std::vector<std::uint32_t> made;
+					{
+						const RE::BSAutoLock l{ cell->spinLock };
+						for (const auto& ref : cell->references) {
+							if (ref && (ref->GetFormID() >> 24) == 0xFF) {
+								made.push_back(ref->GetFormID());
+							}
+						}
+					}
+					for (const auto made_id : made) {
+						if (std::ranges::any_of(items, [&](const auto& a_item) { return a_item->GetFormID() == made_id; })) {
+							continue;
+						}
+						if (auto ref = RE::NiPointer<RE::TESObjectREFR>{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(made_id) }) {
+							items.push_back(std::move(ref));
 						}
 					}
 				}
@@ -8273,7 +8295,7 @@ namespace WorkshopSync
 					const auto root = item->Get3D();
 					if (putAway.Want(item->GetFormID(), id, reinterpret_cast<std::uintptr_t>(root))) {
 						++putAwayDone;
-						PutAwayHide(*item, true, true);
+						PutAwayHide(*item, true, Config::Get().putAwayWalkThrough);
 						if (--budget == 0) {
 							whole = false;  // the rest next frame (what is told already costs nothing then)
 							break;
@@ -8299,7 +8321,7 @@ namespace WorkshopSync
 		// The dev command (wsputaway): what is put away, and a piece hidden or shown by hand for the experiment.
 		std::string DescribePutAwayState()
 		{
-			return std::format("putaway: active={} switch={} away={} shown={} calls={} keptOwn={} hosted={}", PutAwayActive(), Config::Get().putAwayOwnSettlements, putAway.Size(), putAwayShown, putAwayDone,
+			return std::format("putaway: active={} switch={} walkThrough={} away={} shown={} calls={} keptOwn={} hosted={}", PutAwayActive(), Config::Get().putAwayOwnSettlements, Config::Get().putAwayWalkThrough, putAway.Size(), putAwayShown, putAwayDone,
 				keptOwnPieces.size(), hostSettlements.Owned().size());
 		}
 
@@ -10482,7 +10504,7 @@ namespace WorkshopSync
 			PutAwayHide(*a_ref, false, true);
 		} else if (a_mode == "off") {
 			const auto root = a_ref->Get3D();
-			PutAwayShow(*a_ref, reinterpret_cast<std::uintptr_t>(root));
+			PutAwayShow(*a_ref, reinterpret_cast<std::uintptr_t>(root), true);
 		} else if (a_mode != "status") {
 			return "error: usage: wsputaway [<refHex> [cull|collision|both|off]]";
 		}
