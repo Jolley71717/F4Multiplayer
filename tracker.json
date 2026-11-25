@@ -1,7 +1,7 @@
 {
  "release": "0.21.3",
  "known_issues": [],
- "updated": "2026-11-25T07:39:11+00:00",
+ "updated": "2026-11-25T08:22:25+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1022,8 +1022,8 @@
    "title": "Join by direct IP (and LAN) besides Steam",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
-   "note": "Join by address merged: password proved not sent, host lets each joiner in; docs next",
+   "stage": 2,
+   "note": "Docs and rig step direct in PR 578; rig step passed",
    "pr": 576
   },
   {
