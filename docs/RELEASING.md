@@ -151,7 +151,16 @@ Library changed, or an ID in `src/` is wrong: look at it before going further.
 
 ## Promotion to the release
 
-The release is the rc that held, not a new build. The soak of the rc's zip is a 90-minute run after the gate passes:
+The release is the rc that held, not a new build. How long the rc is tested depends on the release:
+
+- A **patch release** (`X.Y.Z` with Z above 0: fixes only, the same protocol and session layout as the release before
+  it) is promoted on its gate alone. The gate already runs the end steps (the VM's restart and rejoin, fuzz, the
+  cleanup and the end checks), so a passing gate on the rc's zip is its verdict, written as below with `run=gate`.
+  The 90-minute soak has caught real bugs only in releases with new features or a new protocol (0.8.8, 0.10.0,
+  0.14.0); since it became rounds of the gate it found nothing in a release that the gate had not already found.
+- A **minor or major release** (new features, a new protocol or session layout) gets the soak as well.
+
+The soak of the rc's zip is a 90-minute run after the gate passes:
 `SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --soak 90`. It runs the whole standing set's loop
 (movement through the cell churn, every step with its checks, both directions where a step has two) round after round,
 25 to 30 minutes a round (three in 90 minutes), until the 90 minutes are up, then the end steps once: the VM's
@@ -176,8 +185,9 @@ verdict=PASS
    without the dedicated server) holding the rc's files byte for byte, but for the About page's notes
    (`release-notes.md`, the rc's own in the rc), which become `dist/RELEASE-X.Y.Z.md`: write those notes
    first, it refuses without them. Then their manifest and the
-   `.pdb` under the release's name. Only `promote.ps1` makes a release zip; skipping the soak means
-   publishing by hand, as a deliberate and visible choice.
+   `.pdb` under the release's name. Only `promote.ps1` makes a release zip; skipping the test that the
+   release's kind needs (the gate for a patch, the gate and the soak otherwise) means publishing by hand, as a
+   deliberate and visible choice.
 2. Run the commands it prints: tag the rc's commit `vX.Y.Z`, push the tag, and create the GitHub
    release with `dist/RELEASE-X.Y.Z.md` as the notes (say there that the build is identical to rcN:
    its log still names `rcN`). Both zips go on the release. Commit those notes to the branch afterwards,
