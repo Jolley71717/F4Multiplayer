@@ -1,7 +1,7 @@
 {
  "release": "0.21.3",
  "known_issues": [],
- "updated": "2026-11-24T23:38:14+00:00",
+ "updated": "2026-11-25T02:00:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3272,8 +3272,8 @@
    "title": "Shared bench: settlements the host doesn't own aren't shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 1,
-   "note": "Being built: stage 0 experiment, then stage 1 (a friend's own buildings put away at the host's settlements)"
+   "stage": 4,
+   "note": "PR 574 open (draft): stage 1 put-away built, rig step passes; walk-through off by default (loose objects fall); hum/light and save-load unchecked"
   },
   {
    "id": "qx9n",
