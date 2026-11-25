@@ -1,0 +1,4 @@
+New: join by address from the menu, for friends who are not on your Steam friends list (the host turns it on in Host controls, F1)
+New: the host lets each friend who joins by address in by hand, and the password is never sent as typed
+New: your own buildings are hidden at a settlement the host owns while the session lasts, and come back when you leave
+New protocol (85): everyone in a session needs 0.22.0
