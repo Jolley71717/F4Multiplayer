@@ -173,6 +173,7 @@ quest.hostile_companion = {player}s Entscheidung wendet {faction} gegen dich: {c
 quest.hostile_companion_unnamed = {player}s Entscheidung wendet eine Fraktion gegen dich: {companion} verlässt dich, wie beim Rauswurf im Spiel
 quest.a_companion = dein Begleiter
 workshop.rescued = Was du im Behälter eines Freundes hattest, ist jetzt in deinem Inventar
+workshop.putaway = Deine eigenen Bauteile, die die Siedlung des Gastgebers schon zeigt, sind für diese Sitzung ausgeblendet. Danach sind sie wieder da.
 workshop.shared.built = Als Stück des Hosts gebaut: in seinem Stromnetz, in seiner Siedlung
 workshop.shared.wired = Im Stromnetz des Hosts verkabelt
 workshop.shared.not_owned = Diese Siedlung gehört nicht dem Host: das Stück ist dein eigenes

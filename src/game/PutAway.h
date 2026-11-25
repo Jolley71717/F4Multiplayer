@@ -19,6 +19,11 @@
 // collision switch is part of a saved reference, so a save made meanwhile (or a crash) holds every piece as before, and
 // nothing has to be undone in a save hook. Leaving the session (or the host losing the settlement) shows them again.
 //
+// Only a piece the host's version covers is put away: a copy of a host piece of the same base (object) at the same workbench,
+// within COVER_TOLERANCE of its spot. Where the host's settlement has nothing there, the friend's piece stays shown and solid,
+// as before 0.22.0. The copies come from the shared workshop sync and may arrive after the first look: a piece becomes
+// covered when a matching copy appears and is shown again when it goes (the round's End releases what no longer qualifies).
+//
 // A piece the friend builds during the session is not put away: at a settlement the host owns it is the host's game's (a
 // copy), and if the host was away, it stays the friend's own and stands.
 //
@@ -28,6 +33,34 @@ namespace PutAway
 {
 	// How many pieces are put away (or shown again) in one frame: a settlement is hundreds of pieces.
 	inline constexpr std::size_t PER_FRAME = 48;
+
+	// How near the host's copy has to stand (units, each axis): the spot of a shared past is the same one to the unit; a few
+	// units tolerate the placement's rounding (the same radius an earlier session's copy is adopted within).
+	inline constexpr float COVER_TOLERANCE = 4.0f;
+
+	// What a piece or a copy is, for matching: its object, the workbench it belongs to, its spot.
+	struct Spot
+	{
+		std::uint32_t base = 0;
+		std::uint32_t bench = 0;
+		float         x = 0;
+		float         y = 0;
+		float         z = 0;
+	};
+
+	// Whether a_copy (a host piece's copy in our game) stands for a_piece: same object, same workbench, at its spot.
+	[[nodiscard]] constexpr bool Covers(const Spot& a_copy, const Spot& a_piece)
+	{
+		const auto close = [](float a, float b) { return (a > b ? a - b : b - a) <= COVER_TOLERANCE; };
+		return a_copy.base != 0 && a_copy.base == a_piece.base && a_copy.bench != 0 && a_copy.bench == a_piece.bench && close(a_copy.x, a_piece.x) &&
+		       close(a_copy.y, a_piece.y) && close(a_copy.z, a_piece.z);
+	}
+
+	// Whether any of the copies covers the piece.
+	[[nodiscard]] inline bool Covered(const Spot& a_piece, const std::vector<Spot>& a_copies)
+	{
+		return std::ranges::any_of(a_copies, [&](const Spot& a_copy) { return Covers(a_copy, a_piece); });
+	}
 
 	// A reference found in a host-owned workbench's list.
 	struct Piece
