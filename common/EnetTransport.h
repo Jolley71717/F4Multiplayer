@@ -13,7 +13,8 @@ class EnetServerTransport final : public ServerTransport
 {
 public:
 	// Binds the port (on 127.0.0.1 only if a_loopbackOnly). Returns nullptr (with a reason in a_error) if it can't.
-	static std::unique_ptr<EnetServerTransport> Create(std::uint16_t a_port, std::size_t a_maxPeers, bool a_loopbackOnly, std::string& a_error);
+	// a_bindIp (an IPv4 address of this machine) binds that address only, beside a listener on another one (a_loopbackOnly is then ignored).
+	static std::unique_ptr<EnetServerTransport> Create(std::uint16_t a_port, std::size_t a_maxPeers, bool a_loopbackOnly, std::string& a_error, const std::string& a_bindIp = {});
 
 	~EnetServerTransport() override;
 

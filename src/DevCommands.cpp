@@ -4227,6 +4227,11 @@ namespace DevCommands
 				Session::StopHosting();
 				return "stopped hosting";
 			}
+			if (args.size() == 2 && args[0] == "direct" && (args[1] == "on" || args[1] == "off")) {
+				// Joins by address on or off at run time (the menu's switch): the rig checks that nobody else is dropped.
+				const auto error = Session::SetDirectJoin(args[1] == "on");
+				return error.empty() ? std::string{ "direct=" } + std::string{ args[1] } : "error: " + error;
+			}
 			if (args.size() == 1 && args[0] == "host") {
 				const auto error = Session::StartHosting();
 				return error.empty() ? "hosting" : "error: " + error;

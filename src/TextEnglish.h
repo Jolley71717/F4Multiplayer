@@ -490,5 +490,14 @@ namespace Text
 		{ "mods.order", "In another place in your load order (no need to change these):" },
 		{ "mods.light_here", "{name} (light in your game, full in the host's)" },
 		{ "mods.full_here", "{name} (full in your game, light in the host's)" },
+		{ "session.direct_failed", "Multiplayer: joining by address could not be opened. Friends can still join through Steam." },
+		{ "menu.direct", "Join by address: {state}" },
+		{ "menu.direct_confirm", "Friends will also be able to join with your address, on your network or over the internet if you forward UDP port {port}. Anyone who can reach that port can try to join, so a password is set. The password is sent as typed: use one you use nowhere else. Windows may ask to let Fallout 4 through its firewall: allow it. Friends already in your game stay." },
+		{ "menu.direct_turn_on", "Turn on" },
+		{ "menu.direct_off_confirm", "Friends who joined by address are dropped. Friends who joined through Steam stay." },
+		{ "menu.direct_turn_off", "Turn off" },
+		{ "menu.hosting_direct", "Friends on your network join at {address}:{port}. Over the internet they need your public address (your router shows it) and UDP port {port} forwarded." },
+		{ "menu.hosting_direct_noaddr", "Joining by address is on (UDP port {port}), but this PC's network address was not found." },
+		{ "menu.direct_no_password", "No password: anyone who can reach this port can join." },
 	};
 }

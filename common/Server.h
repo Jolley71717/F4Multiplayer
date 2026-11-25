@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -181,8 +182,29 @@ public:
 
 	[[nodiscard]] bool Running() const { return running; }
 
+	// Opens the UDP port on each of a_ips (addresses of this machine) beside the running transports, or closes those
+	// listeners again, without touching anyone else's connection (a Steam friend stays). Closing drops only the players who
+	// came in over them. Done on the server thread; waits for it (a few seconds at most). Returns "" or why it failed (then
+	// none is left open). Any thread but the server's.
+	std::string SetDirect(bool a_open, std::vector<std::string> a_ips);
+
+	// The port is open on this machine's addresses (SetDirect).
+	[[nodiscard]] bool DirectOpen() const { return directOpen; }
+
 private:
 	void Run();
+
+	struct DirectRequest
+	{
+		bool                     open = false;
+		std::vector<std::string> ips;
+		std::string              error;
+		bool                     done = false;
+	};
+	std::mutex                     directMutex;
+	std::condition_variable        directDone;
+	std::shared_ptr<DirectRequest> directRequest;
+	std::atomic<bool>              directOpen{ false };
 
 	std::vector<std::string> TakeConsole()
 	{

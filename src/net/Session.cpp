@@ -8,6 +8,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "game/UiAddressEntry.h"
+#include "LocalAddress.h"
 #include "Server.h"
 #include "TimeScaleBook.h"
 #include "Text.h"
@@ -1335,6 +1336,15 @@ namespace Session
 		if (steamMode) {
 			Steam::StartHosting(settings.maxPlayers);
 		}
+		// bDirectJoin: the port opens on this PC's addresses too (a failure leaves Steam hosting as it was, and says so).
+		if (steamMode && settings.directJoin) {
+			if (const auto error = hostedServer->SetDirect(true, LocalAddress::All()); !error.empty()) {
+				REX::WARN("Session: joins by address could not be opened: {}", error);
+				Notify("session.direct_failed");
+			} else if (settings.password.empty()) {
+				REX::WARN("Session: joins by address are open without a password");
+			}
+		}
 		// Connect to our own server, leaving whatever we were joining (started from the menu mid-game).
 		// Steam's StartHosting has left any lobby we were in.
 		const auto own = std::format("127.0.0.1:{}", settings.port);
@@ -1355,6 +1365,26 @@ namespace Session
 		if (steamMode) {
 			Steam::StopHosting();
 		}
+	}
+
+	std::string SetDirectJoin(bool a_on)
+	{
+		if (!steamMode) {
+			return {};  // without Steam the port is open already
+		}
+		auto& settings = Config::Mutable();
+		if (hostedServer && hostedServer->Running() && hostedServer->DirectOpen() != a_on) {
+			if (auto error = hostedServer->SetDirect(a_on, a_on ? LocalAddress::All() : std::vector<std::string>{}); !error.empty()) {
+				REX::WARN("Session: joins by address: {}", error);
+				return error;
+			}
+			if (a_on && settings.password.empty()) {
+				REX::WARN("Session: joins by address are open without a password");
+			}
+		}
+		settings.directJoin = a_on;
+		Config::Write("bDirectJoin", a_on ? "true" : "false");
+		return {};
 	}
 
 	void Leave()
@@ -1437,6 +1467,7 @@ namespace Session
 		}
 		status.hosting = hostedServer && hostedServer->Running();
 		status.steam = steamMode;
+		status.direct = status.hosting && (!steamMode || hostedServer->DirectOpen());
 		status.address = serverAddress;
 		if (status.link == Status::Link::kConnecting && refusals.Last().empty()) {
 			status.failure = lastFailure == ClientConnection::Failure::kResolve ? Status::Failure::kBadName :
@@ -2057,8 +2088,8 @@ namespace Session
 		default:
 			break;
 		}
-		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
-			       status, localId, hostedServer && hostedServer->Running(), serverAddress.empty() ? "" : hostedServer ? "own" : SteamTransport::ParseAddress(serverAddress) ? "steam" : "udp", contentHash,
+		return std::format("status={} id={} hosting={} direct={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
+			       status, localId, hostedServer && hostedServer->Running(), hostedServer && hostedServer->DirectOpen(), serverAddress.empty() ? "" : hostedServer ? "own" : SteamTransport::ParseAddress(serverAddress) ? "steam" : "udp", contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + EffectTasks::Describe() + " " + ExitInventory::Describe() + " " + KillBlasts::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + RackDisplays::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FriendMap::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
 	}

@@ -13,6 +13,7 @@
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/RemotePlayers.h"
+#include "LocalAddress.h"
 #include "net/Session.h"
 #include "Platform.h"
 #include "steam/Steam.h"
@@ -547,6 +548,51 @@ namespace UiPages
 			});
 		}
 
+		// What the host controls say of joining by address, when the port is open: where, and that there is no password.
+		std::string DirectLine(const Protocol::HostInfo& a_info)
+		{
+			const auto& settings = Config::Get();
+			const auto  address = LocalAddress::Default();
+			auto        line = address.empty() ? Text::Format("menu.hosting_direct_noaddr", { { "port", settings.port } }) :
+			                                     Text::Format("menu.hosting_direct", { { "address", address }, { "port", settings.port } });
+			if (!a_info.password) {
+				line += " " + Text::Get("menu.direct_no_password");
+			}
+			return line;
+		}
+
+		// Joins by address on or off from the host controls, after a word on what it means. With no password, one is made up
+		// and the server has it before the port opens, so nobody gets in without one. Going off drops only those who came in
+		// by address.
+		void ShowDirectConfirm(bool a_on)
+		{
+			const Button back{ Text::Get("menu.back"), [] { ShowHostControls(0); } };
+			if (!a_on) {
+				Show(Text::Get("menu.direct_off_confirm"), { back, { Text::Get("menu.direct_turn_off"), [] {
+																	  Session::SetDirectJoin(false);
+																	  ShowHostControls(0);
+																  } } });
+				return;
+			}
+			const auto open = [] {
+				if (!Session::SetDirectJoin(true).empty()) {
+					Show(Text::Get("session.direct_failed"), { { Text::Get("menu.back"), [] { ShowHostControls(0); } } });
+					return;
+				}
+				ShowHostControls(0);
+			};
+			Show(Text::Format("menu.direct_confirm", { { "port", Config::Get().port } }), { back, { Text::Get("menu.direct_turn_on"), [open] {
+																								 if (!Config::Get().password.empty()) {
+																									 open();
+																									 return;
+																								 }
+																								 const auto made = NewPassword();
+																								 Config::Mutable().password = made;
+																								 Config::Write("sPassword", made);
+																								 HostDo({ Protocol::HostAction::kSetPassword, 0, 0, made }, open);
+																							 } } });
+		}
+
 		// Back to where the password page was opened from.
 		void LeavePasswordPage()
 		{
@@ -780,7 +826,9 @@ namespace UiPages
 			// In the panel, what each row is about shows beside it when chosen.
 			const auto lockLine = Text::Get(info->locked ? "menu.hc_locked" : "menu.hc_open");
 			const auto bansLine = Text::Format("menu.hc_banned", { { "n", info->bans } });
-			const auto body = inPanel ? std::string{} : lockLine + "\n" + PasswordLine(*info) + "\n" + bansLine;
+			const auto status = Session::GetStatus();
+			const auto directLine = status.direct && status.steam ? DirectLine(*info) : std::string{};
+			const auto body = inPanel ? std::string{} : lockLine + "\n" + PasswordLine(*info) + "\n" + bansLine + (directLine.empty() ? "" : "\n" + directLine);
 			std::vector<Button> entries;
 			entries.push_back({ Text::Format("menu.hc_players", { { "n", others } }), [] { ShowHostPlayers(0); }, Text::Get("menu.hc_pick_player") });
 			entries.push_back({ Text::Get(info->locked ? "menu.hc_unlock" : "menu.hc_lock"), [locked = info->locked, a_page] {
@@ -792,6 +840,12 @@ namespace UiPages
 				lockLine });
 			entries.push_back({ Text::Get("menu.hc_password_button"), ShowHostPassword, PasswordLine(*info) });
 			entries.push_back({ Text::Format("menu.hc_bans", { { "n", info->bans } }), [] { ShowBans(0); }, bansLine });
+			if (status.steam) {
+				// Without Steam the port is open already, and the page says so in the status line.
+				const bool on = status.direct;
+				entries.push_back({ Text::Format("menu.direct", { { "state", OnOff(on) } }), [on] { ShowDirectConfirm(!on); },
+					on ? directLine : Text::Format("menu.direct_confirm", { { "port", Config::Get().port } }) });
+			}
 			ShowPaged(body, std::move(entries), a_page, ShowHostControls, { Text::Get("menu.back"), ShowMain });
 		}
 
