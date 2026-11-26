@@ -5569,7 +5569,7 @@ holds it, and whose drop half puts it down: the stack link found again, `Worksho
 (`Workshop::ItemMovedEvent`, its source 2195288, the one `RegisterForItemMoved` 2194932 hands out), the navmesh and the bench's
 resources. Nothing read proves `SetLocationOnReference` 2201138 re-homes a reference into another exterior cell.
 
-The slice that ships is the one where nothing can be left half done. **The host's game moves for a friend only a piece that has
+The first slice (power pieces, pieces something stands on and actors are refused there; phase 2k, below, lifts those refusals) is the one where nothing can be left half done. **The host's game moves for a friend only a piece that has
 nothing to do with power** (no power generated, radiated, required or passed on, no connection point, no wire, not on a grid:
 `IsPowerPiece`, `TiedToPower`), **that nothing stands on** (no stacked child, keyword 4797181), that is no actor, that the host's
 own workshop mode does not hold or highlight, and only to a spot inside the build area, the bench's reach and the piece's own
@@ -5614,9 +5614,7 @@ host's report is what every copy follows); refused or never answered, the copy g
 it still stands where it was put down (`StillWhereDropped`: moved since, the host's report moved it), with a notice naming why
 (`workshop.shared.move_*`).
 
-**Not covered, on purpose.** Power pieces and anything wired or on a grid (the engine's move re-strings wires and re-homes grid
-nodes from workshop mode's own state; the host refuses, and the friend's grab key refuses them too). Pieces something stands on
-(the engine carries the stack along). A moved piece is not stacked again on what it lands on (`Workshop::CheckStackItem` reads
+**Not covered, on purpose.** (Power pieces, pieces something stands on and actors were left out of the first slice and are phase 2k, below.) A piece with a power link that is no wire (snapped on to pass power). A moved piece is not stacked again on what it lands on (`Workshop::CheckStackItem` reads
 workshop mode's placement data): it stands free. Moves across a cell's edge. A snapped neighbour is left where it is (a snap is
 only where a piece was put, and the move's own transform is the friend's drop, which the friend's engine snapped). The grab
 itself has not run in a game: until it has, it stays behind the switch. Known open ends of the grab, each said in the code:
@@ -5631,8 +5629,48 @@ turning the view and a second Accept asks the move, the host's bag ending where 
 and a solo load on the VM (grids clean; the copy the save keeps still blocked), and a rejoin (the new copy stands where the bag was moved to). `SWS_MOVE_GRAB=0` leaves the
 grab part out.
 
-**Phase 2 (the rest, not here).** Moves of power pieces, of pieces something stands on and across a cell's edge, and the grab
-out from behind its switch (**A move.**, above); a
+
+**Phase 2k: stacked, wired and actor pieces, and wires (#604).** The four things a friend could not do at the host's
+settlement are now the host's game doing them for the friend; the friend's side needed only its keys let through. No new
+message and no new field (protocol and session layout unchanged).
+
+1. *A piece something stands on* (a floor under walls, a bed with a lamp on it). The host moves the piece and everything
+standing on it, and on those (`StackDescendants`, linked children under the stack keyword), each with the same engine steps
+(`SharedMove::CARRIED_STEPS`: no stack link cleared, because it keeps standing on the piece that carries it), to the place it
+keeps relative to the moved piece (`SharedMove::Carried`: the child's offset turned by the heading's change). Refused, as a
+whole and before anything moves, when more than `MAX_CARRIED` (64) stand on it, when the move would tilt the piece (only the
+heading turns the stack), or when one of them is a piece the host would not move itself (`CanCarry`: the same target tests as
+the piece, its 3D in, not held, not in use, not a copy or a wire, nothing snapped to it for power, and still in its cell):
+`kPieceStacked`. A friend's copy carries no stack link (the protocol has none), so the friend's grab never needed a refusal for
+it; the copies of the carried pieces follow through the host's moved reports as any moved piece's copy does.
+2. *A power piece, or anything wired or on a grid.* For a piece a grid names or that has power links the host's steps are
+`SharedMove::POWER_MOVE_STEPS`: the engine's grab, then its drop. Before it moves, each wire strung to it is taken off its ends
+and the grids with the reference kept (`kPowerOut`: `Unbuild` of the wire, its ends remembered) and the piece itself is taken
+off the grids (`Workshop::ExtraData::RemoveItem`, not `Unbuild`, which would unlink it from its workbench); after it stands,
+the piece is on the grid again (`Workshop::ExtraData::AddItem`: its wireless links read where it stands now) and each wire is
+strung again between the same two ends by the steps a friend's wire request runs (`SharedWorkshop::StringWire`), so the wire
+keeps its reference (its copies keep their key and are redrawn from the report the moved-wire check sends). A piece with a power
+link that is no wire (one snapped on to pass power: bound to where the pieces stand) is still refused, `kPieceWired`; that is
+the part of the class not done. The friend's grab key refuses only a copy our own game finds on a grid or with power links
+(`tied`, which a copy never is).
+3. *A turret or another built actor.* The same steps with the actor's own placement (`Actor::SetPosition` with its character
+controller, in the move's transform and again where a copy is put back) and no `MakeReferenceStatic` (an actor has no static
+body to make). A settler or a companion, which are linked to the bench too, are refused by the engine's own store test as they
+always were (`SharedMove::Target`; the rule no longer refuses an actor by being one).
+4. *A wire.* A wire is the host's piece like any other, linked to the workbench, but the engine's scrap test refuses it (no recipe
+makes it) and has no confirmation to open, so the friend's Scrap and Store keys on a copy of the host's wire ask the host at once
+(`SharedWorkshop::ScrapKey::kAskWire`, `WireKeyAsk`: marked asked, then asked by the main thread once the copy is checked again),
+and a scrap or a store request that names a wire is served by `RemoveWire`: the destroyed event (the workbench's scripts, and our
+sink reports the wire scrapped so every copy goes), the wire off its ends' power links, the grids and the budget (`Unbuild`),
+switched off and deleted, the bench counted again. A store of a wire is the same removal: there is no stored entry to make and
+nothing is yielded.
+
+The grab (`wsmode grab`) is on by default now: the rig check `sharedws-move` ran the engine's own grab on a copy (the real
+Accept key, the carry by turning the view, the drop asked and applied, a cancel asking nothing) with the switch on, and
+`wsmode grab off` is the dev switch that refuses it as before. The rig check `sharedws-moveclass` (opt-in) proves each of the
+four on both games. Dev: `wsstack <child> <parent>` links a piece as standing on another (the rig has no placement that
+stacks); `wsscrap` and `wsstore` on a copy of the host's piece ask the host.
+**Phase 2 (the rest, not here).** Moves across a cell's edge, and of pieces snapped on for power (**A move.**, above, and phase 2k); a
 refusal re-placing the copy from the server's kept report; repair, settler assignment and the host's settlement numbers. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
 adopted; per-workbench owners for dedicated servers.
 

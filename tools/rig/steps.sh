@@ -4302,7 +4302,7 @@ _sws_pre_body() {
 # moved. The request (the dev wsmove on the VM's copy: the copy put a step on and its move asked, as the drop of a grabbed copy
 # asks it): the host's game moves its bag with the engine's steps and answers applied, both stand at the spot, nothing is
 # yielded or counted anywhere; the copy of the generator asked the same way is refused (a power piece) and put back where it
-# stood. The engine's grab (SWS_MOVE_GRAB=1, the default; wsmode grab on: the dev switch it sits behind): with the switch off
+# stood. The engine's grab (SWS_MOVE_GRAB=1, the default; wsmode grab on: on by default; wsmode grab off is the dev switch that refuses it): with the switch off
 # the real Accept key on the copy is refused; with it on, the key picks the copy up in workshop mode, Cancel lets it go where
 # it stood and nothing is asked; picked up again, the VM turns its view (the held piece goes where it looks: the player's own
 # way of moving it, no setpos) until the engine says it can be put down, Accept puts it down, the move is asked, and the
@@ -4335,7 +4335,7 @@ step_sharedws_move() {
 	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshopEdit is on" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
 	if [ "$(field "$(vm wsmode)" hooks)" != true ]; then fail "$label: precondition: the VM's pick hooks are installed (the grab key's among them)" "$(vm wsmode | cut -c1-160)"; return; fi
 	if [ "$(field "$(vm wsmode)" edit)" != true ]; then fail "$label: precondition: the VM has the host's bSharedWorkshopEdit from the welcome" "$(vm wsmode | cut -c1-160)"; return; fi
-	expect_eq "$label: copies are not picked up in workshop mode until the dev switch says so (wsmode grab off by default)" "$(_sws_counter vm grab)" off
+	expect_eq "$label: copies are picked up in workshop mode by default (the grab switch is on; wsmode grab off is the dev switch that refuses it)" "$(_sws_counter vm grab)" on
 	enter_both SanctuaryExt 14
 	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
 	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then setup_fault "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
@@ -4378,9 +4378,6 @@ step_sharedws_move() {
 	if _sws_at host "$hb" "$b1"; then pass "$label: the host's bag stands at the spot" "$(_sws_place host "$hb")"; else fail "$label: the host's bag stands at the spot" "asked '$b1', stands at '$(_sws_place host "$hb")'"; fi
 	if wait_for 15 _sws_at vm "$vb" "$b1"; then pass "$label: the VM's copy followed it there (the host's report of its moved piece, the piece stream alone)" "$(_sws_place vm "$vb")"
 	else fail "$label: the VM's copy followed it there (the host's report of its moved piece, the piece stream alone)" "host at '$b1', the copy at '$(_sws_place vm "$vb")'"; fi
-	out=$(host "wsmove $hg $gto")
-	if grep -q "^refused: the piece is wired or powered" <<<"$out" && _sws_at host "$hg" "$g0" 1; then pass "$label: the host's game refuses to move a power piece that way (its generator: a plain refusal, nothing moved)" "$(cut -c1-200 <<<"$out")"
-	else fail "$label: the host's game refuses to move a power piece that way (its generator: a plain refusal, nothing moved)" "$(cut -c1-240 <<<"$out"); stands at '$(_sws_place host "$hg")', stood at '$g0'"; fi
 	out=$(host "wsmove $hb $far")
 	if grep -q "^refused: too far from the workbench" <<<"$out" && grep -q "sameCell=false" <<<"$out" && _sws_at host "$hb" "$b1" 1; then pass "$label: ... and a move into another cell (out of reach: nothing moved)" "$(cut -c1-200 <<<"$out")"
 	else fail "$label: ... and a move into another cell (out of reach: nothing moved)" "$(cut -c1-240 <<<"$out"); stands at '$(_sws_place host "$hb")'"; fi
@@ -4414,20 +4411,18 @@ step_sharedws_move() {
 	_sws_unchanged "$label: the VM's build budget is what it was" "$vbud0" "$(_sws_budget vm)"
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after the move"
 	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in after the move"
-	# a power piece's copy asked the same way: the host refuses, the copy goes back where it stood
+	# a power piece's copy asked the same way: the host carries it (its grid places and wires are taken off and put back), and the copy follows
 	win_mark sws host; win_mark sws vm
 	local vg0; vg0=$(_sws_place vm "$vg")
 	out=$(vm "wsmove $vg $gto")
-	case "$out" in "copy $vg put at "*"asked of the host as request "*) pass "$label: the VM's move of its copy of the generator is asked (the dev command skips the grab key's own refusal)" "$(cut -c1-200 <<<"$out")";; *) fail "$label: the VM's move of its copy of the generator is asked (the dev command skips the grab key's own refusal)" "$(cut -c1-240 <<<"$out")";; esac
-	if wait_for 20 _sws_move_answered vm "$vg" "the piece is wired or powered"; then pass "$label: the host's game refuses it: a power piece is not moved for a friend" "$(grep -oE 'WorkshopSync: request [0-9]+ \(move\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
-	else fail "$label: the host's game refuses it: a power piece is not moved for a friend" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|the move of our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
-	if _sws_move_logged host "WorkshopSync: the move of our $hg for player [0-9]+'s request [0-9]+ refused \(.*power=true"; then pass "$label: ... for its power, said in the host's log" "$(grep -oE "WorkshopSync: the move of our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-240)"
-	else fail "$label: ... for its power, said in the host's log" "$(grep -E "WorkshopSync: (the move of our|player)" "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
-	if wait_for 10 _sws_at vm "$vg" "$vg0" 1; then pass "$label: the VM's copy of the generator is back where it stood" "$(_sws_place vm "$vg")"; else fail "$label: the VM's copy of the generator is back where it stood" "stood at '$vg0', stands at '$(_sws_place vm "$vg")'"; fi
-	if _sws_at host "$hg" "$g0" 1; then pass "$label: the host's generator never moved" "$(_sws_place host "$hg")"; else fail "$label: the host's generator never moved" "stood at '$g0', stands at '$(_sws_place host "$hg")'"; fi
-	expect_eq "$label: the VM counts one copy put back" "$(( $(_sws_counter vm movesPutBack) - ${p0:-0} ))" 1
+	case "$out" in "copy $vg put at "*"asked of the host as request "*) pass "$label: the VM's move of its copy of the generator is asked" "$(cut -c1-200 <<<"$out")";; *) fail "$label: the VM's move of its copy of the generator is asked" "$(cut -c1-240 <<<"$out")";; esac
+	if wait_for 20 _sws_move_answered vm "$vg" applied; then pass "$label: the host's game moved its generator and answered applied (a power piece is carried for a friend)" "$(grep -oE 'WorkshopSync: request [0-9]+ \(move\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+	else fail "$label: the host's game moved its generator and answered applied (a power piece is carried for a friend)" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|the move of our $hg|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
+	if wait_for 5 _sws_at host "$hg" "$gto" 2; then pass "$label: the host's generator stands where the VM put its copy" "$(_sws_place host "$hg")"; else fail "$label: the host's generator stands where the VM put its copy" "asked '$gto', stands at '$(_sws_place host "$hg")'"; fi
+	if wait_for 10 _sws_at vm "$vg" "$gto" 2; then pass "$label: the VM's copy of the generator stands there too" "$(_sws_place vm "$vg")"; else fail "$label: the VM's copy of the generator stands there too" "asked '$gto', stands at '$(_sws_place vm "$vg")', stood at '$vg0'"; fi
+	expect_eq "$label: no copy was put back" "$(( $(_sws_counter vm movesPutBack) - ${p0:-0} ))" 0
 	expect_eq "$label: the dev moves ran on the VM's main thread (no off-thread call counted across them)" "$(field "$(dc vm 'net status')" offThread)" "${o0:-0}"
-	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after the refused move"
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after the move of a power piece"
 
 	# 3. the engine's grab, behind its dev switch: refused while off; on, a cancel asks nothing, a drop elsewhere asks the move
 	if [ "$SWS_MOVE_GRAB" = 1 ]; then
@@ -4435,6 +4430,7 @@ step_sharedws_move() {
 		if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; _sws_cleanup; return; fi
 		if ! _sws_put_away vm "$label"; then _ws_exit vm; _sws_cleanup; return; fi
 		win_mark sws host; win_mark sws vm
+		vm "wsmode grab off" >/dev/null
 		r0=$(_sws_counter vm grabsRefused)
 		if _sws_aim_press vm "$vb" "$WS_KEY_SELECT" select "$label"; then
 			sleep 1
@@ -9266,4 +9262,130 @@ step_direct() {
 	if grep -qiE 'by address|waiting for the host|let in|admit' "$f"; then pass "direct: the VM's log records the join by address" "$(grep -ciE 'by address|waiting for the host|let in|admit' "$f") line(s)"
 	else warn "direct: the VM's log records the join by address" "no line about it in the VM's log since the set-up"; fi
 	_direct_leave
+}
+
+# ---- the shared workshop's move and wire classes: a friend moves what stands on, what is wired and what is an actor, and removes a wire
+# (opt-in: smoke.sh --only sharedws-moveclass) ------------------------------------------------------------------------------------
+# The one-way set-up (the host's generator, the VM's construction light wired to it: the host's pieces, the VM's copies), then, by the
+# dev wsmove on the VM's copies (the request a drop of a grabbed copy asks): the generator moved (a power piece with a wire: its grid
+# places and its wire taken off and put back, the light still on the grid, the wire the same reference), the light moved (a wired
+# receiver), two sleeping bags with one stacked on the other (dev wsstack: the rig has no placement that stacks) moved as one (the child
+# keeps its place on the parent, both copies follow), the generator stacked on a bag and carried with it (a wired power piece as a
+# carried child), a machinegun turret (an actor), and the VM's removal of the wire (dev wsscrap on its copy, then a second wire removed
+# with dev wsstore). Asserted for each: answered applied, the host's pieces where they were asked, the VM's copies there too, nothing
+# copied twice or lost (the bench's items, the grids with no deleted reference, the VM's grids clean). Console placement,
+# SetOwnedByPlayer and throwaway saves, as the other sharedws steps.
+_sws_wsinfo_power() { field "$(dc "$1" "wsinfo $2")" power; }
+_sws_gridtext() { dc "$1" "wsgrid $SANCT_BENCH" | cut -c1-400; }
+_sws_asked_ok() {  # _sws_asked_ok <label> <vm copy> <x y z rz> <host ref> <what>: the dev wsmove asked, answered applied, both stand there
+	local label=$1 vc=$2 to=$3 hr=$4 what=$5 out
+	win_mark sws host; win_mark sws vm
+	out=$(vm "wsmove $vc $to")
+	case "$out" in "copy $vc put at "*"asked of the host as request "*) pass "$label: the VM's move of its copy of the $what is asked" "$(cut -c1-160 <<<"$out")";; *) fail "$label: the VM's move of its copy of the $what is asked" "$(cut -c1-240 <<<"$out")"; return 1;; esac
+	if wait_for 20 _sws_move_answered vm "$vc" applied; then pass "$label: the host answered applied: its $what is carried for the friend" "$(grep -oE 'WorkshopSync: request [0-9]+ \(move\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | tail -1)"
+	else fail "$label: the host answered applied: its $what is carried for the friend" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (the move of our $hr|our $hr)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; return 1; fi
+	if wait_for 5 _sws_at host "$hr" "$to" 2; then pass "$label: the host's $what stands where the VM put its copy" "$(_sws_place host "$hr")"; else fail "$label: the host's $what stands where the VM put its copy" "asked '$to', stands at '$(_sws_place host "$hr")'"; fi
+	if wait_for 10 _sws_at vm "$vc" "$to" 2; then pass "$label: the VM's copy of the $what stands there after the host's report" "$(_sws_place vm "$vc")"; else fail "$label: the VM's copy of the $what stands there after the host's report" "asked '$to', stands at '$(_sws_place vm "$vc")'"; fi
+}
+_sws_alive() {  # _sws_alive <who> <ref>: that game's reference is neither deleted nor disabled
+	local i; i=$(dc "$1" "refinfo $2"); case "$i" in error*) return 1;; esac
+	[ "$(field "$i" deleted)" != true ] && [ "$(field "$i" disabled)" != true ]
+}
+step_sharedws_moveclass() {
+	section "shared workshop: a friend moves what stands on, what is wired and an actor, and removes a wire (the host's engine steps; console placement, SetOwnedByPlayer and throwaway saves)"
+	local r label="sharedws-moveclass"
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshopEdit is on" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then setup_fault "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	_sws_keys vm || return
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else setup_fault "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	_sws_one_way host vm || return
+	local hg=$SWS_HG vg=$SWS_VG hl w vw vl g0 gto l0 lto c0 out g p0
+	hl=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_WIRED_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)
+	w=$(host "wsinfo ${hl:-0}" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
+	vl=$(_sws_copy_of vm "${hl:-0}")
+	if [ -z "$hg" ] || [ -z "$vg" ] || [ -z "$hl" ] || [ -z "$w" ] || [ -z "$vl" ]; then fail "$label: precondition: the host's generator, light and wire and the VM's copies of the generator and the light" "generator '$hg'/'$vg' light '$hl'/'$vl' wire '$w'"; _sws_cleanup; return; fi
+	crash_snapshot
+	g0=$(_sws_place host "$hg"); gto=$(_sws_step "$g0" 100); l0=$(_sws_place host "$hl"); lto=$(_sws_step "$l0" 80)
+	c0=$(_sws_stacks host); p0=$(_sws_wsinfo_power host "$hl")
+	# 1. a power piece with a wire: the generator
+	_sws_asked_ok "$label" "$vg" "$gto" "$hg" "generator (a power piece with a wire)"
+	if _sws_grid_has host "$hg" "$hl" "$w"; then pass "$label: the host's grid still holds the generator, the light and the same wire" "$(_sws_gridtext host)"; else fail "$label: the host's grid still holds the generator, the light and the same wire" "$(_sws_gridtext host)"; fi
+	if _sws_alive host "$w"; then pass "$label: the wire is the same reference, alive" "$w"; else fail "$label: the wire is the same reference, alive" "$(host "refinfo $w" | cut -c1-200)"; fi
+	expect_eq "$label: the light's power link is the same wire" "$(_sws_wsinfo_power host "$hl")" "$p0"
+	# 2. a wired receiver: the light
+	_sws_asked_ok "$label" "$vl" "$lto" "$hl" "light (wired, on the grid)"
+	if _sws_grid_has host "$hg" "$hl" "$w"; then pass "$label: ... the grid still holds the generator, the light and the wire" "$(_sws_gridtext host)"; else fail "$label: ... the grid still holds the generator, the light and the wire" "$(_sws_gridtext host)"; fi
+	g=$(host "wsgrid $SANCT_BENCH"); if grep -q "gone named=0" <<<"$g"; then pass "$label: the host's grids name no deleted reference after the power moves" "$(grep -oE 'copies named=[0-9]+ gone named=[0-9]+' <<<"$g")"; else fail "$label: the host's grids name no deleted reference after the power moves" "$(cut -c1-200 <<<"$g")"; fi
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after them"
+	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in after them"
+	# 3. a piece with something standing on it (a bag on a bag), and the wired generator carried on a bag
+	local ba bb va vb a0 b0 a1 b1 a2 b1x ba_to
+	a0=$(_sws_place host "$hg"); ba=$(_sws_host_piece_at "$SWS_BED" $(_sws_step "$a0" 250 | cut -d" " -f1-3) "$label"); [ -z "$ba" ] && { _sws_cleanup; return; }
+	b0=$(_sws_place host "$ba"); bb=$(_sws_host_piece_at "$SWS_BED" $(_sws_step "$b0" 120 | cut -d" " -f1-3) "$label"); [ -z "$bb" ] && { _sws_cleanup; return; }
+	wait_for 15 _sws_has_copy vm "$ba"; wait_for 15 _sws_has_copy vm "$bb"
+	va=$(_sws_copy_of vm "$ba"); vb=$(_sws_copy_of vm "$bb")
+	if [ -z "$va" ] || [ -z "$vb" ]; then fail "$label: precondition: the VM has copies of both bags" "'$va' '$vb'"; _sws_cleanup; return; fi
+	out=$(host "wsstack $bb $ba"); case "$out" in *"stands on"*"1 stack children"*) pass "$label: set-up: the second bag stands on the first (dev wsstack)" "$out";; *) fail "$label: set-up: the second bag stands on the first (dev wsstack)" "$out"; _sws_cleanup; return;; esac
+	ba_to=$(_sws_step "$(_sws_place host "$ba")" 90)
+	b0=$(_sws_place host "$ba"); b1x=$(_sws_place host "$bb")
+	_sws_asked_ok "$label" "$va" "$ba_to" "$ba" "bag with another standing on it"
+	a1=$(_sws_place host "$ba"); b1=$(_sws_place host "$bb")
+	if awk -v a0="$b0" -v b0="$b1x" -v a1="$a1" -v b1="$b1" 'BEGIN{ split(a0,p0," "); split(b0,q0," "); split(a1,p1," "); split(b1,q1," "); dx=(q1[1]-p1[1])-(q0[1]-p0[1]); dy=(q1[2]-p1[2])-(q0[2]-p0[2]); exit !(sqrt(dx*dx+dy*dy)<=2 && (p1[1]!=p0[1] || p1[2]!=p0[2])) }'; then pass "$label: the bag standing on it was carried with it, at the same place on it" "parent $b0 -> $a1, child $b1x -> $b1"; else fail "$label: the bag standing on it was carried with it, at the same place on it" "parent $b0 -> $a1, child $b1x -> $b1"; fi
+	if wait_for 10 _sws_at vm "$vb" "$b1" 2; then pass "$label: the VM's copy of the carried bag follows" "$(_sws_place vm "$vb")"; else fail "$label: the VM's copy of the carried bag follows" "host $b1, VM $(_sws_place vm "$vb")"; fi
+	if _sws_alive host "$bb"; then pass "$label: the carried bag is alive, one of it" "$bb"; else fail "$label: the carried bag is alive, one of it" "$(host "refinfo $bb" | cut -c1-160)"; fi
+	# the wired generator as a child
+	out=$(host "wsstack $hg $ba"); case "$out" in *"stands on"*) pass "$label: set-up: the generator stands on the bag (dev wsstack)" "$out";; *) fail "$label: set-up: the generator stands on the bag (dev wsstack)" "$out";; esac
+	g0=$(_sws_place host "$hg"); a2=$(_sws_step "$(_sws_place host "$ba")" -90)
+	_sws_asked_ok "$label" "$va" "$a2" "$ba" "bag with the wired generator standing on it"
+	if _sws_grid_has host "$hg" "$hl" "$w"; then pass "$label: the grid still holds the carried generator, the light and the wire" "$(_sws_gridtext host)"; else fail "$label: the grid still holds the carried generator, the light and the wire" "$(_sws_gridtext host)"; fi
+	if ! _sws_at host "$hg" "$g0" 5; then pass "$label: the generator moved with the bag" "$g0 -> $(_sws_place host "$hg")"; else fail "$label: the generator moved with the bag" "$g0 -> $(_sws_place host "$hg")"; fi
+	# 4. an actor: a machinegun turret
+	local ht vt t0 tto
+	out=$(host "wsreport place $SWS_MG_TURRET $SANCT_BENCH"); ht=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$ht" ]; then fail "$label: the host's machinegun turret is placed" "$out"; else
+		_sws_placed host "$ht"; sleep 2; host "wsfinish $ht $SANCT_BENCH" >/dev/null
+		wait_for 25 _sws_has_copy vm "$ht"; vt=$(_sws_copy_of vm "$ht")
+		t0=$(_sws_place host "$ht"); tto=$(_sws_step "$t0" 90)
+		if [ -z "$vt" ]; then fail "$label: the VM has a copy of the host's turret" "$(vm 'wspower copies' | cut -c1-160)"; else _sws_asked_ok "$label" "$vt" "$tto" "$ht" "machinegun turret (an actor)"; fi
+	fi
+	# 5. a wire: the VM removes the host's wire (scrap), then another is strung and stored
+	# (the host's wire gets its copy on the VM once its 3D is drawn: a wire the host strung for a friend sometimes never is, which the
+	# host's log says as "added nothing to the budget"; the moves above drew this one again, and it is reported once more here)
+	host "wsreport $w $SANCT_BENCH" >/dev/null; wait_for 40 _sws_has_copy vm "$w"; vw=$(_sws_copy_of vm "$w")
+	if [ -z "$vw" ]; then fail "$label: precondition: the VM has a copy of the host's wire" "wire '$w': $(vm 'wspower copies' | cut -c1-200)"; _sws_cleanup; return; fi
+	win_mark sws host; win_mark sws vm
+	out=$(vm "wsscrap $vw")
+	case "$out" in *"scrap asked of the host"*) pass "$label: the VM's scrap of its copy of the wire is asked of the host" "$out";; *) fail "$label: the VM's scrap of its copy of the wire is asked of the host" "$out";; esac
+	if wait_for 20 _sws_scrap_answered vm applied; then pass "$label: the host removed its wire and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(scrap\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | tail -1)"; else fail "$label: the host removed its wire and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $w)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+	if wait_for 5 _sws_gone host "$w"; then pass "$label: the host's wire is gone" "$(host "refinfo $w" | cut -c1-100)"; else fail "$label: the host's wire is gone" "$(host "refinfo $w" | cut -c1-200)"; fi
+	if wait_for 15 _sws_no_copy vm "$w"; then pass "$label: the VM's copy of the wire went with the host's report" "no copy of $w"; else fail "$label: the VM's copy of the wire went with the host's report" "$(vm "refinfo $vw" | cut -c1-160)"; fi
+	if _sws_alive host "$hg" && _sws_alive host "$hl"; then pass "$label: the generator and the light stand (only the wire went)" "ok"; else fail "$label: the generator and the light stand (only the wire went)" "generator $(host "refinfo $hg" | cut -c1-80) light $(host "refinfo $hl" | cut -c1-80)"; fi
+	g=$(host "wsgrid $SANCT_BENCH"); if grep -q "gone named=0" <<<"$g" && ! grep -qE "[/>]$w" <<<"$g"; then pass "$label: the host's grids name no deleted reference and no longer the wire" "$(cut -c1-160 <<<"$g")"; else fail "$label: the host's grids name no deleted reference and no longer the wire" "$(cut -c1-200 <<<"$g")"; fi
+	# a second wire, removed by the store path
+	win_mark sws host; win_mark sws vm
+	out=$(vm "wswire $vg $vl"); case "$out" in wire*|requested*) pass "$label: set-up: a second wire is strung by the VM's request (dev wswire)" "$out";; *) fail "$label: set-up: a second wire is strung by the VM's request (dev wswire)" "$out";; esac
+	sleep 4
+	local w2 vw2
+	w2=$(host "wsinfo $hl" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
+	host "wsreport ${w2:-0} $SANCT_BENCH" >/dev/null; wait_for 40 _sws_has_copy vm "${w2:-0}"; vw2=$(_sws_copy_of vm "${w2:-0}")
+	win_mark sws host; win_mark sws vm
+	if [ -n "$w2" ] && [ -n "$vw2" ]; then
+		out=$(vm "wsstore $vw2")
+		case "$out" in *"store asked of the host"*) pass "$label: the VM's store of its copy of the second wire is asked of the host" "$out";; *) fail "$label: the VM's store of its copy of the second wire is asked of the host" "$out";; esac
+		if wait_for 20 _sws_store_answered vm applied; then pass "$label: the host removed that wire and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(store\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | tail -1)"; else fail "$label: the host removed that wire and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|')"; fi
+		if wait_for 5 _sws_gone host "$w2"; then pass "$label: ... and it is gone from the host" "ok"; else fail "$label: ... and it is gone from the host" "$(host "refinfo $w2" | cut -c1-160)"; fi
+		if wait_for 15 _sws_no_copy vm "$w2"; then pass "$label: ... and from the VM" "ok"; else fail "$label: ... and from the VM" "$(vm "refinfo $vw2" | cut -c1-160)"; fi
+	else warn "$label: the store of a wire was not tried: the VM has no copy of the second wire to ask from (the host's wire was never drawn, the host's log says it added nothing to the budget)" "wire '$w2' copy '$vw2'"; fi
+	_sws_unchanged "$label: the host's workbench holds what it held (a move and a wire's removal yield nothing)" "$c0" "$(_sws_stacks host)" int
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference at the end"
+	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in at the end"
+	_sws_cleanup
 }

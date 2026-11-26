@@ -380,8 +380,8 @@ TEST("shared workshop: the Scrap key on the host's copy asks the host when the h
 	CHECK(OnScrapKey(true, false, false, false) == ScrapKey::kRefuseEditOff);
 	CHECK(OnScrapKey(true, true, false, true) == ScrapKey::kRefusePending);
 	CHECK(OnScrapKey(true, false, false, true) == ScrapKey::kRefuseEditOff);  // the rule first: it never changes mid-session
-	CHECK(OnScrapKey(true, true, true, false) == ScrapKey::kRefuseWire);      // the host's wire: never asked (the host's game refuses it)
-	CHECK(OnScrapKey(true, true, true, true) == ScrapKey::kRefuseWire);       // ...so never pending either
+	CHECK(OnScrapKey(true, true, true, false) == ScrapKey::kAskWire);  // the host's wire: asked at the key, no engine confirmation
+	CHECK(OnScrapKey(true, true, true, true) == ScrapKey::kRefusePending);
 	CHECK(OnScrapKey(true, false, true, false) == ScrapKey::kRefuseEditOff);
 }
 
@@ -608,7 +608,7 @@ TEST("shared workshop: the Store key on the host's copy decides as the Scrap key
 	}
 	CHECK(OnStoreKey(true, true, false, false) == ScrapKey::kAsk);
 	CHECK(OnStoreKey(true, false, false, false) == ScrapKey::kRefuseEditOff);
-	CHECK(OnStoreKey(true, true, true, false) == ScrapKey::kRefuseWire);  // the host's wire: never asked (the host's game refuses it)
+	CHECK(OnStoreKey(true, true, true, false) == ScrapKey::kAskWire);
 	CHECK(OnStoreKey(true, true, false, true) == ScrapKey::kRefusePending);
 	CHECK(OnStoreKey(false, false, true, false) == ScrapKey::kEngine);
 	CHECK(OnStoreKey(false, true, false, false) == ScrapKey::kEngine);

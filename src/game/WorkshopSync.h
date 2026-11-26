@@ -123,6 +123,8 @@ namespace WorkshopSync
 	// another cell. On a piece of ours (the host's game): moved there with the steps a friend's request runs, its refusals
 	// too; what ran, and whether it arrived.
 	[[nodiscard]] std::string MoveForDev(RE::TESObjectREFR* a_ref, const std::array<float, 3>& a_position, float a_heading);
+	// Dev: wsstack <child> <parent>: the child linked to the parent as a piece stacked on it (the rig has no workshop placement that stacks).
+	[[nodiscard]] std::string StackForDev(RE::TESObjectREFR* a_child, RE::TESObjectREFR* a_parent);
 	// Dev: whether workshop mode picks the host's copies up in this game (wsmode grab on|off; off until the rig has proven the
 	// engine's grab on a copy: with it off the grab key on a copy is refused).
 	void                      SetGrabForDev(bool a_on);

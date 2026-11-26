@@ -434,8 +434,8 @@ namespace SharedWorkshop
 	{
 		kEngine,            // not the host's copy: the engine's own scrap test, and its own scrap if it says yes
 		kAsk,               // the host's copy: the engine's test and confirmation open as for any piece, and Yes asks the host
+		kAskWire,           // the host's wire: no recipe makes it, so the engine's test refuses it and its confirmation never opens: asked of the host at the key
 		kRefuseEditOff,     // the host's copy, and the host's bSharedWorkshopEdit is off: refused with a notice
-		kRefuseWire,        // the host's wire: not served (the host's game refuses it), so refused here with a notice that says so
 		kRefusePending,     // the host's copy, its scrap asked already: refused with a notice until the answer comes
 		kRefuseOwnPending,  // our own piece, its build still asked of the host: refused with a notice until the answer comes
 	};
@@ -449,7 +449,7 @@ namespace SharedWorkshop
 			return ScrapKey::kRefuseEditOff;
 		}
 		if (a_wire) {
-			return ScrapKey::kRefuseWire;
+			return a_pending ? ScrapKey::kRefusePending : ScrapKey::kAskWire;
 		}
 		return a_pending ? ScrapKey::kRefusePending : ScrapKey::kAsk;
 	}

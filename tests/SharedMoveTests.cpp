@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <span>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -147,26 +149,26 @@ TEST("shared move: a copy is picked up only when the host allows edits and the p
 	facts.wire = true;
 	CHECK(OnGrabKey(facts) == GrabKey::kRefuseKind);
 	facts = Admissible();
-	facts.actor = true;
-	CHECK(OnGrabKey(facts) == GrabKey::kRefuseKind);
+	facts.actor = true;  // a turret: carried by the host
+	CHECK(OnGrabKey(facts) == GrabKey::kAdmit);
 	// A damaged piece: the engine's Accept on it is its repair, never a grab (and never the engine's repair of a copy).
 	facts = Admissible();
 	facts.damaged = true;
 	CHECK(OnGrabKey(facts) == GrabKey::kRefuseKind);
 	CHECK(std::string{ Notice(GrabKey::kRefuseKind) } == "workshop.shared.no_grab");
 
-	// A power piece never leaves the friend's hands: the engine's grab would take it off grids and wires here too.
+	// A power piece is picked up: the host's game moves its wires and grid places with it. One our own game finds tied in is not.
 	facts = Admissible();
 	facts.power = true;
-	CHECK(OnGrabKey(facts) == GrabKey::kRefusePower);
+	CHECK(OnGrabKey(facts) == GrabKey::kAdmit);
 	facts = Admissible();
 	facts.tied = true;
 	CHECK(OnGrabKey(facts) == GrabKey::kRefusePower);
 	CHECK(std::string{ Notice(GrabKey::kRefusePower) } == "workshop.shared.move_wired");
 
 	facts = Admissible();
-	facts.stacked = true;
-	CHECK(OnGrabKey(facts) == GrabKey::kRefuseStacked);
+	facts.stacked = true;  // the host carries what stands on it
+	CHECK(OnGrabKey(facts) == GrabKey::kAdmit);
 	CHECK(std::string{ Notice(GrabKey::kRefuseStacked) } == "workshop.shared.move_stacked");
 
 	facts = Admissible();
@@ -193,10 +195,10 @@ TEST("shared move: the grab key's refusals come in a fixed order: the host's set
 	facts.editAllowed = true;
 	CHECK(OnGrabKey(facts) == GrabKey::kRefuseKind);
 	facts.wire = false;
+	CHECK(OnGrabKey(facts) == GrabKey::kRefusePending);  // power and stacked are no longer refused at the key
+	facts.tied = true;
 	CHECK(OnGrabKey(facts) == GrabKey::kRefusePower);
-	facts.power = false;
-	CHECK(OnGrabKey(facts) == GrabKey::kRefuseStacked);
-	facts.stacked = false;
+	facts.tied = false;
 	CHECK(OnGrabKey(facts) == GrabKey::kRefusePending);
 	facts.pending = false;
 	CHECK(OnGrabKey(facts) == GrabKey::kAdmit);
@@ -449,8 +451,12 @@ TEST("shared move: the host's game refuses a piece it doesn't know, an actor, on
 	CHECK(Refusal(facts, Movable()) == Why::kNoSuchPiece);
 
 	auto move = Movable();
+	move.target.canStore = false;  // a settler or a companion: the engine's own store test refuses it
 	move.actor = true;
 	CHECK(Refusal(Servable(), move) == Why::kNotWorkshopItem);
+	move = Movable();
+	move.actor = true;  // a turret passes the tests: moved like any piece
+	CHECK(!Refusal(Servable(), move));
 
 	facts = Servable();
 	facts.targetLoaded = false;
@@ -562,19 +568,48 @@ TEST("shared move: the host's game refuses furniture someone is using as busy: a
 	// An actor is no workshop piece, used or not.
 	move = Movable();
 	move.target.inUse = true;
+	move.target.canStore = false;
 	move.actor = true;
 	CHECK(Refusal(Servable(), move) == Why::kNotWorkshopItem);
 }
 
-TEST("shared move: the host's game refuses a power piece and a piece something stands on, rather than run the engine's grid and stack work")
+TEST("shared move: the host carries a power piece and what stands on a piece, and refuses only what it cannot carry")
 {
 	auto move = Movable();
 	move.power = true;
-	CHECK(Refusal(Servable(), move) == Why::kPieceWired);
 	move.stacked = true;
+	move.stackChildren = 3;
+	CHECK(!Refusal(Servable(), move));
+	move.snappedPower = true;  // a piece snapped on to pass power is bound to where it stands
+	CHECK(Refusal(Servable(), move) == Why::kPieceWired);
+	move.stackChildren = MAX_CARRIED + 1;
 	CHECK(Refusal(Servable(), move) == Why::kPieceWired);  // power first
-	move.power = false;
+	move.snappedPower = false;
 	CHECK(Refusal(Servable(), move) == Why::kPieceStacked);
+	move.stackChildren = MAX_CARRIED;
+	CHECK(!Refusal(Servable(), move));
+	move.childrenRefused = true;  // one of them the host would not move itself
+	CHECK(Refusal(Servable(), move) == Why::kPieceStacked);
+}
+
+TEST("shared move: what stands on a moved piece keeps its place relative to it, turned by the heading's change")
+{
+	const Transform from{ { 100.0f, 200.0f, 10.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f };
+	const Transform to{ { 1100.0f, 200.0f, 10.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f };
+	const Transform child{ { 150.0f, 200.0f, 60.0f }, { 0.0f, 0.0f, 0.5f }, 0.5f };
+	const auto      slid = Carried(child, from, to);
+	CHECK(std::fabs(slid.position[0] - 1150.0f) < 0.01f);
+	CHECK(std::fabs(slid.position[1] - 200.0f) < 0.01f);
+	CHECK(std::fabs(slid.position[2] - 60.0f) < 0.01f);
+	CHECK(std::fabs(slid.rotation[2] - 0.5f) < 0.0001f);
+	CHECK(slid.scale == 0.5f);
+	// A quarter turn clockwise (a positive heading turns clockwise from above): 50 units east of the piece is 50 units south.
+	const float quarter = 1.5707964f;
+	const Transform turned{ { 100.0f, 200.0f, 10.0f }, { 0.0f, 0.0f, quarter }, 1.0f };
+	const auto      swung = Carried(child, from, turned);
+	CHECK(std::fabs(swung.position[0] - 100.0f) < 0.01f);
+	CHECK(std::fabs(swung.position[1] - 150.0f) < 0.01f);
+	CHECK(std::fabs(swung.rotation[2] - (0.5f + quarter)) < 0.0001f);
 }
 
 TEST("shared move: the host's game refuses a spot outside the workbench's build area or reach")
@@ -586,7 +621,7 @@ TEST("shared move: the host's game refuses a spot outside the workbench's build 
 	move.inReach = false;
 	CHECK(Refusal(Servable(), move) == Why::kOutOfReach);
 	// The piece's own refusals come first: a wired piece is refused as wired wherever it was dropped.
-	move.power = true;
+	move.snappedPower = true;
 	CHECK(Refusal(Servable(), move) == Why::kPieceWired);
 }
 
@@ -675,4 +710,34 @@ TEST("shared move: a request names where the piece goes, with the piece's own si
 	CHECK(WorkshopMove::Same(asked, THERE));
 	CHECK(Arrived(THERE, asked));
 	CHECK(!Arrived(HERE, asked));
+}
+
+TEST("shared move: a piece on a grid or with wires is taken off before it moves and put back after it stands; a carried one keeps its stack link")
+{
+	static_assert(InOrder(POWER_MOVE_STEPS));
+	static_assert(InOrder(CARRIED_STEPS));
+	static_assert(InOrder(CARRIED_POWER_STEPS));
+	CHECK(InOrder(POWER_MOVE_STEPS));
+	CHECK(std::ranges::find(POWER_MOVE_STEPS, MoveStep::kPowerOut) < std::ranges::find(POWER_MOVE_STEPS, MoveStep::kTransform));
+	CHECK(std::ranges::find(POWER_MOVE_STEPS, MoveStep::kTransform) < std::ranges::find(POWER_MOVE_STEPS, MoveStep::kPowerIn));
+	CHECK(std::ranges::find(POWER_MOVE_STEPS, MoveStep::kPowerIn) < std::ranges::find(POWER_MOVE_STEPS, MoveStep::kStatic));
+	CHECK(std::ranges::find(CARRIED_STEPS, MoveStep::kStackLink) == CARRIED_STEPS.end());
+	CHECK(std::ranges::find(CARRIED_POWER_STEPS, MoveStep::kStackLink) == CARRIED_POWER_STEPS.end());
+
+	// The guard: off without back on, back on before it moved, or back on after it is made static, is wrong.
+	using S = MoveStep;
+	const std::array noIn{ S::kFurnitureTaken, S::kPowerOut, S::kStackLink, S::kTransform, S::kStatic, S::kFurnitureFree, S::kMovedEvent, S::kNavmesh, S::kResources };
+	CHECK(!InOrder(noIn));
+	const std::array inBeforeMove{ S::kFurnitureTaken, S::kPowerOut, S::kPowerIn, S::kStackLink, S::kTransform, S::kStatic, S::kFurnitureFree, S::kMovedEvent, S::kNavmesh, S::kResources };
+	CHECK(!InOrder(inBeforeMove));
+	const std::array inAfterStatic{ S::kFurnitureTaken, S::kPowerOut, S::kStackLink, S::kTransform, S::kStatic, S::kPowerIn, S::kFurnitureFree, S::kMovedEvent, S::kNavmesh, S::kResources };
+	CHECK(!InOrder(inAfterStatic));
+
+	for (const auto steps : { std::span<const MoveStep>{ POWER_MOVE_STEPS }, std::span<const MoveStep>{ CARRIED_STEPS }, std::span<const MoveStep>{ CARRIED_POWER_STEPS } }) {
+		FakeEngine engine;
+		CHECK(Move(engine, steps) == steps.size());
+		CHECK(engine.done == std::vector<MoveStep>(steps.begin(), steps.end()));
+		CHECK(engine.bothSetForEach);
+		CHECK(!engine.benchSet);
+	}
 }

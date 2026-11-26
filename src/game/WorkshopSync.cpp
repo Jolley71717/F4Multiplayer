@@ -1838,6 +1838,9 @@ namespace WorkshopSync
 		bool HostsReport(std::uint32_t a_player);
 		bool EngineCanStore(RE::TESObjectREFR& a_ref);
 		bool Held(RE::TESObjectREFR& a_ref);
+		void WireKeyAsk(RE::TESObjectREFR& a_copy, bool a_store);
+		void AskScrap(RE::TESObjectREFR& a_copy);
+		void AskStore(RE::TESObjectREFR& a_copy);
 		void TakeOutHostsPiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench);
 
 		// A piece of the world itself (the junk a settlement starts with) that its player scrapped: it goes
@@ -3940,9 +3943,9 @@ namespace WorkshopSync
 		std::atomic<std::uint32_t> scrapsRefused{ 0 };  // and XButton (Scrap) on a copy (the host's setting off, or its scrap asked already)
 		std::atomic<std::uint32_t> scrapsAsked{ 0 };    // the scrap confirmation's Yes on a copy: asked of the host, nothing scrapped here
 		std::atomic<std::uint32_t> storesAsked{ 0 };    // the store box's Yes on a copy: asked of the host, nothing stored here
-		// A move (SharedMove). Picking a copy up is a dev switch (wsmode grab on), off until the rig has proven the engine's
-		// grab on a copy: with it off the grab key on a copy is refused, as before the move.
-		std::atomic<bool>          grabsCopies{ false };
+		// A move (SharedMove). Picking a copy up is on (the rig proved the engine's grab on a copy, sharedws-move); wsmode grab off is the
+		// dev switch that refuses the grab key on a copy as it was before the move.
+		std::atomic<bool>          grabsCopies{ true };
 		std::atomic<std::uint32_t> grabsAdmitted{ 0 };  // Accept on a copy let through to the engine's grab
 		std::set<std::uint32_t>    notOwnedBenches;  // Benches::IsNotOwned, for the hooks (under copyIdsLock)
 
@@ -4180,6 +4183,64 @@ namespace WorkshopSync
 			}
 			for (const auto& child : children->linkedChildren) {
 				if (child.keyword == *keyword) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// The pieces standing directly on the piece: its linked children under the stack keyword. Held (NiPointer): a move
+		// of the piece and of these runs engine calls between reads.
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> StackChildren(const RE::TESObjectREFR& a_ref)
+		{
+			static REL::Relocation<RE::BGSKeyword**>      keyword{ STACK_KEYWORD };
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> out;
+			const auto children = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+			if (!children || !*keyword) {
+				return out;
+			}
+			for (const auto& child : children->linkedChildren) {
+				if (child.keyword != *keyword) {
+					continue;
+				}
+				RE::NiPointer<RE::TESObjectREFR> ref{ child.REFR.get() };
+				if (ref && !ref->IsDeleted()) {
+					out.push_back(ref);
+				}
+			}
+			return out;
+		}
+
+		// Everything standing on the piece, and on those (never the piece itself), the nearest first; stops past
+		// SharedMove::MAX_CARRIED + 1 (more is refused, and counting on is no use).
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> StackDescendants(const RE::TESObjectREFR& a_ref)
+		{
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> out;
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> queue = StackChildren(a_ref);
+			for (std::size_t i = 0; i < queue.size() && out.size() <= SharedMove::MAX_CARRIED; ++i) {
+				const auto& ref = queue[i];
+				if (ref.get() == &a_ref || std::ranges::any_of(out, [&](const auto& a_seen) { return a_seen == ref; })) {
+					continue;  // a loop of links: counted once
+				}
+				out.push_back(ref);
+				for (auto& child : StackChildren(*ref)) {
+					queue.push_back(std::move(child));
+				}
+			}
+			return out;
+		}
+
+		// A power link that is no wire: a piece snapped on to pass power. It is bound to where the pieces stand, so a move
+		// carries none (SharedMove::MoveFacts::snappedPower).
+		bool HasSnappedPower(const RE::TESObjectREFR& a_ref)
+		{
+			const auto links = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraPowerLinks>() : nullptr;
+			if (!links) {
+				return false;
+			}
+			for (const auto& link : links->powerLinks) {
+				const auto other = RE::TESForm::GetFormByID<RE::TESObjectREFR>(link.formID);
+				if (!other || !IsWire(other->GetObjectReference())) {
 					return true;
 				}
 			}
@@ -4522,8 +4583,13 @@ namespace WorkshopSync
 		// menu's Cancel, StoreKeyHook) says why.
 		bool CanStoreHook(RE::TESObjectREFR& a_ref)
 		{
-			if (AdmitsCopy(a_ref) && (!EditAllowed() || IsWire(a_ref.GetObjectReference()))) {
-				return false;
+			if (AdmitsCopy(a_ref)) {
+				if (!EditAllowed()) {
+					return false;
+				}
+				if (IsWire(a_ref.GetObjectReference())) {
+					return true;  // no recipe makes a wire, so the engine's test says no; the key asks the host (WireKeyAsk)
+				}
 			}
 			return originalCanStore(a_ref);
 		}
@@ -4551,8 +4617,13 @@ namespace WorkshopSync
 		// copy of the host's wire (the host's game doesn't scrap a wire for a friend: ScrapKeyHook says so when pressed).
 		bool CanScrapHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
-			if (AdmitsCopy(a_ref) && (!EditAllowed() || IsWire(a_ref.GetObjectReference()))) {
-				return false;
+			if (AdmitsCopy(a_ref)) {
+				if (!EditAllowed()) {
+					return false;
+				}
+				if (IsWire(a_ref.GetObjectReference())) {
+					return true;  // (as the store hint)
+				}
 			}
 			return originalCanScrap(a_ref, a_flag);
 		}
@@ -4686,6 +4757,30 @@ namespace WorkshopSync
 			const bool       handsOver = HandsOver();
 			std::scoped_lock l{ askedLock };
 			askedView.Set(requests, {}, handsOver);
+		}
+
+		// The Scrap or Store key on a copy of the host's wire (the UI's thread): no recipe makes a wire, so the engine's own test
+		// refuses it and there is no confirmation or box to open; the key asks the host at once, as a Yes would for any other
+		// copy. Marked asked here (the key refuses it meanwhile), asked of the host by the main thread once it has checked the
+		// copy again (gone, no longer admitted or asked meanwhile: nothing asked). A store is asked as a store (the host's reply
+		// is the same: the wire is removed, nothing is stored or yielded).
+		void WireKeyAsk(RE::TESObjectREFR& a_copy, bool a_store)
+		{
+			const auto id = a_copy.GetFormID();
+			const auto base = a_copy.GetObjectReference();
+			const auto generation = loadGeneration.load();
+			MarkAsked(id, a_store ? Protocol::WorkshopRequestOp::kStore : Protocol::WorkshopRequestOp::kScrap);
+			MainThread::Post([held = RE::NiPointer<RE::TESObjectREFR>{ &a_copy }, id, base, generation, a_store] {
+				if (generation != loadGeneration.load() || !StillSame(held.get(), id, base, true) || held->IsDisabled() || !AdmitsCopy(*held)) {
+					REX::INFO("WorkshopSync: the {} of the host's wire {:08X} not asked: it went or is no longer the host's copy before the ask ran", a_store ? "store" : "scrap", id);
+					return;
+				}
+				if (a_store) {
+					AskStore(*held);
+				} else {
+					AskScrap(*held);
+				}
+			});
 		}
 
 		// A wrecked copy's Repair, pressed (the UI's thread): marked asked at once, and asked of the host by the main thread,
@@ -4846,12 +4941,9 @@ namespace WorkshopSync
 					}
 					Hud::Notify(Text::Get("workshop.shared.edit_off"));
 					return false;
-				case SharedWorkshop::ScrapKey::kRefuseWire:
-					if (storesRefused.fetch_add(1) < 3) {
-						REX::INFO("WorkshopSync: workshop mode's store of copy {:08X} refused: a wire of the host's (not served)", id);
-					}
-					Hud::Notify(Text::Get("workshop.shared.wire_no_store"));
-					return false;
+				case SharedWorkshop::ScrapKey::kAskWire:
+					WireKeyAsk(*ref, true);
+					return false;  // (no engine box for a wire: the host removes it)
 				case SharedWorkshop::ScrapKey::kRefusePending:
 					storesRefused.fetch_add(1);
 					Hud::Notify(Text::Get(AskedNoticeOf(id)));
@@ -4914,12 +5006,9 @@ namespace WorkshopSync
 				}
 				Hud::Notify(Text::Get("workshop.shared.edit_off"));
 				return false;
-			case SharedWorkshop::ScrapKey::kRefuseWire:
-				if (scrapsRefused.fetch_add(1) < 3) {
-					REX::INFO("WorkshopSync: workshop mode's scrap of copy {:08X} refused: a wire of the host's (not served)", a_ref.GetFormID());
-				}
-				Hud::Notify(Text::Get("workshop.shared.wire_no_scrap"));
-				return false;
+			case SharedWorkshop::ScrapKey::kAskWire:
+				WireKeyAsk(a_ref, false);
+				return false;  // (no engine confirmation for a wire: the host removes it)
 			case SharedWorkshop::ScrapKey::kRefusePending:
 				scrapsRefused.fetch_add(1);
 				Hud::Notify(Text::Get(AskedNoticeOf(a_ref.GetFormID())));
@@ -5123,6 +5212,21 @@ namespace WorkshopSync
 			NewItemScope& operator=(const NewItemScope&) = delete;
 		};
 
+		// A wire off every grid that names it, while it still has its power links: the grid finds the wire's ends through them, so the
+		// edge stays in the grid (the rig: a scrapped wire still named as a connector) if the links are dropped first, as Unbuild does.
+		void RemoveWireFromGrids(RE::TESObjectREFR& a_wire)
+		{
+			using remove_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
+			static REL::Relocation<remove_t> removeItem{ REMOVE_GRID_ITEM };
+			const auto                       id = a_wire.GetFormID();
+			for (const auto other : PowerBenches()) {
+				if (GridsName(other, id)) {
+					removeItem(WorkshopDataOf(other), a_wire);
+				}
+			}
+			gridNamedFrame = ~0ull;
+		}
+
 		// Takes a piece off our workshop: off every grid that names it, its power links, its workbench and, a_budgeted, its
 		// budget. For a piece of ours adopted as the host's copy, and for a wire of ours taken off the moment it was strung
 		// (both counted in the budget by the engine's placement: taken out again), and for a copy the engine's wiring tied in
@@ -5309,11 +5413,14 @@ namespace WorkshopSync
 		}
 
 		// Our copy put where it stood (or where a dev command says): its place, its angles and its 3D, as a moved piece's copy
-		// is (MoveTo). Never an actor's (none is ever grabbed).
+		// is (MoveTo). A turret's too (SetPosition: its character controller).
 		void PlaceCopy(RE::TESObjectREFR& a_copy, const SharedMove::Transform& a_at)
 		{
 			a_copy.SetLocationOnReference({ a_at.position[0], a_at.position[1], a_at.position[2] });
 			a_copy.SetAngleOnReference({ a_at.rotation[0], a_at.rotation[1], a_at.rotation[2] });
+			if (const auto actor = a_copy.As<RE::Actor>()) {
+				actor->SetPosition({ a_at.position[0], a_at.position[1], a_at.position[2] }, true);
+			}
 			a_copy.Update3DPosition(true);
 		}
 
@@ -6308,14 +6415,13 @@ namespace WorkshopSync
 				facts.otherBenchOpen = facts.inWorkshopMode && OpenBench() != 0 && OpenBench() != a_request.workshop;
 				facts.targetKnown = target && !target->IsDeleted() && !target->IsDisabled();
 				// One of this workbench's own pieces: linked to it, not a copy of a friend's (the friend's game scraps those), not the
-				// workbench itself (never a piece: ReportRef), and not a wire (ScrapReference's spline branches are untried from here;
-				// the friend's Scrap key refuses a copy of a wire with a notice before it asks).
-				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !IsWorkbenchAnchor(target) &&
-				                      !IsWire(target->GetObjectReference());
+				// workbench itself (never a piece: ReportRef), a wire is one (the engine's scrap has branches for it; the friend's key asks at once,
+				// it has no recipe for the engine's test or confirmation).
+				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !IsWorkbenchAnchor(target);  // a wire too: linked to the bench as a piece is
 				// The engine's own scrap test, as the friend's key ran it on the copy (WorkshopCanScrapRef with false, the Scrap key's
 				// flag): a settler or a companion assigned here is linked to the bench like a piece, and only a crafted or mistranslated
 				// request names one (copies have keys, actors have none), so no actor passes, whatever the test says.
-				facts.targetScrappable = facts.targetAtBench && !target->As<RE::Actor>() && CanScrap(*target);
+				facts.targetScrappable = facts.targetAtBench && !target->As<RE::Actor>() && (IsWire(target->GetObjectReference()) || CanScrap(*target));
 				facts.targetLoaded = facts.targetKnown && target->Get3D() != nullptr;
 				facts.targetHeld = facts.targetKnown && Held(*target);
 				if (facts.targetKnown) {
@@ -6329,13 +6435,12 @@ namespace WorkshopSync
 				// As for a scrap: workshop mode open here at another workbench, the engine's store would fill its build list from this one.
 				facts.otherBenchOpen = facts.inWorkshopMode && OpenBench() != 0 && OpenBench() != a_request.workshop;
 				facts.targetKnown = target && !target->IsDeleted() && !target->IsDisabled();
-				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !Blocked(*target) && !IsWorkbenchAnchor(target) &&
-				                      !IsWire(target->GetObjectReference());
+				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !Blocked(*target) && !IsWorkbenchAnchor(target);  // a wire too
 				// What the engine's own Store refuses (its test on the piece, Workshop::CanStoreRef: a settler or a companion linked to the
 				// bench), a request never does to it; and no living actor, whatever the test says. The settlement's own pieces (the ones
 				// the game's data placed, linked to this workbench: a crop, a bed, a pump) pass it as a built piece does, and a friend's
 				// request names one by its form id, which is our own reference (phase 2j).
-				facts.targetStorable = facts.targetAtBench && !target->As<RE::Actor>() && EngineCanStore(*target);
+				facts.targetStorable = facts.targetAtBench && !target->As<RE::Actor>() && (IsWire(target->GetObjectReference()) || EngineCanStore(*target));
 				facts.targetLoaded = facts.targetKnown && target->Get3D() != nullptr;  // FinishDestroyItem takes a piece off the grids only with its 3D in
 				facts.targetHeld = facts.targetKnown && Held(*target);
 				if (facts.targetKnown) {
@@ -6402,6 +6507,101 @@ namespace WorkshopSync
 			return log;
 		}
 
+		// A wire strung between two of our pieces, as the grid work of a move remembers it.
+		struct StrungWire
+		{
+			RE::NiPointer<RE::TESObjectREFR> wire;
+			RE::NiPointer<RE::TESObjectREFR> from;
+			RE::NiPointer<RE::TESObjectREFR> to;
+		};
+
+		// The engine's grab, for a piece on a grid or with wires: each wire strung to it taken off its ends, the grids and the budget
+		// (its ends remembered, the wire kept, still a reference), then the piece itself off the grids, which takes every edge of it
+		// with it. Not Unbuild on the piece: that unlinks it from its workbench. The wires, for PowerOn.
+		std::vector<StrungWire> PowerOff(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench)
+		{
+			using remove_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
+			static REL::Relocation<remove_t> removeItem{ REMOVE_GRID_ITEM };
+			std::vector<StrungWire>          strung;
+			for (auto& wire : WiresOf(a_ref)) {
+				auto ends = EndsOf(*wire);
+				if (ends.size() == 2) {
+					strung.push_back({ wire, ends[0], ends[1] });
+				}
+				RemoveWireFromGrids(*wire);
+				Unbuild(*wire, &a_bench, true);
+			}
+			for (const auto other : PowerBenches()) {
+				if (GridsName(other, a_ref.GetFormID())) {
+					removeItem(WorkshopDataOf(other), a_ref);
+				}
+			}
+			gridNamedFrame = ~0ull;
+			return strung;
+		}
+
+		// The drop: the piece on the grid again (its wireless links read where it stands now), then each wire strung as the host strings
+		// a friend\x27s (SharedWorkshop::StringWire), the same wire reference: its copies keep their key and are redrawn. False when the
+		// workbench has no workshop data (nothing is put back).
+		bool PowerOn(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench, const std::vector<StrungWire>& a_strung)
+		{
+			using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
+			static REL::Relocation<add_t> addItem{ EXTRA_ADD_ITEM };
+			const auto                    data = WorkshopDataOf(&a_bench);
+			if (!data) {
+				return false;
+			}
+			addItem(data, a_ref);
+			for (const auto& wire : a_strung) {
+				WireEngine engine{ *wire.from, *wire.to, a_bench, *wire.wire, *data, {} };
+				SharedWorkshop::StringWire(engine);
+			}
+			if (!a_strung.empty()) {
+				CheckWiresLater(&a_ref, &a_bench);
+			}
+			gridNamedFrame = ~0ull;
+			return true;
+		}
+
+		// A wire of ours removed for a friend (a scrap or a store of it): what the engine's scrap does to a wire that goes with a
+		// piece, one call per step as the dev scrap does it, with the bench and budget scopes set: told to the workbench's scripts
+		// and reported scrapped (our DestroyedSink: the friends' copies go), taken off its ends' power links and the grids, out of
+		// the budget, unlinked, switched off and deleted, the bench counted again. The engine's own scrap test refuses every wire
+		// (no recipe makes one), and its yield reads a recipe, so ScrapReference is not asked to do it. What ran.
+		std::string RemoveWire(RE::TESObjectREFR& a_wire, RE::TESObjectREFR& a_bench)
+		{
+			const RE::NiPointer<RE::TESObjectREFR> held{ &a_wire };
+			std::string                            log;
+			{
+				BenchScope bench{ a_bench };
+				log += SharedWorkshop::Name(SharedWorkshop::ScrapStep::kBench);
+				BudgetScope totals{ a_bench };
+				log += std::format(" {}", SharedWorkshop::Name(SharedWorkshop::ScrapStep::kBudget));
+				const auto ends = EndsOf(a_wire);
+				NotifyDestroyed(&a_bench, a_wire);
+				if (ends.size() == 2) {
+					// Taking the wire off the grids by itself leaves its edge there (the rig: the grid kept naming the deleted wire as a
+					// connector). Taking an end off the grids takes every edge of it: the end's other wires are strung again after, as in a move.
+					auto strung = PowerOff(*ends[0], a_bench);
+					std::erase_if(strung, [&](const StrungWire& a_one) { return a_one.wire.get() == &a_wire; });
+					a_wire.Disable();
+					a_wire.SetDelete(true);
+					PowerOn(*ends[0], a_bench, strung);
+					log += std::format(" wire(its end {:08X} off the grids and back with {} other wires)", ends[0]->GetFormID(), strung.size());
+				} else {
+					RemoveWireFromGrids(a_wire);
+					Unbuild(a_wire, &a_bench, true);
+					a_wire.Disable();
+					a_wire.SetDelete(true);
+					log += " wire(no two ends)";
+				}
+				RecountBench(a_bench);
+			}
+			gridNamedFrame = ~0ull;
+			++scrapsServed;
+			return log;
+		}
+
 		// A friend's scrap of one of our pieces: checked again now (the piece may have gone, or be in the host's hands since the
 		// request came), then the engine's own scrap of it, and answered with the piece's id (what the friend's copy is of).
 		void ServeScrap(const Protocol::WorkshopRequest& a_request)
@@ -6418,7 +6618,7 @@ namespace WorkshopSync
 				return;
 			}
 			const auto base = target->GetObjectReference();
-			const auto steps = ScrapPiece(*target, *bench);
+			const auto steps = IsWire(base) ? RemoveWire(*target, *bench) : ScrapPiece(*target, *bench);
 			const bool gone = target->IsDisabled() || target->IsDeleted();
 			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} scrapped for player {}'s request {}: {}{}", a_request.target, base ? base->GetFormID() : 0, a_request.workshop,
 				a_request.playerId, a_request.seq, steps, gone ? "" : " (the engine left it standing)");
@@ -6497,7 +6697,9 @@ namespace WorkshopSync
 			const auto baseId = base ? base->GetFormID() : 0;
 			const auto before = StoredCount(*bench, baseId);
 			destroyedHere = 0;
-			const auto steps = StorePiece(*target, *bench);
+			// A wire has no stored entry to make (nothing makes it, and nothing is yielded): a store of one is the engine's scrap of it,
+			// RemoveWire (its ends, the grids and the budget).
+			const auto steps = IsWire(base) ? RemoveWire(*target, *bench) : StorePiece(*target, *bench);
 			const auto after = StoredCount(*bench, baseId);
 			const bool gone = destroyedHere == a_request.target || target->IsDisabled() || target->IsDeleted();
 			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} stored for player {}'s request {}: {} | stored {} -> {}{}", a_request.target, baseId, a_request.workshop,
@@ -6543,6 +6745,23 @@ namespace WorkshopSync
 				a_target.builtHere, a_target.canSelect, a_target.canBeMoved, a_target.canScrap, a_target.canStore, a_target.inUse);
 		}
 
+		// Whether a piece standing on the one being moved can go along: it is one of the workbench's own pieces the host's
+		// engine would itself let a player move (the target tests, no furniture in use), no copy, no wire, nothing snapped
+		// to it for power, its 3D in, not held, and it stays in its cell. a_from and a_to: where the moved piece stood and
+		// is asked to stand.
+		bool CanCarry(RE::TESObjectREFR& a_child, const RE::TESObjectREFR* a_bench, const SharedMove::Transform& a_from, const SharedMove::Transform& a_to)
+		{
+			if (!a_bench || a_child.IsDeleted() || a_child.IsDisabled() || !a_child.Get3D() || Held(a_child) || IsCopy(&a_child) || IsWire(a_child.GetObjectReference()) ||
+				BenchOf(a_child) != a_bench || HasSnappedPower(a_child)) {
+				return false;
+			}
+			if (SharedMove::JudgeTarget(TargetOf(a_child)) != SharedMove::TargetRule::kMovable) {
+				return false;
+			}
+			const auto cell = a_child.GetParentCell();
+			return cell && SharedMove::SameCell(TransformOf(a_child), SharedMove::Carried(TransformOf(a_child), a_from, a_to), cell->IsInterior());
+		}
+
 		// What a move asks of our piece and of where it is to go, besides SharedWorkshop::Facts (SharedMove::Refusal). a_atBench:
 		// the target is one of the workbench's own pieces (SharedWorkshop::Facts::targetAtBench).
 		SharedMove::MoveFacts MoveFactsOf(const Protocol::WorkshopRequest& a_request, bool a_atBench)
@@ -6558,11 +6777,23 @@ namespace WorkshopSync
 				const auto cell = target->GetParentCell();
 				facts.targetPicked = placement.handle != 0 && placement.handle == target->GetHandle().get_handle();
 				facts.actor = target->As<RE::Actor>() != nullptr || (base && base->As<RE::TESNPC>() != nullptr);
-				if (a_atBench && !facts.actor) {
-					facts.target = TargetOf(*target);
+				if (a_atBench) {
+					facts.target = TargetOf(*target);  // an actor too: a turret passes the tests, a settler or a companion does not (CanStoreRef)
 				}
 				facts.power = IsPowerPieceRef(*target) || TiedToPower(*target);
+				facts.snappedPower = HasSnappedPower(*target);
 				facts.stacked = HasStackChildren(*target);
+				if (facts.stacked && a_atBench) {
+					const auto here = TransformOf(*target);
+					const auto there = SharedMove::Asked(a_request, here.scale);
+					// A move that tilts the piece cannot carry what stands on it (Carried turns the heading only).
+					facts.childrenRefused = std::fabs(there.rotation[0] - here.rotation[0]) > 0.01f || std::fabs(there.rotation[1] - here.rotation[1]) > 0.01f;
+					const auto below = StackDescendants(*target);
+					facts.stackChildren = below.size();
+					for (const auto& child : below) {
+						facts.childrenRefused = facts.childrenRefused || !CanCarry(*child, bench, here, there);
+					}
+				}
 				facts.sameCell = cell && SharedMove::SameCell(TransformOf(*target), SharedMove::Asked(a_request, 1.0f), cell->IsInterior());
 			}
 			facts.inReach = bench && bench->data.location.GetDistance(at) <= BUILD_REACH;
@@ -6599,6 +6830,7 @@ namespace WorkshopSync
 			RE::TESObjectREFR&    bench;
 			SharedMove::Transform to;
 			std::string           log;
+			std::vector<StrungWire> strung;  // the wires taken off for the move (kPowerOut), strung again after it (kPowerIn)
 
 			BenchScope     Bench() { return BenchScope{ bench }; }
 			MovedItemScope Moving() { return MovedItemScope{}; }
@@ -6614,9 +6846,21 @@ namespace WorkshopSync
 				static REL::Relocation<navmesh_t>        navmesh{ UPDATE_DYNAMIC_NAVMESH };
 				static REL::Relocation<ref_t>            recount{ RECALCULATE_RESOURCES };
 				static REL::Relocation<source_t>         source{ MOVED_EVENT_SOURCE };
+				const auto                                 actor = ref.As<RE::Actor>();
 				static REL::Relocation<RE::BGSKeyword**> stack{ STACK_KEYWORD };
 				log += std::format("{}{}", log.empty() ? "" : " ", SharedMove::Name(a_step));
 				switch (a_step) {
+				case SharedMove::MoveStep::kPowerOut: {
+					strung = PowerOff(ref, bench);
+					log += std::format("({} wires)", strung.size());
+					break;
+				}
+				case SharedMove::MoveStep::kPowerIn:
+					if (!PowerOn(ref, bench, strung)) {
+						log += "(no workshop data)";
+					}
+					strung.clear();
+					break;
 				case SharedMove::MoveStep::kFurnitureTaken:
 					furniture(ref, true);
 					break;
@@ -6629,9 +6873,16 @@ namespace WorkshopSync
 				case SharedMove::MoveStep::kTransform:
 					ref.SetLocationOnReference({ to.position[0], to.position[1], to.position[2] });
 					ref.SetAngleOnReference({ to.rotation[0], to.rotation[1], to.rotation[2] });
+					if (actor) {
+						actor->SetPosition({ to.position[0], to.position[1], to.position[2] }, true);  // a turret: its character controller too
+					}
 					ref.Update3DPosition(true);
 					break;
 				case SharedMove::MoveStep::kStatic:
+					if (actor) {
+						log += "(actor: no havok body to make static)";
+						break;
+					}
 					makeStatic(ref);
 					break;
 				case SharedMove::MoveStep::kFurnitureFree:
@@ -6657,13 +6908,36 @@ namespace WorkshopSync
 
 		// Moves a piece of ours there with the engine's steps (SharedMove::MOVE_STEPS); what ran. The moved event among them
 		// runs our own MovedSink, which reports the piece to every game as it does a move of the host's own.
-		std::string MovePiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench, const SharedMove::Transform& a_to)
+		// The steps for one piece: the power steps only for one on a grid or with power links, no stack link cleared for one that is
+		// carried with the piece it stands on.
+		std::string MoveOne(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench, const SharedMove::Transform& a_to, bool a_carried)
 		{
 			const RE::NiPointer<RE::TESObjectREFR> held{ &a_ref };  // across every step
-			MoveEngine                             engine{ a_ref, a_bench, a_to, {} };
-			SharedMove::Move(engine);
-			++movesServed;
+			const bool                             power = TiedToPower(a_ref);
+			MoveEngine                             engine{ a_ref, a_bench, a_to, {}, {} };
+			SharedMove::Move(engine, a_carried ? (power ? std::span<const SharedMove::MoveStep>{ SharedMove::CARRIED_POWER_STEPS } : std::span<const SharedMove::MoveStep>{ SharedMove::CARRIED_STEPS }) :
+			                                     (power ? std::span<const SharedMove::MoveStep>{ SharedMove::POWER_MOVE_STEPS } : std::span<const SharedMove::MoveStep>{ SharedMove::MOVE_STEPS }));
 			return engine.log;
+		}
+
+		// Moves a piece of ours there with the engine's steps (SharedMove::MOVE_STEPS and its power variants); what ran. The moved
+		// event among them runs our own MovedSink, which reports the piece to every game as it does a move of the host's own. Every
+		// piece standing on it goes with it and stays standing on it (SharedMove::Carried), each with the same steps: the engine's
+		// own grab carries a stack along, which the refusal checked could be done for all (CanCarry).
+		std::string MovePiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench, const SharedMove::Transform& a_to)
+		{
+			const auto from = TransformOf(a_ref);
+			const auto below = StackDescendants(a_ref);
+			std::vector<SharedMove::Transform> before;
+			for (const auto& child : below) {
+				before.push_back(TransformOf(*child));
+			}
+			auto log = MoveOne(a_ref, a_bench, a_to, false);
+			for (std::size_t i = 0; i < below.size(); ++i) {
+				log += std::format(" | carried {:08X}: {}", below[i]->GetFormID(), MoveOne(*below[i], a_bench, SharedMove::Carried(before[i], from, a_to), true));
+			}
+			++movesServed;
+			return log;
 		}
 
 		// A friend's move refused: the facts it was refused on, said (as the request comes, OnRequest, or as it is served).
@@ -9242,6 +9516,11 @@ namespace WorkshopSync
 		if (!a_ref || a_ref->IsDeleted()) {
 			return "error: no such reference, or deleted already";
 		}
+		if (Blocked(*a_ref) && AdmitsCopy(*a_ref)) {
+			// Our copy of the host's piece (the friend's side): its scrap asked of the host, as the confirmation's Yes (or, for a wire, the key) asks it.
+			AskScrap(*a_ref);
+			return std::format("copy {:08X}: its scrap asked of the host (nothing scrapped here)", a_ref->GetFormID());
+		}
 		if (IsCopy(a_ref)) {
 			return "error: a copy of a friend's piece: its builder's game scraps it";
 		}
@@ -9276,6 +9555,10 @@ namespace WorkshopSync
 		if (!a_ref || a_ref->IsDeleted() || a_ref->IsDisabled()) {
 			return "error: no such reference, or deleted or disabled already";
 		}
+		if (Blocked(*a_ref) && AdmitsCopy(*a_ref)) {
+			AskStore(*a_ref);
+			return std::format("copy {:08X}: its store asked of the host (nothing stored here)", a_ref->GetFormID());
+		}
 		if (IsCopy(a_ref) || Blocked(*a_ref)) {
 			return "error: a copy of a friend's piece: its builder's game stores it";
 		}
@@ -9300,6 +9583,16 @@ namespace WorkshopSync
 		const auto steps = StorePiece(*a_ref, *bench);
 		return std::format("stored {:08X} (workbench {:08X}) with the engine's store: {} | base {:08X} stored {} -> {} | destroyed={} disabled={} deleted={}", id, bench->GetFormID(), steps, baseId,
 			before, StoredCount(*bench, baseId), destroyedHere == id, a_ref->IsDisabled(), a_ref->IsDeleted());
+	}
+
+	std::string StackForDev(RE::TESObjectREFR* a_child, RE::TESObjectREFR* a_parent)
+	{
+		static REL::Relocation<RE::BGSKeyword**> stack{ STACK_KEYWORD };
+		if (!a_child || !a_parent || a_child == a_parent || !*stack) {
+			return "error: no such references (or no stack keyword)";
+		}
+		a_child->SetLinkedRef(a_parent, *stack);  // as the engine's placement links a piece it stacks on another
+		return std::format("{:08X} stands on {:08X} now: the parent has {} stack children", a_child->GetFormID(), a_parent->GetFormID(), StackChildren(*a_parent).size());
 	}
 
 	std::string MoveForDev(RE::TESObjectREFR* a_ref, const std::array<float, 3>& a_position, float a_heading)
