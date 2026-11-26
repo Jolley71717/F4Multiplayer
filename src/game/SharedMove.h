@@ -4,6 +4,7 @@
 #include "game/SharedWorkshop.h"
 #include "game/WorkshopMove.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -81,14 +82,14 @@ namespace SharedMove
 		if (!a_facts.editAllowed) {
 			return GrabKey::kRefuseEditOff;
 		}
-		if (a_facts.wire || a_facts.actor || a_facts.damaged) {
+		// Only a wire (its ends are moved) and a damaged piece (the key is its repair) are never picked up. A power piece, a
+		// piece something stands on and an actor are: the host's game carries them (Refusal, MovePiece). A copy has no grid,
+		// wires or stack links of its own, so the engine's grab has none to undo here; one that does (tied) is refused.
+		if (a_facts.wire || a_facts.damaged) {
 			return GrabKey::kRefuseKind;
 		}
-		if (a_facts.power || a_facts.tied) {
+		if (a_facts.tied) {
 			return GrabKey::kRefusePower;
-		}
-		if (a_facts.stacked) {
-			return GrabKey::kRefuseStacked;
 		}
 		if (a_facts.pending) {
 			return GrabKey::kRefusePending;
@@ -354,11 +355,36 @@ namespace SharedMove
 		bool targetPicked = false;  // workshop mode's placement item is the piece (under the host's crosshair, or held)
 		bool actor = false;         // a turret, a robot, a settler: never moved for a friend
 		bool power = false;         // a power piece by its base (IsPowerPiece), or one with power links, or one a grid names
+		bool snappedPower = false;   // a power link that is no wire (a piece snapped on to pass power): position-bound, so not carried
 		bool stacked = false;       // something stands on it (a stack child linked to it)
+		std::size_t stackChildren = 0;  // every piece standing on it, and on those (carried along)
+		bool childrenRefused = false;  // one of them the host could not move itself (Target, in use, another cell)
 		bool inArea = false;        // the destination is inside the workbench's build area
 		bool inReach = false;       // ...and within the workbench's reach
 		bool sameCell = false;      // ...and in the cell the piece stands in (SameCell)
 	};
+
+	// The most pieces the host carries along with one it moves (everything standing on it, and on those). More is refused
+	// (kPieceStacked): a floor with a whole house on it is not one request's work.
+	inline constexpr std::size_t MAX_CARRIED = 64;
+
+	// Where a piece that stands on the moved one ends up: it keeps its place relative to the piece, which turned by the
+	// heading's difference about its own spot (only the heading turns: a piece the move tilts is refused by the caller).
+	// a_from and a_to are the moved piece's transforms before and after.
+	[[nodiscard]] inline Transform Carried(const Transform& a_child, const Transform& a_from, const Transform& a_to)
+	{
+		const float turn = a_to.rotation[2] - a_from.rotation[2];
+		const float c = std::cos(turn);
+		const float s = std::sin(turn);
+		const float dx = a_child.position[0] - a_from.position[0];
+		const float dy = a_child.position[1] - a_from.position[1];
+		Transform   out = a_child;
+		out.position[0] = a_to.position[0] + dx * c + dy * s;
+		out.position[1] = a_to.position[1] - dx * s + dy * c;
+		out.position[2] = a_to.position[2] + (a_child.position[2] - a_from.position[2]);
+		out.rotation[2] = a_child.rotation[2] + turn;
+		return out;
+	}
 
 	// An exterior cell's side, in game units.
 	inline constexpr float CELL_SIZE = 4096.0f;
@@ -400,7 +426,7 @@ namespace SharedMove
 			return Why::kNoSuchPiece;
 		}
 		const auto rule = JudgeTarget(a_move.target);
-		if (a_move.actor || rule == TargetRule::kPrePlaced || rule == TargetRule::kEngineRefuses) {
+		if (rule == TargetRule::kPrePlaced || rule == TargetRule::kEngineRefuses) {
 			return Why::kNotWorkshopItem;
 		}
 		if (!a_facts.targetLoaded) {
@@ -409,10 +435,10 @@ namespace SharedMove
 		if (a_facts.targetHeld || a_move.targetPicked || rule == TargetRule::kInUse) {
 			return Why::kPieceBusy;
 		}
-		if (a_move.power) {
+		if (a_move.snappedPower) {
 			return Why::kPieceWired;
 		}
-		if (a_move.stacked) {
+		if (a_move.stackChildren > MAX_CARRIED || a_move.childrenRefused) {
 			return Why::kPieceStacked;
 		}
 		if (!a_move.inArea || !a_move.inReach || !a_move.sameCell) {
@@ -433,8 +459,10 @@ namespace SharedMove
 	enum class MoveStep : std::uint8_t
 	{
 		kFurnitureTaken,  // Workshop::SetFurnitureUsed(piece, true): its furniture markers taken while it moves (the grab's own call)
+		kPowerOut,        // a piece on a grid or with wires: off its grids and its wires taken off first (Workshop::ExtraData::RemoveItem, SplineUtils::DisconnectSpline), as the engine's grab does
 		kStackLink,       // its own stack-parent link cleared (it no longer stands on what it stood on), as the drop does
 		kTransform,       // TESObjectREFR::SetLocationOnReference, SetAngleOnReference, and its 3D moved (Update3DPosition)
+		kPowerIn,         // ...and back on after it stands: its wireless links (Workshop::ExtraData::AddItem) and each wire strung again (ConnectSpline, AddConnection)
 		kStatic,          // Workshop::MakeReferenceStatic(piece): its havok body where it stands now, in the cell it stands in
 		kFurnitureFree,   // Workshop::SetFurnitureUsed(piece, false): its furniture markers free again
 		kMovedEvent,      // ItemMovedEvent{bench, piece}: Papyrus (OnWorkshopObjectMoved), and our own sink reports the piece as placed
@@ -445,11 +473,26 @@ namespace SharedMove
 	inline constexpr std::array<MoveStep, 8> MOVE_STEPS{ MoveStep::kFurnitureTaken, MoveStep::kStackLink, MoveStep::kTransform, MoveStep::kStatic, MoveStep::kFurnitureFree,
 		MoveStep::kMovedEvent, MoveStep::kNavmesh, MoveStep::kResources };
 
+	// A piece on a grid or with wires strung to it (the grab's grid work, then the drop's).
+	inline constexpr std::array<MoveStep, 10> POWER_MOVE_STEPS{ MoveStep::kFurnitureTaken, MoveStep::kPowerOut, MoveStep::kStackLink, MoveStep::kTransform, MoveStep::kPowerIn, MoveStep::kStatic,
+		MoveStep::kFurnitureFree, MoveStep::kMovedEvent, MoveStep::kNavmesh, MoveStep::kResources };
+
+	// A piece that stands on a moved one goes along with it and stays standing on it: no stack link cleared.
+	inline constexpr std::array<MoveStep, 7> CARRIED_STEPS{ MoveStep::kFurnitureTaken, MoveStep::kTransform, MoveStep::kStatic, MoveStep::kFurnitureFree, MoveStep::kMovedEvent,
+		MoveStep::kNavmesh, MoveStep::kResources };
+
+	inline constexpr std::array<MoveStep, 9> CARRIED_POWER_STEPS{ MoveStep::kFurnitureTaken, MoveStep::kPowerOut, MoveStep::kTransform, MoveStep::kPowerIn, MoveStep::kStatic,
+		MoveStep::kFurnitureFree, MoveStep::kMovedEvent, MoveStep::kNavmesh, MoveStep::kResources };
+
 	[[nodiscard]] constexpr const char* Name(MoveStep a_step)
 	{
 		switch (a_step) {
 		case MoveStep::kFurnitureTaken:
 			return "furnitureTaken";
+		case MoveStep::kPowerOut:
+			return "powerOut";
+		case MoveStep::kPowerIn:
+			return "powerIn";
 		case MoveStep::kStackLink:
 			return "stackLink";
 		case MoveStep::kTransform:
@@ -493,7 +536,20 @@ namespace SharedMove
 		if (!taken || !transform || !still || !freed || !event) {
 			return false;
 		}
-		if (const auto stack = at(MoveStep::kStackLink); !stack || *stack > *still) {
+		// the stack link is cleared before the piece is made static (a carried piece keeps it: none in its steps, never twice)
+		if (const auto stack = at(MoveStep::kStackLink); stack && *stack > *still) {
+			return false;
+		}
+		if (std::count(a_steps.begin(), a_steps.end(), MoveStep::kStackLink) > 1) {
+			return false;
+		}
+		// the grid work: off before the piece moves, on after it stands and before it is made static; both or neither
+		const auto out = at(MoveStep::kPowerOut);
+		const auto in = at(MoveStep::kPowerIn);
+		if (out.has_value() != in.has_value() || std::count(a_steps.begin(), a_steps.end(), MoveStep::kPowerOut) > 1 || std::count(a_steps.begin(), a_steps.end(), MoveStep::kPowerIn) > 1) {
+			return false;
+		}
+		if (out && !(*taken < *out && *out < *transform && *transform < *in && *in < *still)) {
 			return false;
 		}
 		return *taken < *transform && *transform < *still && *still < *freed && *freed < *event;
@@ -512,12 +568,12 @@ namespace SharedMove
 	//
 	// How many steps ran.
 	template <class Engine>
-	std::size_t Move(Engine& a_engine)
+	std::size_t Move(Engine& a_engine, std::span<const MoveStep> a_steps = MOVE_STEPS)
 	{
 		std::size_t                 done = 0;
 		[[maybe_unused]] const auto bench = a_engine.Bench();
 		[[maybe_unused]] const auto moving = a_engine.Moving();
-		for (const auto step : MOVE_STEPS) {
+		for (const auto step : a_steps) {
 			a_engine.Do(step);
 			++done;
 		}

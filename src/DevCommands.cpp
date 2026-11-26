@@ -3321,6 +3321,16 @@ namespace DevCommands
 			return WorkshopSync::MoveForDev(ref, { *x, *y, *z }, *heading / TO_DEGREES);
 		}
 
+		// wsstack <childHex> <parentHex>: the child linked to the parent as a piece stacked on it (what the engine's placement does for a
+		// floor under a wall); the rig has no placement that stacks.
+		std::string WsStack(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto child = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto parent = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			return child && parent ? WorkshopSync::StackForDev(child, parent) : "error: usage: wsstack <childHex> <parentHex>";
+		}
+
 		// wsstored <benchHex> [use <refHex>]: the workbench's stored list (each base and its count); "use <ref>" takes one of that
 		// reference's base off the list as placing a stored piece does (the rig's stand-in for the host placing a stored piece back).
 		std::string WsStored(std::string_view a_args)
@@ -5499,6 +5509,7 @@ namespace DevCommands
 			Entry{ "wsscrap", WsScrap },
 			Entry{ "wsstore", WsStore },
 			Entry{ "wsmove", WsMove },
+			Entry{ "wsstack", WsStack },
 			Entry{ "wsstored", WsStored },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
