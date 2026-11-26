@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T06:23:12+00:00",
+ "updated": "2026-11-26T09:01:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2355,8 +2355,9 @@
    "title": "Shared workshop: a friend can't move a power piece or anything wired or on the host's grid (generator, lights, switches), their own build included",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
+   "stage": 2,
+   "note": "Built and rig-tested on PR 623; in review",
+   "pr": 623
   },
   {
    "id": "ia5v",
@@ -2441,6 +2442,14 @@
    "priority": 3,
    "stage": 7,
    "note": "Fixed and shipped."
+  },
+  {
+   "id": "imhd",
+   "title": "[rig] Killing a rig run part-way leaves the next run's aim at the generator copy failing (rig fault) until a fresh deploy",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "imp5",
@@ -2575,6 +2584,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 487
+  },
+  {
+   "id": "jo04",
+   "title": "Shared workshop: a wire the host strings for a friend's request sometimes gets no 3D, so the friend gets no copy (host log: added nothing to the budget)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "js2d",
@@ -3662,16 +3679,17 @@
    "title": "Shared workshop: a friend can't move a turret (or another built actor) at the host's settlement, their own build included",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
+   "stage": 2,
+   "note": "Built and rig-tested on PR 623; in review",
+   "pr": 623
   },
   {
    "id": "sgas",
    "title": "Event tap: see every hit (and other events) before other plugins' sinks can stop them, read-only",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": "queued, 1.0"
+   "stage": 1,
+   "note": "Taken on for 0.23.0"
   },
   {
    "id": "sh2c",
@@ -3876,8 +3894,9 @@
    "title": "Shared workshop: a friend can't move a piece that something stands on (a floor under walls or furniture), their own build included",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
+   "stage": 2,
+   "note": "Built and rig-tested on PR 623; in review",
+   "pr": 623
   },
   {
    "id": "tnl5",
@@ -4334,8 +4353,9 @@
    "title": "Shared workshop: a friend can't scrap or store a wire at the host's settlement, one they strung themselves included",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
+   "stage": 2,
+   "note": "Built and rig-tested on PR 623; in review",
+   "pr": 623
   },
   {
    "id": "y1dj",
