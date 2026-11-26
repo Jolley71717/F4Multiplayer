@@ -10,11 +10,14 @@ namespace MapMarkerLayout
 		RE::BSFixedString name;         // 08
 		std::uint8_t    flags;          // 10
 		std::uint8_t    originalFlags;  // 11
-		RE::MARKER_TYPE type;           // 12
+		REX::TEnum<RE::MARKER_TYPE, std::uint16_t> type;  // 12 (a 16-bit enum in the engine, as CommonLibF4 has it)
 	};
 	static_assert(sizeof(Mirror) == sizeof(RE::MapMarkerData));
 	static_assert(offsetof(Mirror, name) == 0x08);
 	static_assert(offsetof(Mirror, flags) == 0x10);
+	static_assert(offsetof(Mirror, originalFlags) == 0x11);
+	static_assert(offsetof(Mirror, type) == 0x12);
+	static_assert(sizeof(Mirror::type) == 2);
 
 	inline const Mirror* Of(const RE::MapMarkerData* a_data)
 	{

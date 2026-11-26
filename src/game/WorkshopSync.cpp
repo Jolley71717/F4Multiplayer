@@ -9,6 +9,7 @@
 #include "game/Drops.h"
 #include "game/EngineRefs.h"
 #include "game/HostRules.h"
+#include "game/LeveledEntries.h"
 #include "game/LinkedTargets.h"
 #include "game/PutAway.h"
 #include "game/RemoteEdits.h"
@@ -1674,10 +1675,9 @@ namespace WorkshopSync
 				}
 			} else if (const auto list = form->As<RE::TESLevCharacter>()) {
 				out.kind = ActorTemplates::Form::Kind::kList;
-				for (std::int8_t i = 0; list->leveledLists && i < list->baseListCount; ++i) {
-					const auto& entry = list->leveledLists[i];
+				LeveledEntries::Each(list->leveledLists, list->baseListCount, [&](const auto& entry) {
 					out.entries.push_back(entry.form ? entry.form->GetFormID() : 0);  // 0: judged unknown, so the list is no
-				}
+				});
 			}
 			return out;
 		}
