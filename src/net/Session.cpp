@@ -1976,7 +1976,7 @@ namespace Session
 		QuestRewards::BeforeLoad(InGame() ? std::optional<std::uint64_t>{ CurrentCharacter() } : std::nullopt);
 	}
 
-	void OnBeforeSaveOrLoad()
+	void OnBeforeSaveOrLoad(bool a_load)
 	{
 		// The player's last moves, and what the last frame left to send, go out now, while their world
 		// stands: after a load they would be forgotten (WorldSync::Reset), and sent ahead of the load's
@@ -2015,7 +2015,9 @@ namespace Session
 		// Each mirror out of the frame copy it was shown in, the copy into the graveyard DespawnAll empties (ReleaseMirrors, after
 		// it, would bury it too late: one buried after that flush stood in the save).
 		step("the mirrors' frames", [] { MirrorFrames::LeaveAll("a save or a load comes"); });
-		step("the spawns", [] { Spawns::DiscardCopies(); });  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
+		// Into the stand-ins' graveyard, which DespawnAll empties: no living copy is saved. One that lies dead is handed to our
+		// game before a save, and saved as its own corpses are.
+		step("the spawns", [a_load] { Spawns::DiscardCopies(a_load); });
 		step("the stand-ins", [] { RemotePlayers::DespawnAll(); });
 		step("the mirrors", [] { NpcSync::ReleaseMirrors(); });
 		step("the shields", [] { WeaponFire::EndAllShields(); });  // a ghost made against a friend's explosion is never saved

@@ -136,9 +136,12 @@ namespace Spawns
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
-	// Before a save or a load: our copies are deleted (never saved), and placed again afterwards while we stand near. A
-	// frame copy someone is being sent out of is kept as it is, saved with the frame they wear (RemotePlayers::SomeoneSentOutOf).
-	void DiscardCopies();
+	// Before a save or a load (a_load): our copies are deleted (no living copy is saved), and placed again afterwards while
+	// we stand near. A frame copy someone is being sent out of is kept as it is, saved with the frame they wear
+	// (RemotePlayers::SomeoneSentOutOf). Before a save, a copy that lies dead is not deleted: it is handed to our game as a
+	// corpse, with what is on it, and saved as our game's own are (a dead one is never placed again, so deleting it took
+	// what our player had not looted yet). A load takes the old world, corpses too.
+	void DiscardCopies(bool a_load);
 
 	// A loan of the frame a_id to our player is over (FrameLoans): our copy goes as any does, and is placed again where its
 	// owner's game has the frame. False when we have no copy of it placed (the session ended, say).
