@@ -314,8 +314,9 @@ namespace SpawnBook
 
 	// A copy is placed while our player stands within PLACE_RANGE of where its owner's game has it, in the same space,
 	// and the owner's stand-in within OWNER_RANGE of it: their game's word for an NPC near them, not across the map. It
-	// goes when our player is farther than KEEP_RANGE from it (placed again on coming back), when its owner's game lets
-	// it go (unloaded, or the owner left) while alive, and a dead one's corpse when we leave it behind.
+	// goes when our player is farther than KEEP_RANGE from it (placed again on coming back) and when its owner's game lets
+	// it go (unloaded, or the owner left) while alive. A dead one's corpse is not ours to delete: where a living copy
+	// would go, it is handed to our game as it lies (Theirs::LeavesCorpse).
 	constexpr float PLACE_RANGE = 6000.0f;
 	constexpr float OWNER_RANGE = 8000.0f;
 	constexpr float KEEP_RANGE = 9000.0f;
@@ -381,7 +382,7 @@ namespace SpawnBook
 	{
 		kNone,
 		kPlace,    // place our copy now
-		kDiscard,  // delete our copy (the record stays, unplaced, unless the spawn is over)
+		kDiscard,  // delete our copy (the record stays, unplaced, unless the spawn is over); an NPC's that lies dead is left as a corpse instead (Theirs::LeavesCorpse)
 		kLost,     // our copy is gone from under us (a load, the engine): forget it, unplaced
 		kForget,   // the spawn is over and no copy is left: drop the record
 		kMove,     // a frame's copy: moved in place to where its owner's game has it now (DecideFrame)
@@ -630,7 +631,8 @@ namespace SpawnBook
 				if (copy.gone && !copy.dead) {
 					return Act::kDiscard;
 				}
-				// Not loaded (its cell went: no 3D, past the wait for its first), or we left it behind: it goes, a corpse too.
+				// Not loaded (its cell went: no 3D, past the wait for its first), or we left it behind: it goes. A corpse is ours
+				// no longer either, but it is not deleted: Spawns hands it to our game as it lies (LeavesCorpse).
 				const bool unloaded = !a_facts.copyLoaded && a_now - copy.placedAt >= LOAD_WAIT;
 				if (!a_facts.copyAt || unloaded || !RemoteEdits::Within(RemoteEdits::Distance(*a_facts.copyAt, a_facts.player), KEEP_RANGE)) {
 					return Act::kDiscard;
@@ -784,6 +786,22 @@ namespace SpawnBook
 				return Act::kNone;
 			}
 			return a_facts.inView && !a_facts.oursThere && !a_facts.keptClear ? Act::kPlace : Act::kNone;
+		}
+
+		// Whether our copy of it stays as a corpse when we let go of it (Spawns hands it to our game with what lies on it,
+		// and never deletes it): one placed whose death is the session's. Its owner's game or the session sent that death
+		// (Died), or the session took the one our game reported (DiedHere, then an owner of 0: Gone). Never a death of ours
+		// alone, which its owner's game may not have (ours is raised then: HeardAliveAfterDeath), nor one nobody runs for
+		// the moment (Unrun), nor a living one. A copy deleted took what lay on it along: a friend's enemy's corpse, with the
+		// weapons and armor on it, was gone from our game at its next save, as its cell unloaded, or KEEP_RANGE behind us.
+		[[nodiscard]] bool LeavesCorpse(std::uint32_t a_id) const
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return false;
+			}
+			const auto& copy = it->second;
+			return copy.local != 0 && copy.dead && !copy.taken && !copy.unrunAt && (!copy.diedHereAt || copy.gone);
 		}
 
 		// Somebody here got into our copy of a frame (DecideFrame's kAbandon): it is theirs, no copy of ours any more, and

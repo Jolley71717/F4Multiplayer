@@ -334,7 +334,7 @@ namespace EncounterRuns
 		}
 
 		// The runs we follow: their aliases that name the owner's actors hold our copies placed now. A save deletes every
-		// copy (no copy is ever saved: Spawns::DiscardCopies) and places them again as new references; so does our player
+		// living copy (none is ever saved: Spawns::DiscardCopies) and places them again as new references; so does our player
 		// coming back after their copies were let go. Each such alias is forced onto the new copy and read back
 		// (RadiantSync::RefillAliases: asked again when it doesn't hold it, up to MAX_FORCE_TRIES asks); our own actor of the
 		// quest it still holds (made by our start for it, not seen loaded yet) goes first.

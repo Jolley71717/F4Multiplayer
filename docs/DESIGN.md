@@ -831,9 +831,25 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   (`SettlerSpawns.h`) is never withheld this way: a settler of our own save standing there is another person. So each
   game fights its own, as before spawns were shared; the friend's hits on theirs reach nobody here, as no copy is
   loaded. `net status`: `npcOursThere=` is one number, the copies withheld; the no-copy log names the reason.
-- A copy goes when its player leaves it 9000 units behind (placed again on coming back), when its cell unloads,
-  before every save and load, and when the spawn is over while it is alive. A dead copy stays as a corpse until
-  its player leaves it.
+- A living copy goes when its player leaves it 9000 units behind (placed again on coming back), when its cell
+  unloads, before every save and load, and when the spawn is over.
+- A dead copy is a corpse, and a corpse is never deleted while the session lasts in this world: where a living copy
+  would go (9000 units behind, its cell unloading, before a save, the session ending) it is handed to this game as it
+  lies, with what is on it (`Spawns::LeaveCorpse`, `corpsesLeft=`). From then on it is an ordinary corpse of this
+  world: saved, unloaded and brought back with its cell, and cleaned up by the engine as its own are; the session
+  forgets the spawn here. Only a death the session has counts (`SpawnBook::Theirs::LeavesCorpse`: its owner's game
+  sent it, or the server took the one this game reported), and only once the kill has landed here; a death of this
+  game alone may still be raised. Before, a corpse went as a living copy does and, being dead, was never placed
+  again: a friend's enemy's corpse, with every weapon and piece of armor our player had not taken yet (a player's
+  report of looted Brotherhood armor that disappeared), was gone from our game at our next save of any kind, as its
+  cell unloaded, 9000 units behind us, and at the session's end. Three cases still delete it: a load (the old world
+  goes, and the loaded save holds the corpses handed over before it was written), a plugin NPC our game lacked
+  whose own reference has loaded here now (its copy would lie beside it), and a corpse that a quest's alias still
+  holds as the actor the quest makes (a friend's run this game follows, its alias forced onto the copy: handed
+  over, it would be this game's own actor of the run, which a followed run disables or removes, and a save holding
+  it would not be the hollow run a followed run's save has to be; `corpsesHeld=`). What is taken from a corpse after it was
+  handed over is no longer told to the session (it is no copy any more): the shared loot left on it can then be
+  taken in both games.
 - Either game shares: a joiner's random encounter reaches the host as the host's reaches the joiner (nothing in the
   scan, the base pick or the placing looks at the race, the keywords or who hosts). When a friend does not see one,
   the log says why: our side logs a hostile or fighting runtime NPC it cannot report (`Spawns: ... is hostile to our
