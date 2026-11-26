@@ -1,4 +1,5 @@
 #include "game/CopyWatch.h"
+#include "game/EventTap.h"
 
 #include "game/CopyHealth.h"
 #include "game/GameClock.h"
@@ -476,8 +477,8 @@ namespace CopyWatch
 				missingWarned = true;
 				REX::WARN("CopyWatch: {} drops in a row on friends' NPCs here followed our player's shots and no hit event came for any of them, nor for any other hit of "
 				          "our player's: this game's hit events don't reach the mod (another plugin may stop them first). Until one comes, every friend's NPC a shot points "
-				          "near and every one an explosion of ours reaches here alone takes the drop that follows as ours (hitEvents= in `net status`)",
-					CopyHealth::HitEvents::MISSING_AFTER);
+				          "near and every one an explosion of ours reaches here alone takes the drop that follows as ours (hitEvents= in `net status`).{}",
+					CopyHealth::HitEvents::MISSING_AFTER, EventTap::CauseNote());
 			} else if (eventsLog.Take(a_now)) {
 				REX::INFO("CopyWatch: our player's hit events are missing again ({} times this run)", hitEvents.Spells());
 			}

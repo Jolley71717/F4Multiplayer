@@ -8,6 +8,7 @@
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
 #include "game/EnableParents.h"
+#include "game/EventTap.h"
 #include "game/Encounters.h"
 #include "game/Drops.h"
 #include "game/Gifts.h"
@@ -993,6 +994,14 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent& a_event, RE::BSTEventSource<RE::TESHitEvent>*) override
 			{
+				EventTap::HitSunk(&a_event);  // the tap's send hook is told this one reached us, so it is handled once
+				return Handle(a_event);
+			}
+
+			// What a hit does here: read and queued for Frame(), on whichever thread sent it. The event tap runs it too for a hit
+			// our sink never got (EventTap.h), never for one it did.
+			RE::BSEventNotifyControl Handle(const RE::TESHitEvent& a_event)
+			{
 				// Any hit, by anything (a hazard's has no cause): our copies of NPCs other games run are watched.
 				CopyWatch::NoteHit(a_event);
 				const auto target = a_event.target.get();
@@ -1068,6 +1077,11 @@ namespace WorldSync
 		};
 
 		HitWatcher hitWatcher;
+
+		void HandleStoppedHit(const RE::TESHitEvent& a_event)
+		{
+			hitWatcher.Handle(a_event);
+		}
 
 		class ContainerWatcher :
 			public RE::BSTEventSink<RE::TESContainerChangedEvent>
@@ -2799,7 +2813,11 @@ namespace WorldSync
 		}
 		if (const auto source = RE::TESHitEvent::GetEventSource()) {
 			source->RegisterSink(&hitWatcher);
+			// First in the source's list: a sink ahead of ours that stops hits no longer stops them for us. The tap's send hook
+			// handles any that still never reach it (EventTap.h).
+			EventTap::PutHitSinkFirst(&hitWatcher);
 		}
+		EventTap::SetHitHandler(&HandleStoppedHit);
 		if (const auto source = RE::TESContainerChangedEvent::GetEventSource()) {
 			source->RegisterSink(&containerWatcher);
 		}
@@ -2826,6 +2844,7 @@ namespace WorldSync
 	void OnWelcome(bool a_friendlyFire)
 	{
 		friendlyFire = a_friendlyFire;
+		EventTap::OnWelcome();  // our hit sink is first again if a plugin moved it, and the other sinks on the sources are listed once
 		dead.Expect(Clock::now());  // the session's world state follows the welcome
 		heldDamage.Clear();         // what was held was for the session we were in before (its server answers those hits for us as we leave it)
 	}
@@ -3503,6 +3522,7 @@ namespace WorldSync
 
 	void Reset()
 	{
+		EventTap::OnSessionEnd();  // the sinks on the sources are listed again in the next session
 		dead.Reset(Clock::now());
 		raises.Clear();
 		raisesHeldLogged.clear();

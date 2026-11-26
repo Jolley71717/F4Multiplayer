@@ -1670,6 +1670,40 @@ lists and stages. These messages came in protocol 66.
   shooter (an automatic gun's next shot keeps it up), 50 ms between two, and 12 at once. `muzzle mode always`
   shows it on every shot, to try it; the status line's `flash=` counts both, and `takenDown=` the flashes of ours taken down.
 
+### Event tap (EventTap.cpp, EventTapRules.h)
+
+The engine hands an event to a source's sinks in the order they registered, and any sink may return `kStop`, so a plugin whose
+`TESHitEvent` sink registered before ours can keep every hit from the mod (a player's log: `hitEvents=missing`, 112 drops given back
+as "no hit of ours"). Load order does not decide it. The tap is three read-only parts; it never changes, stops or reorders what
+another plugin gets.
+
+- **A send hook.** The engine builds and sends a `TESHitEvent` in two functions (1.11.240, Address Library 2201637, which takes the target,
+  cause, source form, projectile and material and sets no hit data, and 2201638, which takes a `HitData`; six and one callers). Each gets
+  the hit event source (2201886) and calls its `Notify` (2202308), a function only these two calls reach (found by scanning the executable for
+  calls to the source's getter, then reading the two functions: the event is built on the stack and `Notify` is called with the source and the
+  event's address). The calls (`+0x9D` and `+0x4E`, `E8 rel32`) go through the hook; each is checked to call that `Notify` first, and none is patched
+  if either isn't (another plugin's patch, another version; logged). The hook notes the event's address, hands it to the original unchanged, and
+  asks afterwards whether our sink got it (`Track`: the sinks run inside `Notify` on the sender's thread, with that same address). One our sink
+  got is the sink's. One it never got (a sink ahead of ours stopped it) is handled by the hook with the very code the sink runs
+  (`HitWatcher::Handle`), which reads the event and queues the work for `Frame()`: a hit is handled once, whichever way it came. The hook
+  calls nothing in the game but the original and reads; with another plugin's hook already on the call, the engine's own call is refused as
+  not the expected bytes and the tap stays out.
+- **Our sink ahead of the plugins'.** `EventTap::PutHitSinkFirst` registers nothing itself: after `RegisterSink` it moves the sink under the
+  source's own lock (`PlaceAfterLeading`; not while a notify is running) to just behind the engine's own sinks (those whose vtable is in the game's
+  executable, which stand first in the list) and ahead of every other plugin's; the welcome checks it again once a session in case a plugin
+  registered since. Not to the very front, which was the first try: the engine's first sink finishes the hit event (an event's cause is empty
+  until it has run), and a sink of ours before it read none of the player's hits on an NPC as the player's (seen on the rig: no copy hit counted
+  in either game). The hook's counts are taken before any sink and its own handling after all of them, so the same applies to a hit the
+  hook handles. Only the hit sink moves: nothing says the deaths, container changes or activations of ours are stopped.
+- **Diagnostics.** Once a session the sinks on the hit, death, container-changed and activate sources are listed in the log (count, module
+  and the vtable's offset in it; ours marked). `net status` says `hitTap=on|counting|unhooked hitSent= hitStopped= hitDirect=`: events the
+  hook saw, those of them our sink never got, and events our sink got that the hook did not send. CopyWatch's "hit events don't reach the mod"
+  warning adds the cause when the hook saw hits stopped (`EventTap::CauseNote`). The shot-cone fallback (`CopyHealth::HitEvents`, `AllAimed`)
+  stays for a plugin that makes hits another way, or never sends the event at all.
+
+Dev channel: `eventtap` prints the counters and the sinks on the hit source; `eventtap starve on|off` registers a sink first that stops every hit,
+`eventtap handle off` leaves what our sink never gets unhandled (as before the tap), `eventtap front off` puts our sink last (as a late registration).
+
 ### Who sets off an explosion (WeaponFire.cpp, RemoteEdits.h, CopyWatch.cpp)
 
 One rule for every explosion: **it goes off once in every game, and each game deals its blows on its own player and

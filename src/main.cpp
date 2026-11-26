@@ -51,6 +51,7 @@
 #include "game/Storage.h"
 #include "game/CombatReactions.h"
 #include "game/EffectTasks.h"
+#include "game/EventTap.h"
 #include "game/ExitInventory.h"
 #include "game/VatsTargets.h"
 #include "game/HavokGuard.h"
@@ -1194,7 +1195,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 822 of 832 bytes used: forty-nine 14-byte call stubs, one per distinct hook (REL::Trampoline shares a stub between
+	// 836 of 848 bytes used: fifty 14-byte call stubs, one per distinct hook (REL::Trampoline shares a stub between
 	// calls to the same hook) (WorkshopSync::InstallNumbers' thirteen, one for each figure the
 	// workshop bar asks for; WorkshopSync::InstallSettlers' four (the give-command and InstallTransfers' three);
 	// WorkshopSync::InstallBenchUse's two (the activate event and the workshop key's search);
@@ -1205,10 +1206,10 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	// pick's run and filter, the wire pick's run and filter, and both picks' casts and hits), CombatReactions::Install's
 	// one, EffectTasks::Install's one, ExitInventory::Install's one, KillBlasts::Install's two share one,
 	// Storage::InstallGather's two share one,
-	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
+	// VatsTargets::Install's four share one, Downed::Install's ten share one, EventTap::Install's two share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation) and its impact check's four calls (sharing one stub).
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 832 });
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 848 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
@@ -1236,6 +1237,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
 	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
+	EventTap::Install();         // every hit event the engine sends is seen before any sink, so one another plugin's sink stops before ours is still handled (EventTapRules.h)
 	EffectTasks::Install();      // a queued hit-effect refresh skips an effect freed since (a replaced stand-in's), which crashed on a pure virtual call (EffectTask.h)
 	ExitInventory::Install();    // quitting from workshop mode crashed at the shutdown's end in an inventory list's destructor (ExitInventory.h)
 	KillBlasts::Install();       // the console's kill (which lands a friend's game's deaths here) and Papyrus's Actor.Kill crashed on a torso with no limb value: a flying ant swarm's (KillBlast.h)
