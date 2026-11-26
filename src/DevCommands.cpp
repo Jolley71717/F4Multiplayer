@@ -10,6 +10,7 @@
 #include <random>
 
 #include "game/EffectTasks.h"
+#include "game/EventTap.h"
 #include "game/CopyWatch.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
@@ -3626,6 +3627,33 @@ namespace DevCommands
 			return std::format("our player's hit events reach CopyWatch: {}", CopyWatch::DroppingPlayerHits() ? "no (dropped)" : "yes");
 		}
 
+		// eventtap [handle|front|starve on|off]: the event tap's counters and the sinks on the hit event source (game/EventTap.h). The
+		// rig plays a game whose hits another plugin's sink stops: starve puts a sink of ours first that stops every hit, handle off
+		// leaves the hits our sink never gets unhandled (as before the tap), front off puts our sink last (as a late registration).
+		std::string EventTapCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				const bool on = args[1] == "on";
+				if (args[0] == "handle") {
+					EventTap::SetHandling(on);
+				} else if (args[0] == "front") {
+					if (!EventTap::SetFront(on)) {
+						return "error: the hit sink is not registered";
+					}
+				} else if (args[0] == "starve") {
+					if (!EventTap::SetStarve(on)) {
+						return "error: the hit source is not there";
+					}
+				} else {
+					return "error: usage: eventtap [handle|front|starve on|off]";
+				}
+			} else if (!args.empty()) {
+				return "error: usage: eventtap [handle|front|starve on|off]";
+			}
+			return EventTap::Status();
+		}
+
 		// projoff <end|delete> [shooterHex]: the live projectiles within 3000 of the player that the shooter (our player by
 		// default) fired, ended as WeaponFire ends a stand-in's own grenade (end: nothing goes off, the HUD's grenade marker
 		// clears) or disabled and deleted as it once was (delete: the marker stays, the bug of 2026-10-15).
@@ -5481,6 +5509,7 @@ namespace DevCommands
 			Entry{ "throw", Throw },
 			Entry{ "projoff", ProjOff },
 			Entry{ "hitevents", HitEventsCommand },
+			Entry{ "eventtap", EventTapCommand },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
 			Entry{ "looks", Looks },
