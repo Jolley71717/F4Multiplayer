@@ -1,0 +1,6 @@
+Fixed: Gear on a friend's dead enemies no longer disappears; the body stays as an ordinary corpse with everything on it
+Fixed: Quest NPCs no longer restart the host's conversation with the friend or get stuck waiting for them
+Fixed: Taking items out of the host's workbench works with shared storage on
+Fixed: A container a friend builds at the host's settlement no longer comes with extra items
+Fixed: NPC gear and loot from very large modded leveled lists now match in both games
+Same protocol as 0.22.0 to 0.22.2 (85): they can play together
