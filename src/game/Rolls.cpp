@@ -3,7 +3,10 @@
 
 #include <array>
 #include <format>
+#include <functional>
+#include <span>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Rolls
 {
@@ -83,6 +86,55 @@ namespace Rolls
 			std::erase_if(changes, [](const auto& a_entry) { return !Protocol::IsShareableRef(a_entry.faction); });
 			return NpcRoll::Effective(base, changes);
 		}
+
+		// The factions with a merchant container, what a store's vendor is in (the barter menu shows that container's things).
+		// Its field may still hold the form ID the engine read from the file, as WorldSync::FindVendorChests notes: either
+		// way it is not empty. Read once game data is loaded.
+		const std::vector<const RE::TESFaction*>& VendorFactions()
+		{
+			static std::vector<const RE::TESFaction*> list;
+			static bool                               built = false;
+			if (!built) {
+				if (const auto data = RE::TESDataHandler::GetSingleton()) {
+					for (const auto faction : data->GetFormArray<RE::TESFaction>()) {
+						if (faction && faction->vendorData.merchantContainer != nullptr && Protocol::IsShareableRef(faction->GetFormID())) {
+							list.push_back(faction);
+						}
+					}
+					built = !list.empty();
+				}
+			}
+			return list;
+		}
+
+		bool VendorSyncOn = true;  // dev: `vendorsync off` leaves a settler's store to each game's own scripts (the rig's "before")
+
+		// The vendor factions an NPC is in now, by the game's own answer. A store's job puts a settler in its faction, and for a
+		// unique NPC (Codsworth) the engine writes that into the NPC's own faction list, not into the reference's changes
+		// (`factions` lists none: rig, 2026-11-26), so there is no telling it from what its plugin gave it. Each game says all of
+		// them; one a friend's NPC has from its plugin is in ours too, and nothing is done for it.
+		std::vector<NpcRoll::FactionRank> VendorFactionsIn(RE::Actor* a_actor)
+		{
+			std::vector<NpcRoll::FactionRank> out;
+			if (!a_actor) {
+				return out;
+			}
+			for (const auto faction : VendorFactions()) {
+				if (NpcRoll::Shared(faction->GetFormID()) && a_actor->IsInFaction(faction)) {
+					out.push_back({ faction->GetFormID(), 0 });
+				}
+			}
+			std::ranges::sort(out, {}, &NpcRoll::FactionRank::faction);
+			return out;
+		}
+
+		// What we put each plugin NPC in from a friend's report (actor id -> vendor factions): ours to take out again.
+		std::unordered_map<std::uint32_t, std::unordered_set<std::uint32_t>> vendorGiven;
+
+		// The factions the save being loaded says we gave NPCs (a save made inside a session), to be taken off once it has loaded.
+		std::unordered_map<std::uint32_t, std::unordered_set<std::uint32_t>> savedVendor;
+		constexpr std::size_t                                                MAX_SAVED_VENDORS = 256;
+		constexpr std::size_t                                                MAX_SAVED_FACTIONS = 32;
 
 		std::uint16_t LevelOf(RE::Actor* a_actor)
 		{
@@ -192,6 +244,175 @@ namespace Rolls
 		return out;
 	}
 
+	std::vector<NpcRoll::FactionRank> OwnVendorFactions(RE::Actor* a_actor)
+	{
+		auto in = VendorFactionsIn(a_actor);
+		if (const auto it = vendorGiven.find(a_actor ? a_actor->GetFormID() : 0u); it != vendorGiven.end()) {
+			std::erase_if(in, [&](const auto& a_entry) { return it->second.contains(a_entry.faction); });
+		}
+		return in;
+	}
+
+	void SetVendorSync(bool a_on)
+	{
+		VendorSyncOn = a_on;
+	}
+
+	bool VendorSync()
+	{
+		return VendorSyncOn;
+	}
+
+	void ForgetVendorCache(RE::Actor* a_actor)
+	{
+		// The engine works out which faction an NPC trades under and keeps it for a while (Actor::vendorFaction, and a timer):
+		// a faction put on or taken off is not seen by its barter menu until that runs out (rig, 2026-11-26: a settler taken out
+		// of its store's faction still opened that store's chest). Emptied, it is worked out again at the next barter.
+		if (a_actor) {
+			a_actor->vendorFaction = nullptr;
+			a_actor->calculateVendorFactionTimer.timeStamp = 0.0f;
+		}
+	}
+
+	std::vector<std::uint8_t> SaveVendorRecord()
+	{
+		// What we put NPCs in from a friend's report, so a save made inside the session can be cleaned when it is loaded: a u16 count,
+		// then per NPC its id, a u8 count and that many faction ids (little endian).
+		std::vector<std::uint8_t> out;
+		const auto put = [&](std::uint32_t a_value, int a_bytes) {
+			for (int i = 0; i < a_bytes; ++i) {
+				out.push_back(static_cast<std::uint8_t>(a_value >> (8 * i)));
+			}
+		};
+		std::uint16_t count = 0;
+		for (const auto& [id, factions] : vendorGiven) {
+			count = factions.empty() ? count : static_cast<std::uint16_t>(count + 1);
+		}
+		if (count == 0) {
+			return out;
+		}
+		put(count, 2);
+		std::size_t written = 0;
+		for (const auto& [id, factions] : vendorGiven) {
+			if (factions.empty() || written >= MAX_SAVED_VENDORS) {
+				continue;
+			}
+			put(id, 4);
+			put(static_cast<std::uint32_t>((std::min)(factions.size(), MAX_SAVED_FACTIONS)), 1);
+			std::size_t n = 0;
+			for (const auto faction : factions) {
+				if (n++ < MAX_SAVED_FACTIONS) {
+					put(faction, 4);
+				}
+			}
+			++written;
+		}
+		out[0] = static_cast<std::uint8_t>(written);
+		out[1] = static_cast<std::uint8_t>(written >> 8);
+		return out;
+	}
+
+	void LoadVendorRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve)
+	{
+		std::size_t at = 0;
+		const auto  get = [&](int a_bytesWanted) -> std::optional<std::uint32_t> {
+            if (at + a_bytesWanted > a_bytes.size()) {
+                return std::nullopt;
+            }
+            std::uint32_t value = 0;
+            for (int i = 0; i < a_bytesWanted; ++i) {
+                value |= static_cast<std::uint32_t>(a_bytes[at + i]) << (8 * i);
+            }
+            at += a_bytesWanted;
+            return value;
+		};
+		const auto count = get(2);
+		for (std::uint32_t i = 0; count && i < *count && i < MAX_SAVED_VENDORS; ++i) {
+			const auto id = get(4);
+			const auto n = get(1);
+			if (!id || !n || *n > MAX_SAVED_FACTIONS) {
+				return;
+			}
+			const auto actor = a_resolve(*id);
+			for (std::uint32_t j = 0; j < *n; ++j) {
+				const auto faction = get(4);
+				if (!faction) {
+					return;
+				}
+				if (const auto resolved = a_resolve(*faction); actor && resolved) {
+					savedVendor[*actor].insert(*resolved);
+				}
+			}
+		}
+	}
+
+	void RevertVendorRecord()
+	{
+		savedVendor.clear();
+		vendorGiven.clear();  // the world the game loads is not the one we gave anything in
+	}
+
+	void RemoveSavedVendorFactions()
+	{
+		for (const auto& [id, factions] : savedVendor) {
+			for (const auto faction : factions) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.removefromfaction {:08X}", id, faction).c_str());
+			}
+			if (const auto form = RE::TESForm::GetFormByID(id)) {
+				ForgetVendorCache(form->As<RE::Actor>());
+			}
+			REX::INFO("Rolls: {:08X} is taken out of the {} vendor faction(s) the save it was loaded from kept from a friend's store", id, factions.size());
+		}
+		savedVendor.clear();
+	}
+
+	void UndoVendorFactions()
+	{
+		for (const auto& [id, factions] : vendorGiven) {
+			for (const auto faction : factions) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.removefromfaction {:08X}", id, faction).c_str());
+			}
+			if (const auto form = RE::TESForm::GetFormByID(id)) {
+				ForgetVendorCache(form->As<RE::Actor>());
+			}
+			REX::INFO("Rolls: {:08X} is taken out of the {} vendor faction(s) a friend's game put it in as the session ends", id, factions.size());
+		}
+		vendorGiven.clear();
+	}
+
+	std::string DescribeVendor(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return "no actor";
+		}
+		const auto id = [](const RE::TESForm* a_form) { return a_form ? a_form->GetFormID() : 0u; };
+		std::string out = std::format("{:08X} cachedVendorFaction={:08X} told=", a_actor->GetFormID(), id(a_actor->vendorFaction));
+		const auto given = VendorFactionsIn(a_actor);
+		for (std::size_t i = 0; i < given.size(); ++i) {
+			out += std::format("{}{:08X}:{}", i ? "," : "", given[i].faction, static_cast<int>(given[i].rank));
+		}
+		out += " in=";
+		std::size_t count = 0;
+		if (const auto data = RE::TESDataHandler::GetSingleton()) {
+			for (const auto faction : data->GetFormArray<RE::TESFaction>()) {
+				if (!faction || !faction->vendorData.merchantContainer || !a_actor->IsInFaction(faction)) {
+					continue;
+				}
+				const auto raw = reinterpret_cast<std::uintptr_t>(faction->vendorData.merchantContainer);
+				const auto chest = raw <= 0xFFFFFFFFull ? static_cast<std::uint32_t>(raw) : faction->vendorData.merchantContainer->GetFormID();
+				std::size_t stacks = 0;
+				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(chest); ref && ref->inventoryList) {
+					RE::BSAutoReadLock l{ ref->inventoryList->rwLock };
+					stacks = ref->inventoryList->data.size();
+				}
+				out += std::format("{}{:08X}(chest {:08X} stacks {})", count++ ? "," : "", faction->GetFormID(), chest, stacks);
+			}
+		}
+		out += count ? "" : "none";
+		out += std::format(" synced={}", vendorGiven.contains(a_actor->GetFormID()) ? vendorGiven[a_actor->GetFormID()].size() : 0u);
+		return out;
+	}
+
 	NpcRoll::Ours ReadOurs(RE::Actor* a_actor, bool a_copy)
 	{
 		NpcRoll::Ours ours;
@@ -205,6 +426,11 @@ namespace Rolls
 		}
 		if (a_copy) {
 			ours.factions = FactionsOf(a_actor);
+		} else {
+			ours.vendor = VendorFactionsIn(a_actor);
+			if (const auto it = vendorGiven.find(a_actor->GetFormID()); it != vendorGiven.end()) {
+				ours.vendorGiven.assign(it->second.begin(), it->second.end());
+			}
 		}
 		return ours;
 	}
@@ -266,11 +492,22 @@ namespace Rolls
 		}
 		for (const auto& entry : a_plan.add) {
 			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} {}", a_actor->GetFormID(), entry.faction, static_cast<int>(entry.rank)).c_str());
+			if (a_plan.vendor) {
+				vendorGiven[a_actor->GetFormID()].insert(entry.faction);
+				REX::INFO("Rolls: {:08X} is put in vendor faction {:08X} (rank {}): player {}'s game has it in a store", a_actor->GetFormID(), entry.faction, static_cast<int>(entry.rank), a_theirs.playerId);
+			}
 			++commands;
 		}
 		for (const auto faction : a_plan.remove) {
 			RE::Console::ExecuteCommand(std::format("{:08X}.removefromfaction {:08X}", a_actor->GetFormID(), faction).c_str());
+			if (a_plan.vendor) {
+				vendorGiven[a_actor->GetFormID()].erase(faction);
+				REX::INFO("Rolls: {:08X} is taken out of vendor faction {:08X}: player {}'s game has it out of a store", a_actor->GetFormID(), faction, a_theirs.playerId);
+			}
 			++commands;
+		}
+		if (a_plan.vendor && (!a_plan.add.empty() || !a_plan.remove.empty())) {
+			ForgetVendorCache(a_actor);  // its barter menu is to see the store at once
 		}
 		return commands;
 	}

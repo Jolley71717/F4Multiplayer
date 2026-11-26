@@ -9394,3 +9394,155 @@ step_sharedws_moveclass() {
 	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in at the end"
 	_sws_cleanup
 }
+
+# ---- a settler's store: what the host's game puts a settler in, the friend's game does too (opt-in: smoke.sh --only sharedws-vendor) ----
+# Sanctuary is the host's, and Codsworth its settler, held west of the workbench (as sharedws-assign: console placement,
+# SetOwnedByPlayer, AddActorToWorkshopPUBLIC). The host places a store (console placement and the engine's finish) and gives
+# Codsworth the job with the workshop's own script (WorkshopParentScript.AssignActorToObjectPUBLIC, by console, as the
+# host's own Assign key does): the scripts put him in the store's vendor faction, in the host's game alone. Each player's barter
+# menu is opened on him by console (Actor.ShowBarterMenu: the menu the dialogue's trade opens) and read through `barterinfo`:
+# the chest it shows. Asserted: with `vendorsync off` in both games (the "before": each game's own scripts alone) the VM's barter
+# shows Codsworth's own things while the host's shows the store's chest (the report: only the settler's inventory); with it on
+# the VM's game puts its Codsworth in the same vendor faction and its barter (opened before, so the engine's cached answer was
+# "none") shows the store's chest; a reassignment to another store, and the store scrapped (unassigned), follow; one store of each
+# kind and level the same; a store given before the VM joined is there when it joins; and a generic settler (a spawn, the VM's
+# copy under another id) follows too. Vendors' chests stay each player's own (docs/DESIGN.md: the stock is each game's).
+SWS_VENDOR_STORES=${SWS_VENDOR_STORES:-"general:00020594 clothing:0006462B weapons:0010C048 armor:0010FCB2 drink:0005C2A1 clinic:0018AF96 general2:001102F3 clothing2:00064643 weapons2:0010C049 armor2:0010FCB3 general3:001102F4 clothing3:00064667 weapons3:0010C04A clinic2:0018AF97 bar:001102F1"}
+SWS_VENDOR_SAVE=${SWS_VENDOR_SAVE:-f4mp_sharedws_vendor}
+# _vend_in <who> <ref>: the vendor factions that game says the actor is in, as "faction>chest" pairs joined by commas, or "none"
+_vend_in() { local o; o=$(dc "$1" "vendorinfo $2" | sed -E 's/.* in=//; s/ synced=.*//' | grep -oE '[0-9A-F]{8}\(chest [0-9A-F]{8}' | sed -E 's/\(chest /\>/' | sort | paste -sd, -); echo "${o:-none}"; }
+_vend_same() { [ "$(_vend_in host "$1")" = "$(_vend_in vm "${2:-$1}")" ] && [ "$(_vend_in host "$1")" != none ]; }
+_vend_both_none() { [ "$(_vend_in host "$1")" = none ] && [ "$(_vend_in vm "${2:-$1}")" = none ]; }
+_vend_host_has() { [ "$(_vend_in host "$1")" != none ]; }
+# _vend_chest <who> <ref>: the chest that game's barter menu shows with the actor (its barter opened by console, read, closed), or ""
+_vend_chest() {
+	local c="" i out
+	dc "$1" "console $2.cf \"Actor.ShowBarterMenu\"" >/dev/null
+	for i in 1 2 3 4 5 6 7 8; do sleep 1; out=$(dc "$1" "barterinfo $2"); case "$out" in "barter open vendor="*) c=$(grep -oE 'chest=[0-9A-F]+' <<<"$out" | head -1 | cut -d= -f2); break;; esac; done
+	dc "$1" "menu BarterMenu hide" >/dev/null
+	for i in 1 2 3 4 5 6; do sleep 1; case "$(dc "$1" "barterinfo $2")" in "barter closed") break;; esac; done
+	echo "$c"
+}
+_vend_assign() { host "console cqf WorkshopParent \"WorkshopParentScript.AssignActorToObjectPUBLIC\" $1 $2" >/dev/null; }
+# _vend_place <label> <base>: a piece of that base placed and finished by the host at Sanctuary (prints its ref, "" when it could not)
+_vend_place() {
+	local out ref
+	out=$(host "wsreport place $2 $SANCT_BENCH"); ref=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$ref" ]; then setup_fault "$1: set-up: the host placed $2 (console placement)" "$out" >&2; echo ""; return; fi
+	_sws_placed host "$ref"; sleep 2; host "wsfinish $ref $SANCT_BENCH" >/dev/null; sleep 3
+	echo "$ref"
+}
+step_sharedws_vendor() { _sws_vendor_body; _sws_codsworth_free; if [ -n "$SWS_SUPPLY_SETTLER" ]; then host "console $SWS_SUPPLY_SETTLER.setrestrained 0" >/dev/null; host "remove $SWS_SUPPLY_SETTLER" >/dev/null; SWS_SUPPLY_SETTLER=""; fi; }
+_sws_vendor_body() {
+	section "shared workshop: a settler's store is the friend's game's too (console placement, SetOwnedByPlayer, AddActorToWorkshopPUBLIC and Actor.ShowBarterMenu; throwaway state)"
+	local label="sharedws-vendor" r ri ref1 ref2 f1 f2 hc vc kind base item state
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	for item in host vm; do
+		case "$(dc $item vendorsync)" in "vendorsync on"|"vendorsync off") ;; *) fail "$label: precondition: $item has the vendorsync dev command" "$(dc $item vendorsync | cut -c1-120)"; return;; esac
+	done
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then setup_fault "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	ri=$(host "refinfo $CODSWORTH")
+	if [ -z "$(field "$ri" base)" ] || [ "$(field "$ri" dead)" != false ] || [ "$(field "$ri" companion)" != false ]; then setup_fault "$label: set-up: Codsworth stands in the host's Sanctuary and is not its companion" "$(cut -c1-200 <<<"$ri")"; return; fi
+	host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $CODSWORTH $SANCT_BENCH" >/dev/null
+	if ! wait_for 10 _sws_settler_of host $CODSWORTH; then setup_fault "$label: set-up: Codsworth is Sanctuary's settler in the host's game (console: AddActorToWorkshopPUBLIC)" "$(host "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80)"; return; fi
+	_sws_codsworth_hold "$label"
+	walk host "$label: set-up: the host walks to Codsworth" 0.8 250 $CODSWORTH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; else setup_fault "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "$(host workshop)"; return; fi
+	walk vm "$label: set-up: the VM walks to Codsworth" 0.8 250 $CODSWORTH || { pads_off; _sws_cleanup; return; }
+	pads_off
+	crash_snapshot
+	# a faction an older run (or a save made inside a session) left on his base: taken off in each game, its cached answer emptied
+	for item in host vm; do
+		for f1 in $(_vend_in $item $CODSWORTH | tr ',' ' '); do
+			[ "$f1" = none ] && continue
+			warn "$label: set-up: Codsworth was in vendor faction ${f1%%>*} in the $item's game already (left by an older run or in its save): taken out by console" "$f1"
+			dc $item "console $CODSWORTH.removefromfaction ${f1%%>*}" >/dev/null; dc $item "vendorinfo $CODSWORTH reset" >/dev/null
+		done
+	done
+	state="host: $(_vend_in host $CODSWORTH), vm: $(_vend_in vm $CODSWORTH)"
+	if _vend_both_none $CODSWORTH; then pass "$label: set-up: Codsworth is in no store's vendor faction in either game" "$state"; else warn "$label: set-up: Codsworth was in a vendor faction already (an older run's)" "$state"; fi
+	# ---- before: vendorsync off in both games: the report ----
+	dc host "vendorsync off" >/dev/null; dc vm "vendorsync off" >/dev/null
+	ref1=$(_vend_place "$label" 00020594); [ -n "$ref1" ] || { _sws_cleanup; return; }
+	_vend_assign $CODSWORTH $ref1
+	if wait_for 15 _vend_host_has $CODSWORTH; then f1=$(_vend_in host $CODSWORTH); pass "$label: the host's scripts put Codsworth in the general store's vendor faction (in the host's game)" "$f1"
+	else fail "$label: the host's scripts put Codsworth in the general store's vendor faction (in the host's game)" "$(dc host "vendorinfo $CODSWORTH" | cut -c1-200)"; _sws_cleanup; return; fi
+	sleep 8
+	hc=$(_vend_chest host $CODSWORTH); vc=$(_vend_chest vm $CODSWORTH)
+	if [ -n "$hc" ] && [ "$hc" != "$CODSWORTH" ]; then pass "$label: before: the host's barter with Codsworth shows the store's chest" "chest $hc (his own is $CODSWORTH)"; else fail "$label: before: the host's barter with Codsworth shows the store's chest" "chest '$hc' (his own is $CODSWORTH)"; fi
+	if [ "$vc" = "$CODSWORTH" ]; then pass "$label: before (sync off): the VM's barter with Codsworth shows only his own things: the report" "chest $vc, vm factions: $(_vend_in vm $CODSWORTH)"; else fail "$label: before (sync off): the VM's barter with Codsworth shows only his own things: the report" "chest '$vc', want his own $CODSWORTH; vm factions: $(_vend_in vm $CODSWORTH)"; fi
+	# ---- with the sync: the VM's game follows, and its barter (opened before: the engine had cached "none") shows the store ----
+	dc host "vendorsync on" >/dev/null; dc vm "vendorsync on" >/dev/null
+	win_mark sws host; win_mark sws vm
+	if wait_for 30 _vend_same $CODSWORTH; then pass "$label: with the sync on, the VM's game puts its Codsworth in the host's vendor faction" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"
+	else fail "$label: with the sync on, the VM's game puts its Codsworth in the host's vendor faction" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH) | $(dc vm "net status" | grep -oE 'rolls=[0-9/]+'); vm log: $(grep -E 'Rolls:|NpcSync: .*(roll|differs)' "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-300)"; fi
+	vc=$(_vend_chest vm $CODSWORTH)
+	if [ -n "$vc" ] && [ "$vc" = "$hc" ]; then pass "$label: the VM's barter with Codsworth now shows the store's chest (the vendor faction's own chest, the VM's stock)" "chest $vc"; else fail "$label: the VM's barter with Codsworth now shows the store's chest" "chest '$vc', want $hc"; fi
+	# ---- reassigned to another store ----
+	ref2=$(_vend_place "$label" 0010FCB2); [ -n "$ref2" ] || { _sws_cleanup; return; }
+	_vend_assign $CODSWORTH $ref2
+	if wait_for 15 _vend_host_has $CODSWORTH && wait_for 20 _vend_same $CODSWORTH && [ "$(_vend_in host $CODSWORTH)" != "$f1" ]; then
+		f2=$(_vend_in host $CODSWORTH); pass "$label: reassigned to the armor store, the VM's game follows (the general store's faction out, the armor store's in)" "$f1 -> $f2"
+	else fail "$label: reassigned to the armor store, the VM's game follows" "was $f1; host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"; f2=$(_vend_in host $CODSWORTH); fi
+	# (the host's own barter may still show the general store's chest here: the engine keeps the faction it worked out for a while
+	# in the host's game too, as in a solo game; the VM's cache is emptied with each change, so it is the one asserted)
+	vc=$(_vend_chest vm $CODSWORTH); hc=${f2##*>}
+	if [ -n "$vc" ] && [ "$vc" = "$hc" ] && [ "$vc" != "$CODSWORTH" ]; then pass "$label: ... and the VM's barter shows the armor store's chest" "chest $vc (the host's own barter: $(_vend_chest host $CODSWORTH))"; else fail "$label: ... and the VM's barter shows the armor store's chest" "vm chest '$vc', want the armor faction's $hc"; fi
+	# ---- unassigned: the stores scrapped ----
+	host "wsscrap $ref2" >/dev/null; host "wsscrap $ref1" >/dev/null
+	if wait_for 20 _vend_both_none $CODSWORTH; then pass "$label: the stores scrapped (Codsworth unassigned), he is in no vendor faction in either game" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"
+	else fail "$label: the stores scrapped (Codsworth unassigned), he is in no vendor faction in either game" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"; fi
+	vc=$(_vend_chest vm $CODSWORTH)
+	if [ "$vc" = "$CODSWORTH" ]; then pass "$label: ... and the VM's barter with him shows his own things again" "chest $vc"; else fail "$label: ... and the VM's barter with him shows his own things again" "chest '$vc'"; fi
+	# ---- a store given before the VM joined: it is there when the VM joins (the server keeps the host's report for a joiner) ----
+	dc vm "net leave" >/dev/null; sleep 4
+	ref1=$(_vend_place "$label (before the VM joins)" 0006462B); [ -n "$ref1" ] || { _sws_cleanup; return; }
+	_vend_assign $CODSWORTH $ref1
+	if ! wait_for 15 _vend_host_has $CODSWORTH; then fail "$label: the host's scripts put Codsworth in the clothing store's faction while the VM is away" "$(dc host "vendorinfo $CODSWORTH" | cut -c1-200)"; _sws_cleanup; return; fi
+	f1=$(_vend_in host $CODSWORTH)
+	_sws_rejoin "$label" || { _sws_cleanup; return; }
+	enter_both SanctuaryExt 14
+	if wait_for 40 _vend_same $CODSWORTH; then pass "$label: a store given before the VM joined: the VM's Codsworth is in its vendor faction once it has joined" "host $f1 | vm $(_vend_in vm $CODSWORTH)"
+	else fail "$label: a store given before the VM joined: the VM's Codsworth is in its vendor faction once it has joined" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"; fi
+	vc=$(_vend_chest vm $CODSWORTH)
+	if [ -n "$vc" ] && [ "$vc" = "${f1##*>}" ]; then pass "$label: ... and its barter shows the store's chest" "chest $vc"; else fail "$label: ... and its barter shows the store's chest" "vm chest '$vc', want ${f1##*>}"; fi
+	host "wsscrap $ref1" >/dev/null
+	wait_for 20 _vend_both_none $CODSWORTH || fail "$label: the clothing store scrapped, the vendor faction is out of both games" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"
+	# ---- a generic settler the host's game recruited (a spawn: the VM's copy has another id): its whole faction list was told already ----
+	local hs spawn c out
+	out=$(host "wsreport place $SWS_SETTLER $SANCT_BENCH quiet"); hs=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	case "$hs" in FF*) SWS_SUPPLY_SETTLER=$hs;; *) setup_fault "$label: set-up: the host's game made a settler (console placement)" "$out"; _sws_cleanup; return;; esac
+	win_mark sws host; win_mark sws vm
+	host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $hs $SANCT_BENCH" >/dev/null
+	host "console $hs.setrestrained 1" >/dev/null
+	if wait_for 30 _sws_recruit_shared host "$hs"; then spawn=$(sed -nE "s/.*Spawns: sharing $hs \(base [0-9A-F]{8}\) as ([0-9A-F]{8}).*/\1/p" "$A_OUT/windelta-sws-host.txt" | tail -1)
+	else fail "$label: precondition: the host's game shares its generic settler as a settler of Sanctuary's workbench" "$(grep -E "Spawns: .*$hs" "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|' | cut -c1-300)"; _sws_cleanup; return; fi
+	if wait_for 30 _sws_recruit_placed vm "$spawn"; then c=$(_sws_recruit_copy vm "$spawn"); pass "$label: precondition: the VM's game placed its copy of the host's generic settler" "host $hs (spawn $spawn), copy $c"
+	else fail "$label: precondition: the VM's game placed its copy of the host's generic settler" "spawn $spawn"; _sws_cleanup; return; fi
+	ref1=$(_vend_place "$label (generic settler)" 00020594); [ -n "$ref1" ] || { _sws_cleanup; return; }
+	_vend_assign $hs $ref1
+	if wait_for 15 _vend_host_has $hs; then pass "$label: the host's scripts put the generic settler in the general store's faction" "$(_vend_in host $hs)"; else fail "$label: the host's scripts put the generic settler in the general store's faction" "$(dc host "vendorinfo $hs" | cut -c1-200)"; fi
+	if wait_for 30 _vend_same $hs "$c"; then pass "$label: the VM's copy of the generic settler is in the same vendor faction" "host $(_vend_in host $hs) | vm $(_vend_in vm $c)"; else fail "$label: the VM's copy of the generic settler is in the same vendor faction" "host $(_vend_in host $hs) | vm $(_vend_in vm $c)"; fi
+	vc=$(_vend_chest vm "$c"); hc=$(_vend_in host $hs); hc=${hc##*>}
+	if [ -n "$vc" ] && [ "$vc" = "$hc" ]; then pass "$label: ... and the VM's barter with its copy shows the store's chest" "chest $vc"; else fail "$label: ... and the VM's barter with its copy shows the store's chest" "vm chest '$vc', want $hc"; fi
+	host "wsscrap $ref1" >/dev/null
+	if wait_for 20 _vend_both_none $hs "$c"; then pass "$label: the store scrapped, the generic settler is in no vendor faction in either game" "ok"; else fail "$label: the store scrapped, the generic settler is in no vendor faction in either game" "host $(_vend_in host $hs) | vm $(_vend_in vm $c)"; fi
+	host "console $hs.setrestrained 0" >/dev/null; host "remove $hs" >/dev/null; SWS_SUPPLY_SETTLER=""
+	# ---- every store kind and level ----
+	for item in $SWS_VENDOR_STORES; do
+		kind=${item%%:*}; base=${item##*:}
+		ref1=$(_vend_place "$label ($kind)" "$base"); [ -n "$ref1" ] || continue
+		_vend_assign $CODSWORTH $ref1
+		if ! wait_for 8 _vend_host_has $CODSWORTH; then warn "$label ($kind): the host's scripts put Codsworth in no vendor faction at $base (not a store, or the job was refused): not compared" "host $(_vend_in host $CODSWORTH)"; host "wsscrap $ref1" >/dev/null; wait_for 8 _vend_both_none $CODSWORTH; continue; fi
+		if wait_for 25 _vend_same $CODSWORTH; then pass "$label ($kind, $base): the VM's game has Codsworth in the same vendor faction as the host's" "$(_vend_in host $CODSWORTH)"
+		else fail "$label ($kind, $base): the VM's game has Codsworth in the same vendor faction as the host's" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"; fi
+		host "wsscrap $ref1" >/dev/null
+		wait_for 20 _vend_both_none $CODSWORTH || fail "$label ($kind): the store scrapped, the vendor faction is out of both games" "host $(_vend_in host $CODSWORTH) | vm $(_vend_in vm $CODSWORTH)"
+	done
+	crash_verdict "$label: a store given to a settler crashes neither game"
+	_sws_cleanup
+}

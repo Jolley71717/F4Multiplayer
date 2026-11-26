@@ -182,7 +182,12 @@ namespace Protocol
 	// joiner it waits, HostInfo::waiting lists them for the host's game, HostAction::kAdmit and kRefuse answer, a refusal
 	// or a wait too long is a Reject (REJECT_JOIN_REFUSED, REJECT_JOIN_TIMEOUT). The hello has the new field at its end.
 	// No welcome bytes, no session layout change. 84 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 85;
+	// 86: a plugin NPC's vendor factions, `NpcIdentity::kVendorFactions` (a new flag in kReportNpcIdentity and kNpcIdentity,
+	// the factions list holding only the vendor factions its game's own scripts put it in, told by whichever game says so and kept by
+	// the server as the union): a settler assigned to a store in the game whose scripts ran the job is put in the store's vendor faction in the
+	// other games too, so their barter menu shows the store's stock (their own).
+	// No new message ids, no welcome bytes, no session layout change. 85 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 86;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -2088,8 +2093,9 @@ namespace Protocol
 			kLegendary = 1 << 0,    // its owner's game rolled it legendary (logged and shown; the templates make it so)
 			kFactions = 1 << 1,     // factions lists what it is in (else they were not sent)
 			kFactionsCut = 1 << 2,  // ... and it is in more than MAX_IDENTITY_FACTIONS: the list is the first of them
+			kVendorFactions = 1 << 3,  // factions lists only the vendor factions it is in at its owner's (a settler's store); never with kFactions
 		};
-		static constexpr std::uint8_t ALL_FLAGS = kLegendary | kFactions | kFactionsCut;
+		static constexpr std::uint8_t ALL_FLAGS = kLegendary | kFactions | kFactionsCut | kVendorFactions;
 
 		std::uint32_t playerId = 0;
 		std::uint32_t refId = 0;         // a plugin's reference or a spawn id
@@ -5425,7 +5431,10 @@ namespace Protocol
 			}
 			msg.factions.push_back(entry);
 		}
-		const bool listed = (msg.flags & NpcIdentity::kFactions) != 0;
+		const bool listed = (msg.flags & (NpcIdentity::kFactions | NpcIdentity::kVendorFactions)) != 0;
+		if ((msg.flags & NpcIdentity::kFactions) != 0 && (msg.flags & NpcIdentity::kVendorFactions) != 0) {
+			return std::nullopt;
+		}
 		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || msg.level > MAX_IDENTITY_LEVEL || (msg.mask != 0 && msg.originalBase == 0) ||
 			(!listed && (!msg.factions.empty() || (msg.flags & NpcIdentity::kFactionsCut) != 0))) {
 			return std::nullopt;

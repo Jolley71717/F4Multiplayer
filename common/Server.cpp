@@ -637,6 +637,9 @@ void Server::Run()
 	// later builds it the same. Gone when it dies, and with the session. A spawn's goes with the spawn. At most
 	// Protocol::MAX_SESSION_ROLLS.
 	std::unordered_map<std::uint32_t, Protocol::NpcIdentity> npcIdentities;
+	// A plugin NPC's vendor factions (protocol 86), as each game's own scripts put it in them: the games are told the union, kept as its
+	// entry in npcIdentities (a vendor list with no roll in it), which is never saved: the games say it again.
+	std::unordered_map<std::uint32_t, std::map<std::uint32_t, std::vector<Protocol::FactionRank>>> vendorOwn;
 	bool                                                     rollsFullLogged = false;
 	// How many times each plugin's NPC died this session (kRollLives): every game's roll of it takes this in its seed, so
 	// the one a cell reset brings back is rolled anew, and the same in every game (docs/SHARED-ROLLS.md). Told to every
@@ -813,7 +816,7 @@ void Server::Run()
 				objectPlaces.Rested(place);
 			}
 			for (const auto& identity : saved->npcIdentities) {
-				if (!SharedRoll::RolledByGlobals(identity.refId)) {  // an older build's entry of Curie goes (handleNpcIdentity)
+				if (!SharedRoll::RolledByGlobals(identity.refId) && (identity.flags & Protocol::NpcIdentity::kVendorFactions) == 0) {  // an older build's entry of Curie goes (handleNpcIdentity)
 					npcIdentities[identity.refId] = identity;
 				}
 			}
@@ -890,7 +893,7 @@ void Server::Run()
 		}
 		snapshot.objectPlaces = objectPlaces.All();
 		for (const auto& [ref, identity] : npcIdentities) {
-			if (!Protocol::IsSpawnRef(ref)) {  // a spawn ends with the run
+			if (!Protocol::IsSpawnRef(ref) && !(identity.mask == 0 && (identity.flags & Protocol::NpcIdentity::kVendorFactions) != 0)) {  // a spawn ends with the run, a vendor list is said again
 				snapshot.npcIdentities.push_back(identity);
 			}
 		}
@@ -945,6 +948,7 @@ void Server::Run()
 		buildsRefusedSaid.clear();
 		npcHealths.Clear();
 		npcIdentities.clear();
+		vendorOwn.clear();
 		rollsFullLogged = false;
 		rollLives.clear();
 		sessionLevel = 0;
@@ -1416,8 +1420,61 @@ void Server::Run()
 		});
 	};
 
+	// A plugin NPC's vendor factions (protocol 86): each game says what its own scripts put an NPC in, whoever runs the NPC, and
+	// every game is told the union, as the report of the game whose word changed it (that game has its own part already). The union
+	// is the NPC's entry among the rolls while it holds something; an NPC with a roll is left to the roll's rules.
+	const auto settleVendor = [&](std::uint32_t a_ref, std::uint32_t a_by) {
+		std::vector<Protocol::FactionRank> merged;
+		if (const auto own = vendorOwn.find(a_ref); own != vendorOwn.end()) {
+			for (const auto& [player, list] : own->second) {
+				for (const auto& entry : list) {
+					if (const auto it = std::ranges::find(merged, entry.faction, &Protocol::FactionRank::faction); it == merged.end()) {
+						merged.push_back(entry);
+					} else {
+						it->rank = (std::max)(it->rank, entry.rank);
+					}
+				}
+			}
+		}
+		std::ranges::sort(merged, {}, &Protocol::FactionRank::faction);
+		if (merged.size() > Protocol::MAX_IDENTITY_FACTIONS) {
+			merged.resize(Protocol::MAX_IDENTITY_FACTIONS);
+		}
+		const auto known = npcIdentities.find(a_ref);
+		const bool hadVendor = known != npcIdentities.end() && known->second.mask == 0 && (known->second.flags & Protocol::NpcIdentity::kVendorFactions) != 0;
+		if (known != npcIdentities.end() && !hadVendor) {
+			return;
+		}
+		if (merged.empty() ? !hadVendor : (hadVendor && known->second.factions == merged)) {
+			return;
+		}
+		Protocol::NpcIdentity out;
+		out.playerId = a_by;
+		out.refId = a_ref;
+		out.flags = Protocol::NpcIdentity::kVendorFactions;
+		out.factions = merged;
+		if (merged.empty()) {
+			npcIdentities.erase(a_ref);
+		} else if (hadVendor || npcIdentities.size() < Protocol::MAX_SESSION_ROLLS) {
+			npcIdentities[a_ref] = out;
+		}
+		broadcast(Protocol::Encode(out, Protocol::MessageType::kNpcIdentity), true, 0);
+	};
+
 	// (An NPC nobody runs has no gear kept: its next runner reports its own.)
 	const auto releaseAll = [&](std::uint32_t a_playerId) {
+		std::vector<std::uint32_t> vendorRefs;  // what their game said of NPCs' vendor factions goes with them
+		for (auto& [ref, own] : vendorOwn) {
+			if (own.erase(a_playerId) != 0) {
+				vendorRefs.push_back(ref);
+			}
+		}
+		for (const auto ref : vendorRefs) {
+			settleVendor(ref, a_playerId);
+			if (const auto it = vendorOwn.find(ref); it != vendorOwn.end() && it->second.empty()) {
+				vendorOwn.erase(it);
+			}
+		}
 		std::vector<Protocol::ActorOwner> released;
 		std::erase_if(actorOwners, [&](const auto& a_entry) {
 			if (a_entry.second.playerId != a_playerId) {
@@ -3806,6 +3863,24 @@ void Server::Run()
 		}
 		auto identity = Protocol::DecodeNpcIdentity(a_data);
 		if (!identity || SharedRoll::RolledByGlobals(identity->refId)) {
+			return;
+		}
+		// A plugin NPC's vendor factions: from any game, not only the one that runs the NPC (settleVendor).
+		if (identity->mask == 0 && (identity->flags & Protocol::NpcIdentity::kVendorFactions) != 0) {
+			if (!Protocol::IsShareableRef(identity->refId) || (vendorOwn.size() >= Protocol::MAX_SESSION_ROLLS && !vendorOwn.contains(identity->refId))) {
+				return;
+			}
+			if (identity->factions.empty()) {
+				if (const auto it = vendorOwn.find(identity->refId); it != vendorOwn.end()) {
+					it->second.erase(a_player.id);
+				}
+			} else {
+				vendorOwn[identity->refId][a_player.id] = identity->factions;
+			}
+			settleVendor(identity->refId, a_player.id);
+			if (const auto it = vendorOwn.find(identity->refId); it != vendorOwn.end() && it->second.empty()) {
+				vendorOwn.erase(it);
+			}
 			return;
 		}
 		const auto owner = actorOwners.find(identity->refId);

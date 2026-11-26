@@ -288,6 +288,7 @@ namespace ProtocolSamples
 			roll.templates[7] = 0x0002A1B5;
 			s.push_back({ "NpcIdentity", Encode(roll, type), D(DecodeNpcIdentity) });
 			s.push_back({ "NpcIdentityFactions", Encode(NpcIdentity{ .playerId = 2, .refId = RUNTIME_REF, .level = 8, .flags = NpcIdentity::kFactions, .factions = { { 0x0001BCC0, 0 }, { 0x00058302, 1 } } }, type), D(DecodeNpcIdentity) });
+			s.push_back({ "NpcIdentityVendor", Encode(NpcIdentity{ .playerId = 2, .refId = REF_A, .flags = NpcIdentity::kVendorFactions, .factions = { { 0x0006E7A1, 0 } } }, type), D(DecodeNpcIdentity) });
 		}
 		{
 			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .mask = 0b0000'0000'0001 };
