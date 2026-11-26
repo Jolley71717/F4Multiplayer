@@ -242,6 +242,9 @@ namespace Storage
 			return bench.menu != BenchMenu::kNone && a_container != 0 && (a_container == bench.id || std::ranges::contains(bench.supply, a_container));
 		}
 
+		// The container whose copy changed since the last frame, for the open container menu to draw again (Frame).
+		std::uint32_t copyChanged = 0;
+
 		// Our copy of a container (never our player: OwnGear refuses).
 		std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count)
 		{
@@ -253,6 +256,9 @@ namespace Storage
 			const auto done = Move(ref, a_item, a_count);
 			if (done != 0 && ReadByBench(a_container)) {
 				bench.refresh = true;
+			}
+			if (done != 0) {
+				copyChanged = a_container;
 			}
 			return done;
 		}
@@ -1091,6 +1097,11 @@ namespace Storage
 		buildsFromBench.store(!hosting && bench.menu == BenchMenu::kWorkshop && bench.id != 0 && side.Shows(bench.id));
 		DrainUsed();
 		client.Frame();
+		// The true copy's contents came into our copy (or a friend's change did) while our container menu shows it: the menu drew its
+		// lists before, so they are drawn again, or a take names a stack of the copy the menu no longer holds.
+		if (const auto changed = std::exchange(copyChanged, 0); StorageView::RedrawDue(menuOn, changed)) {
+			Equipment::RedrawContainerMenu();
+		}
 		// A catch-up that left the ledger waiting settles once the wait is over (a gap given up on asks for nothing more).
 		const auto& loot = WorldSync::Loot();
 		if (client.RetryCaughtUp(loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0)) {

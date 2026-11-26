@@ -54,6 +54,15 @@
 // container (LootSync::World).
 namespace StorageView
 {
+	// An open container menu draws its lists as it opens, and again only after a transfer it makes itself: the true copy's
+	// contents, which reach our copy a moment after the menu shows it, or any change made to the copy while it is open, are
+	// not drawn until the menu is asked to (Equipment::RedrawContainerMenu). So the menu on a_menu, when our copy of
+	// a_changed changed, is due a redraw. True only for the container the menu is open on.
+	[[nodiscard]] inline bool RedrawDue(std::optional<std::uint32_t> a_menu, std::uint32_t a_changed)
+	{
+		return a_changed != 0 && a_menu && *a_menu == a_changed;
+	}
+
 	using Clock = std::chrono::steady_clock;
 
 	enum class Keeper : std::uint8_t
