@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T00:25:01+00:00",
+ "updated": "2026-11-26T00:33:54+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -65,6 +65,14 @@
    "priority": 4,
    "stage": 1,
    "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
+  },
+  {
+   "id": "0bhu",
+   "title": "A small updater: check GitHub releases, show versions, install an update with one click, keep the ini",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Request: a one-click updater"
   },
   {
    "id": "0df",
@@ -617,6 +625,14 @@
    "note": "Taken on 2026-11-21"
   },
   {
+   "id": "4vhn",
+   "title": "Nuka-World Grandchester Mystery Mansion: an open door blocks the host with an invisible wall, lets the client through; host can close but not reopen it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report: Grandchester Mansion doors block the host"
+  },
+  {
    "id": "4vk9",
    "title": "Encounter hollow check may miss vertibird checkpoints after a follower's load",
    "kind": "bug",
@@ -1032,6 +1048,14 @@
    "priority": 3,
    "stage": 0,
    "note": "Queued"
+  },
+  {
+   "id": "8915",
+   "title": "Crash with the WARS mod (rewrites bullet trajectories): host and client crash logs attached",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "Player report: crash when playing with the WARS mod"
   },
   {
    "id": "8bqc",
@@ -1787,6 +1811,14 @@
    "note": ""
   },
   {
+   "id": "ef57",
+   "title": "Nuka-World Colter: dead on the client, alive and talkable on the host (not targetable in VATS) after both quickloaded during the fight",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report: Colter stays alive for the host"
+  },
+  {
    "id": "ehqp",
    "title": "Friend's copy of a powered workshop graph refuses a repeated Powered: 8 tries, givenUp +1 and the log budget spent",
    "kind": "bug",
@@ -2332,6 +2364,14 @@
    "note": ""
   },
   {
+   "id": "ij6j",
+   "title": "Settlements: a player who leaves and rejoins doesn't see buildings the host placed or changed meanwhile; scrapped lamps leave floating items; shared loot not in the same container",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report: settlement builds missing after rejoining, floating lamps"
+  },
+  {
    "id": "ikwn",
    "title": "Legendary enemies differ between players",
    "kind": "bug",
@@ -2723,6 +2763,14 @@
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
   },
   {
+   "id": "l9wu",
+   "title": "Height arrows (above/below) on a friend's compass and map markers",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Request: show if a friend is above or below you"
+  },
+  {
    "id": "lisn",
    "title": "NPC hits on a stand-in by an attacker the victim can't see (or friendly fire) still skip the victim's perks",
    "kind": "bug",
@@ -2790,6 +2838,14 @@
    "note": "Fixed for the next release; blasts thrown by enemies aren't tested yet.",
    "pr": 167,
    "desc": "If the host has a DLC you don't own, its enemies are not shown in your game, but their explosions could still hit you. The next release names the enemy that set off a blast, so a game without a copy of that enemy doesn't set the blast off. Players' grenades were tested both ways on two real games."
+  },
+  {
+   "id": "m02j",
+   "title": "Question: an engine-backed authoritative server (a headless Fallout 4 running the shared world)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Question: a game-backed dedicated server"
   },
   {
    "id": "m4da",
@@ -3073,6 +3129,14 @@
    "stage": 7,
    "note": "Shipped in 0.22.1 (2026-11-25)",
    "pr": 580
+  },
+  {
+   "id": "o9bp",
+   "title": "Idea: coordinated co-op checkpoints (host asks, everyone saves together, rollback loads all) to keep saves consistent",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Idea: save and load together"
   },
   {
    "id": "oadc",
@@ -3675,6 +3739,14 @@
    "note": ""
   },
   {
+   "id": "t5ji",
+   "title": "Shared workshop: a guest can't wire a generator to a raider radio beacon (error), the host can",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report: a friend can't wire a radio beacon"
+  },
+  {
    "id": "t5ng",
    "title": "Skyrim co-op sister project: set up the repo, pipelines, rules and docs (no game yet)",
    "kind": "feature",
@@ -4111,6 +4183,14 @@
    "note": "Merged for the next release: stuck damage ghosts come off; tested in two games.",
    "pr": 194,
    "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
+  },
+  {
+   "id": "wvcs",
+   "title": "Nuka-World: The Grand Tour's Galactic Zone objective stays incomplete though the gang's flag is raised (stage 110 not set); activating the flagpole again fixes it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Player report: a Grand Tour objective doesn't complete"
   },
   {
    "id": "ww4h",
