@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T20:34:52+00:00",
+ "updated": "2026-11-26T20:57:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3965,8 +3965,8 @@
    "title": "Settlement store vendor sells only their own pockets to the friend; the host sees the store stock (Nexus, 2026-11-26)",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "reviewed; CI running",
+   "stage": 5,
+   "note": "merged 118e64815",
    "pr": 630
   },
   {
