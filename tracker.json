@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T03:56:08+00:00",
+ "updated": "2026-11-26T04:17:26+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -690,9 +690,9 @@
    "id": "55yw",
    "title": "Update CommonLibF4 (28 commits behind, pinned 2026-09-22) and fix our leveled-list loops (int8 index/count: lists of 128+ entries skipped)",
    "kind": "feature",
-   "priority": 2,
-   "stage": 0,
-   "note": "queued, 1.0"
+   "priority": 1,
+   "stage": 1,
+   "note": "looking into it"
   },
   {
    "id": "56vd",
