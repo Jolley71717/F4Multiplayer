@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T02:18:02+00:00",
+ "updated": "2026-11-26T02:41:15+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1181,8 +1181,9 @@
    "title": "Looted Brotherhood of Steel clothing and armor disappears",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "PR open (draft), rig-tested"
+   "stage": 5,
+   "note": "merged; ships in the next release",
+   "pr": 594
   },
   {
    "id": "96bz",
@@ -1421,8 +1422,9 @@
    "title": "VM game's working set grows 1237 MB from the first combat to the end of the churn (soft limit 1000; was +1033 in 0.22.1's soak)",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "PR open (draft), rig-tested"
+   "stage": 5,
+   "note": "not a leak; the memory check fixed",
+   "pr": 612
   },
   {
    "id": "bd5v",
