@@ -45,7 +45,7 @@ namespace SharedMove
 	struct GrabFacts
 	{
 		bool hostsCopy = false;    // our copy of the host's piece, at a workbench the host's game hasn't refused (AdmitsCopy)
-		bool grabOn = false;       // the dev switch: copies may be picked up at all (off by default until the rig has proven it)
+		bool grabOn = false;       // the dev switch (wsmode grab on|off, on from the start): copies may be picked up at all
 		bool editAllowed = false;  // the host's bSharedWorkshopEdit
 		bool wire = false;         // a wire (never moved: its ends are)
 		bool actor = false;        // a turret, a robot, a settler

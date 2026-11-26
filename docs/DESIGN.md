@@ -5373,8 +5373,9 @@ keyboard bindings as `event=vk` (the engine's keyboard mappings hold the virtual
 stores, XButton scraps, YButton strings a wire, Accept grabs, repairs or assigns); `wsfinish <ref> <bench>` runs
 the finish steps on a console-placed piece of ours (the host's probe); `wsscrap <ref> engine` and `wsstore <ref>` run the engine's
 scrap and store of a piece of ours as a friend's request would; `wsmove <ref> x y z headingDeg` moves a piece of ours as a
-friend's request would, or, on a copy, puts it there and asks the host; `wsmode grab on|off` lets workshop mode pick the host's
-copies up in this game (off by default); `wsstored <bench> [use <ref>]` shows a workbench's stored list, or
+friend's request would, or, on a copy, puts it there and asks the host; `wsmode grab on|off` is whether workshop mode picks the
+host's copies up in this game (on from the start; off refuses every copy's grab, as up to 0.21.0);
+`wsstored <bench> [use <ref>]` shows a workbench's stored list, or
 takes one off it; `wsgrid`, `wsinfo` and `wspower` as before. The rig check
 `sharedws-power` (tools/rig/steps.sh, opt-in like `follow`) builds a generator on the host, a light from the VM, wires them from
 the VM through the request path, and asserts the host's grid holds all three, the VM's copies show powered, and the VM's grids
@@ -5556,8 +5557,10 @@ stands where it was asked (`Arrived`), else `kFailed`; a pending move is refused
 
 **The friend's side** has two entries. The dev command `wsmove <copy> x y z headingDeg` puts the copy there and asks, without
 the engine's grab (never into another cell); on a piece of the game's own it is the host's probe (the same refusals, the same
-steps). The real one is workshop mode's own grab, **behind a dev switch that is off by default** (`wsmode grab on|off`): off, the
-Accept key on a copy is refused as it always was. On, `GrabKeyOnCopy` (`SharedMove::OnGrabKey`) lets the engine's own test and
+steps). The real one is workshop mode's own grab, **on from the start in every release after 0.21.0** (the dev switch
+`wsmode grab off` refuses every copy's grab as 0.21.0 and before did: up to 0.21.0 the grab was off until `wsmode grab on`, so
+no friend could move a piece at the host's settlement, their own build there included, since it is adopted as the host's
+piece). `GrabKeyOnCopy` (`SharedMove::OnGrabKey`) lets the engine's own test and
 grab take a copy the host would move (not a wire, an actor, a damaged piece, a power piece or one tied to power, one something
 stands on, one with a request waiting, nor from the first key on while another grab is followed, taken by the engine yet or
 not: a second key never replaces the first), and the grab is followed once a frame
@@ -5577,12 +5580,12 @@ it still stands where it was put down (`StillWhereDropped`: moved since, the hos
 nodes from workshop mode's own state; the host refuses, and the friend's grab key refuses them too). Pieces something stands on
 (the engine carries the stack along). A moved piece is not stacked again on what it lands on (`Workshop::CheckStackItem` reads
 workshop mode's placement data): it stands free. Moves across a cell's edge. A snapped neighbour is left where it is (a snap is
-only where a piece was put, and the move's own transform is the friend's drop, which the friend's engine snapped). The grab
-itself has not run in a game: until it has, it stays behind the switch. Known open ends of the grab, each said in the code:
+only where a piece was put, and the move's own transform is the friend's drop, which the friend's engine snapped). Known open
+ends of the grab, each said in the code:
 Papyrus in the friend's game hears the engine's grabbed, moved and placed events for the copy; a copy deleted while the engine
 holds it (the session ending, its builder leaving) is left to the engine's own cancel; a save taken while a copy is held saves
-it as any copy (cleaned as every copy is on load). The rig check `sharedws-move` (opt-in, written with this change and not yet
-run): the host's probe moves its sleeping bag and the VM's copy follows; a generator and a spot in another cell are refused with
+it as any copy (cleaned as every copy is on load). The rig check `sharedws-move` (opt-in; run 2026-11-12, every line passing; it turns the switch
+off for its first key and on again after): the host's probe moves its sleeping bag and the VM's copy follows; a generator and a spot in another cell are refused with
 their reasons and nothing moves; the VM's dev move of its copy is asked, made by the host with the steps in order and answered
 applied, with benches, inventories, budgets and grids unchanged; a power piece's copy asked the same way is refused and put
 back; then, with the switch on, the real Accept key picks the copy up, Cancel lets it go and asks nothing, and a carry by
@@ -5590,8 +5593,7 @@ turning the view and a second Accept asks the move, the host's bag ending where 
 and a solo load on the VM (grids clean; the copy the save keeps still blocked), and a rejoin (the new copy stands where the bag was moved to). `SWS_MOVE_GRAB=0` leaves the
 grab part out.
 
-**Phase 2 (the rest, not here).** Moves of power pieces, of pieces something stands on and across a cell's edge, and the grab
-out from behind its switch (**A move.**, above); a
+**Phase 2 (the rest, not here).** Moves of power pieces, of pieces something stands on and across a cell's edge; a
 refusal re-placing the copy from the server's kept report; repair, settler assignment and the host's settlement numbers. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
 adopted; per-workbench owners for dedicated servers.
 
