@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T02:41:15+00:00",
+ "updated": "2026-11-26T02:42:36+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -412,7 +412,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Looked into: engine-only crash path, didn't reproduce; no fix shipped"
+   "note": "Looked into: crash-triage agent taking it (2026-11-25)"
   },
   {
    "id": "358u",
@@ -984,8 +984,8 @@
    "title": "0.17.1: friend's game crashed saving inside Kellogg's memory after being pulled in (OutputInfoStream::Seek)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Looked into: crash-triage agent taking it (2026-11-25)"
   },
   {
    "id": "7sup",
@@ -3049,7 +3049,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Seen once and never again; the crash was inside the game's own startup code.",
+   "note": "Looked into: crash-triage agent taking it (2026-11-25)",
    "desc": "On one start the host's game crashed about 12 seconds in, before any join, inside the game's own interface drawing setup. The mod's code was not part of the crash, and it did not happen again across many later starts and a one-hour test. We are watching for a repeat. If you see a crash, a crash log from Buffout 4 or Addictol helps."
   },
   {
@@ -3635,8 +3635,8 @@
    "title": "Host crash in the combat AI job on a runtime actor (BSFixedString::operator= under CombatBehaviorTree, pipe gun), 2026-11-10 12:32, no plugin frame, untracked",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Looked into: crash-triage agent taking it (2026-11-25)"
   },
   {
    "id": "sn44",
