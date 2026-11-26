@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T14:55:01+00:00",
+ "updated": "2026-11-26T16:37:41+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3950,6 +3950,14 @@
    "stage": 7,
    "note": "shipped in 0.21.2",
    "pr": 563
+  },
+  {
+   "id": "u3ib",
+   "title": "Settlement store vendor sells only their own pockets to the friend; the host sees the store stock (Nexus, 2026-11-26)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Queued for the 0.23.0 batch"
   },
   {
    "id": "u7rb",
