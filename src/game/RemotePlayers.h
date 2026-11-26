@@ -76,6 +76,10 @@ namespace RemotePlayers
 
 	// Where a player last said they were, if they are in our cell or worldspace; nothing otherwise.
 	[[nodiscard]] std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id);
+	// Where a player last said they were, if that is in a_cell's own place (the same interior cell, or the same worldspace
+	// for an exterior one), whatever cell our own player is in: the position a report about something in that cell is
+	// judged against. Nothing otherwise; a_why, when given, says which it was (for the log).
+	[[nodiscard]] std::optional<RE::NiPoint3> PositionIn(std::uint32_t a_id, RE::TESObjectCELL* a_cell, std::string* a_why = nullptr);
 
 	// The last state a player sent, wherever they are (nothing if none yet, they are gone, or they are somewhere our game lacks).
 	[[nodiscard]] std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id);

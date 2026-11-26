@@ -185,7 +185,9 @@ namespace Protocol
 	// 86: a plugin NPC's vendor factions, `NpcIdentity::kVendorFactions` (a new flag in kReportNpcIdentity and kNpcIdentity,
 	// the factions list holding only the vendor factions its game's own scripts put it in, told by whichever game says so and kept by
 	// the server as the union): a settler assigned to a store in the game whose scripts ran the job is put in the store's vendor faction in the
-	// other games too, so their barter menu shows the store's stock (their own).
+	// other games too, so their barter menu shows the store's stock (their own). And an invisible wall (a CollisionMarker, base 00000021, src/game/BlockerShare.h)
+	// that a game's script took down is a RefState too: open = kYes says the marker is disabled (the way is open), kNo that it stands, locked is never said,
+	// and only a wall coming down is reported and applied; the server keeps it in its ref-state table as any door's, and replays it to a joiner.
 	// No new message ids, no welcome bytes, no session layout change. 85 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 86;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;

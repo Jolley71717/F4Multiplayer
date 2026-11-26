@@ -3075,18 +3075,41 @@ namespace RemotePlayers
 
 	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)
 	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		return PositionIn(a_id, player ? player->GetParentCell() : nullptr);
+	}
+
+	std::optional<RE::NiPoint3> PositionIn(std::uint32_t a_id, RE::TESObjectCELL* a_cell, std::string* a_why)
+	{
+		const auto say = [&](const char* a_text) {
+			if (a_why) {
+				*a_why = a_text;
+			}
+		};
 		const auto it = players.find(a_id);
-		if (it == players.end() || it->second.states.snapshots.empty() || it->second.place.beyond) {
+		if (it == players.end()) {
+			say("not in the session");
 			return std::nullopt;
 		}
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		const auto cell = player ? player->GetParentCell() : nullptr;
-		if (!cell) {
+		if (it->second.states.snapshots.empty()) {
+			say("no state of theirs yet");
+			return std::nullopt;
+		}
+		if (it->second.place.beyond) {
+			say("somewhere our game lacks");
+			return std::nullopt;
+		}
+		if (!a_cell) {
+			say("no cell to compare with");
 			return std::nullopt;
 		}
 		const auto& last = it->second.states.snapshots.back().state;
-		const bool here = cell->IsInterior() ? last.cell == cell->GetFormID() : (cell->worldSpace && last.worldspace == cell->worldSpace->GetFormID());
+		const bool here = a_cell->IsInterior() ? last.cell == a_cell->GetFormID() : (a_cell->worldSpace && last.worldspace == a_cell->worldSpace->GetFormID());
 		if (!here) {
+			if (a_why) {
+				*a_why = a_cell->IsInterior() ? std::format("in cell {:08X}, not {:08X}", last.cell, a_cell->GetFormID()) :
+				                                std::format("in worldspace {:08X} cell {:08X}, not the worldspace's {:08X}", last.worldspace, last.cell, a_cell->worldSpace ? a_cell->worldSpace->GetFormID() : 0);
+			}
 			return std::nullopt;
 		}
 		return RE::NiPoint3{ last.x, last.y, last.z };

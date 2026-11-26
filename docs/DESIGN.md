@@ -2313,6 +2313,17 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
   scripts fighting over it). A friend's state taken is what our watcher holds as said, with ours for what it leaves
   out and no open state where we read none (`DoorShare::Heard`), so nothing goes back;
 - a door only a quest stage opens (Vault 114's gear door): the stage is shared (ScriptDoors).
+- the invisible wall in a doorway that a script takes down with the door (src/game/BlockerShare.h): a plugin's
+  CollisionMarker (base 00000021) that a friend's game disabled is disabled here too, one way only (a wall put back up
+  is never said or applied, so it can never shut anyone in). It rides the door machinery above as a reference's state
+  (open = yes: the marker is disabled; no new message, the server's table and a joiner's world state as a door's):
+  the walk lists the markers that stand (`BlockerShare::Polled`), the poll reads them while loaded and once more when
+  down (no 3D then), reports the coming down once (`blockersReported=`), applies a friend's with `Disable`
+  (`blockersOpened=`). Found with Grandchester Mystery Mansion (Nuka-World): DLC04Grandchester's stages 11, 13 and 18
+  unlock and open a door and disable DLC04_ParlorBalconyCollisionRef, DLC04_FireplaceRoomCollisionRef and
+  DLC04_UpstairsHallCollisionRef, a quest each game runs for itself (not shared with sQuests = story), so the friend's
+  door was open in the host's game with its wall still up. A live report is judged against the thing's own cell (the
+  sender in that cell, within 1500), not only our player's (`RemotePlayers::PositionIn`), and a refusal says why.
 Not shared: elevators and their cars, load elevators, automatic doors, doors whose script answers OnOpen (an ambush,
 a stage), blocks activation or opens the door itself, the Mechanist's lair doors (their controls' state is each
 game's), the track system's doors, Pulowski shelters, and the story's (Vault 111, Mass Fusion).
