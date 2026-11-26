@@ -1,0 +1,12 @@
+Everyone in a session needs 0.23.0: it can't play with 0.22.x (protocol 86)
+Fixed: The host is no longer walled in at an open door in Grandchester Mystery Mansion (Nuka-World)
+Fixed: A settler's store at the host's settlement sells its stock to the friend too
+Fixed: One conversation per NPC: whoever starts first has it, and the other player hears it
+Fixed: Quest NPCs no longer restart the host's conversation with the friend or get stuck waiting for them
+Fixed: Gear on a friend's dead enemies no longer disappears; the body stays as an ordinary corpse with everything on it
+Fixed: The friend can move stacked, wired and powered pieces and turrets at the host's settlement, and scrap or store a wire
+Fixed: Taking items out of the host's workbench works with shared storage on
+Fixed: A container a friend builds at the host's settlement no longer comes with extra items
+Fixed: Hits are no longer lost when another mod handles them first
+Fixed: A crash when joining a session is guarded against
+Fixed: NPC gear and loot from very large modded leveled lists now match in both games
