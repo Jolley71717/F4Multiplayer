@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T03:49:33+00:00",
+ "updated": "2026-11-26T03:55:40+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1406,8 +1406,8 @@
    "title": "Client can't take items out of the host's workbench at Red Rocket: the inventory closes",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked: reproducing on the rig"
+   "stage": 4,
+   "note": "PR 617: rig-tested fix, awaiting review"
   },
   {
    "id": "baor",
@@ -1971,6 +1971,14 @@
    "title": "questscan: the hostile walk does not follow scenes: ten stages whose scene turns a faction on the player have no HOSTILE row",
    "kind": "bug",
    "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "fh6x",
+   "title": "Client game crashed joining the host's session during quest catch-up (null function call in a game task queue, QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals), main 8754e7e, rig 2026-11-25 19:57",
+   "kind": "bug",
+   "priority": 1,
    "stage": 0,
    "note": ""
   },
