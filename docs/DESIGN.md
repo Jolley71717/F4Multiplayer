@@ -1967,7 +1967,10 @@ counts every item across the host's chest and the players' inventories in each s
   host's stacks reach the player. Weapons, armor, keys and notes never take part: they stay in each player's copy.
   When the server closes the view (stale, the host gone, the view budget), the game sends the menu's pending moves,
   takes the session's stacks out of the copy at once, asks the menu to close, and shows a notice; the set-aside
-  stacks come back as it closes.
+  stacks come back as it closes. The open container menu draws its lists only as it opens, so when the true copy's contents (or a
+  friend's change) come into the copy it shows, the menu is asked to draw both lists again (`Equipment::RedrawContainerMenu`, once per
+  frame in which the copy changed): without it a friend's Transfer at the host's workbench showed their own copy's stacks and a take
+  of them moved nothing (rig, 2026-11-25).
 - *Moves.* A friend's take or put at a kept container goes out as any loot, and the server refuses it (`kStorageRefused`
   170, never numbered) when there is no view, the container is stale, the take is more than it holds, or the host's game
   can't hold the item (`FormIds::Mapper` with the host's plugins, cached per player until the session's plugin table
