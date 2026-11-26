@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T09:25:39+00:00",
+ "updated": "2026-11-26T14:32:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1788,6 +1788,14 @@
    "desc": "Sometimes a friend put their weapon away but it stayed in their hand on your screen. The game's 'putting away' state was being read as 'already away', so when the friend's figure missed the holster (mid-throw or mid-reload) it was never asked again. Now it waits for the holster to finish and asks again if it stalls."
   },
   {
+   "id": "e5c7",
+   "title": "[rig] Host player's input sometimes dead after a fresh load (2 of 8 runs): keys-move-player preflight fails; a restart clears it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "e5w7",
    "title": "Kill moves and the Cannibal and Mister Sandman animations aren't shown on the attacker's stand-in",
    "kind": "bug",
@@ -1981,8 +1989,8 @@
    "title": "Client game crashed joining the host's session during quest catch-up (null function call in a game task queue, QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals), main 8754e7e, rig 2026-11-25 19:57",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on for 0.23.0"
   },
   {
    "id": "fhkp",
@@ -3104,6 +3112,14 @@
    "pr": 286
   },
   {
+   "id": "ne13",
+   "title": "copyRestores climbs on the host near a hazard: ~150 tiny 'no hit' give-backs (~0.5 hp each) in one run",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "ngtk",
    "title": "A one-off crash a few seconds after starting the game",
    "kind": "bug",
@@ -3688,8 +3704,9 @@
    "title": "Event tap: see every hit (and other events) before other plugins' sinks can stop them, read-only",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Taken on for 0.23.0"
+   "stage": 2,
+   "note": "Built and rig-tested on PR 626; in review",
+   "pr": 626
   },
   {
    "id": "sh2c",
