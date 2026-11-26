@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T04:57:52+00:00",
+ "updated": "2026-11-26T04:59:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -691,8 +691,9 @@
    "title": "Update CommonLibF4 (28 commits behind, pinned 2026-09-22) and fix our leveled-list loops (int8 index/count: lists of 128+ entries skipped)",
    "kind": "feature",
    "priority": 1,
-   "stage": 4,
-   "note": "PR 620 CI green, rig smoke passed; awaiting review"
+   "stage": 3,
+   "note": "reviewed; vetting the submodule change",
+   "pr": 620
   },
   {
    "id": "56vd",
@@ -1406,8 +1407,9 @@
    "title": "Client can't take items out of the host's workbench at Red Rocket: the inventory closes",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
-   "note": "PR 617: rig-tested fix, awaiting review"
+   "stage": 5,
+   "note": "merged; ships in the next release",
+   "pr": 617
   },
   {
    "id": "baor",
