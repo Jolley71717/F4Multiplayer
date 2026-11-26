@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T14:32:08+00:00",
+ "updated": "2026-11-26T14:55:01+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3704,8 +3704,8 @@
    "title": "Event tap: see every hit (and other events) before other plugins' sinks can stop them, read-only",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
-   "note": "Built and rig-tested on PR 626; in review",
+   "stage": 5,
+   "note": "Merged for 0.23.0",
    "pr": 626
   },
   {
