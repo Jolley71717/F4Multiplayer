@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T20:57:28+00:00",
+ "updated": "2026-11-26T21:46:58+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2156,8 +2156,9 @@
    "title": "Both players can each talk to the same NPC at once, in separate private conversations",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 3,
+   "note": "reviewed; rig-tested Codsworth both ways; CI running",
+   "pr": 631
   },
   {
    "id": "gvs4",
@@ -2400,6 +2401,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 482
+  },
+  {
+   "id": "ign0",
+   "title": "Dev: 'dialogue reset' leaves a stuck dialogue menu",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "filed from the one-conversation rig run"
   },
   {
    "id": "ihhm",
@@ -2881,6 +2890,14 @@
    "priority": 2,
    "stage": 7,
    "note": "shipped in 0.21.2"
+  },
+  {
+   "id": "lv2z",
+   "title": "Codsworth's greeting conversation can't be left with Tab or Esc (no Goodbye)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "filed from the one-conversation rig run"
   },
   {
    "id": "lvem",
