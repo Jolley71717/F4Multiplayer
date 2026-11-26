@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T21:47:46+00:00",
+ "updated": "2026-11-26T22:08:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2156,8 +2156,8 @@
    "title": "Both players can each talk to the same NPC at once, in separate private conversations",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "reviewed; rig-tested Codsworth both ways; CI running",
+   "stage": 5,
+   "note": "merged 781f61eb5",
    "pr": 631
   },
   {
