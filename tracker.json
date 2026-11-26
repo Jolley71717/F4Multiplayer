@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T17:05:08+00:00",
+ "updated": "2026-11-26T19:06:06+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1723,6 +1723,14 @@
    "stage": 4,
    "note": "Fixed and rig-tested; waits for the next minor release (protocol change)",
    "pr": 540
+  },
+  {
+   "id": "dm7e",
+   "title": "Start-up: name the needed game version (1.11.240) when the Address Library file is missing, instead of the library's generic error",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "dmxn",
