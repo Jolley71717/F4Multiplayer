@@ -9360,6 +9360,11 @@ step_sharedws_moveclass() {
 	# (the host's wire gets its copy on the VM once its 3D is drawn: a wire the host strung for a friend sometimes never is, which the
 	# host's log says as "added nothing to the budget"; the moves above drew this one again, and it is reported once more here)
 	host "wsreport $w $SANCT_BENCH" >/dev/null; wait_for 40 _sws_has_copy vm "$w"; vw=$(_sws_copy_of vm "$w")
+	if [ -z "$vw" ]; then
+		# a wire the host strung is sometimes never drawn (its 3D is a bare root); the host moving an end strings it again with a rebuild
+		out=$(host "wsmove $hl $(_sws_step "$(_sws_place host "$hl")" 20)"); sleep 6
+		host "wsreport $w $SANCT_BENCH" >/dev/null; wait_for 40 _sws_has_copy vm "$w"; vw=$(_sws_copy_of vm "$w")
+	fi
 	if [ -z "$vw" ]; then fail "$label: precondition: the VM has a copy of the host's wire" "wire '$w': $(vm 'wspower copies' | cut -c1-200)"; _sws_cleanup; return; fi
 	win_mark sws host; win_mark sws vm
 	out=$(vm "wsscrap $vw")
