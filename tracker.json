@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T00:05:58+00:00",
+ "updated": "2026-11-26T00:25:01+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2850,8 +2850,9 @@
    "title": "A box a friend builds in front of the host at a settlement fills with random items (and other dupes)",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
-   "note": "Rig-tested: all 23 container kinds empty on the host with the fix (PR 592)"
+   "stage": 5,
+   "note": "Fixed on main: a box a friend builds starts empty; ships in the next release",
+   "pr": 592
   },
   {
    "id": "ml30",
