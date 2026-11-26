@@ -758,3 +758,11 @@ TEST("storage view: a workbench is given back only when two looks in a row find 
 	CHECK((both == std::vector<std::uint32_t>{ CHEST }));
 	CHECK((looks.Look({ BOX }) == std::vector<std::uint32_t>{ BOX }));
 }
+
+TEST("storage view: the open container menu is drawn again only when the copy it shows changed")
+{
+	CHECK(StorageView::RedrawDue(CHEST, CHEST));           // the true copy's contents came into the copy the menu shows
+	CHECK(!StorageView::RedrawDue(CHEST, BOX));            // another container's copy changed: this menu shows none of it
+	CHECK(!StorageView::RedrawDue(std::nullopt, CHEST));   // no menu open on a container
+	CHECK(!StorageView::RedrawDue(CHEST, 0));              // nothing changed
+}
