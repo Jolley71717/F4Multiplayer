@@ -4,6 +4,10 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
 
 **Status:** alpha. Four players (or more, if the host allows it) share one world, over Steam, or by a typed address on a LAN or VPN. Each player keeps their own save. Friends see each other with their own face, gear and name. NPC AI is shared between games, and enemies can fight any player. Deaths, loot, pickups, doors, locks and side quests are synced, and so is the main story unless the host gives each player their own. See [INSTALL](dist/INSTALL.md) to play and [DESIGN](docs/DESIGN.md) for how it works.
 
+## How it's made
+
+Built through agentic engineering: Claude Code (AI) writes most of the code, and I direct, review and test every change. Every build runs about 4,000 unit and component tests (the real server driven by simulated players, the loot engine against simulated games). Bugs are reproduced, and their fixes tested again, in two real copies of Fallout 4 playing together on two PCs, and every release candidate must pass a scripted run of the whole mod on them before it ships. The Nexus page carries the same disclosure.
+
 ## Playing together
 
 - [What is shared](docs/SYNCED.md): a list, system by system, of what is the same in every player's game, what
