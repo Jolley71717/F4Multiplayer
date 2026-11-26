@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T16:44:03+00:00",
+ "updated": "2026-11-26T17:05:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1989,8 +1989,8 @@
    "title": "Client game crashed joining the host's session during quest catch-up (null function call in a game task queue, QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals), main 8754e7e, rig 2026-11-25 19:57",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "Fix built and rig-tested (20 joins, no crash; never reproduced); in review",
+   "stage": 5,
+   "note": "Merged for 0.23.0 (guard from code reading; crash never reproduced)",
    "pr": 628
   },
   {
