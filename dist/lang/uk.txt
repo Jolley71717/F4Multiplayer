@@ -91,6 +91,7 @@ party.called = Мітка: {what} ({where})
 party.ping_here = сюди!
 party.ping_you = ви
 party.ping_something = щось
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = У силовій броні емоції недоступні
 party.friends_frame = Це силова броня гравця {player}. Щойно він з неї вийде, ви зможете її позичити, але її деталі залишаться його власністю.

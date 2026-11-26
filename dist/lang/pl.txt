@@ -79,6 +79,7 @@ party.called = Oznaczono: {what} ({where})
 party.ping_here = tutaj!
 party.ping_you = ciebie
 party.ping_something = coś
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = Brak emotek w pancerzu wspomaganym
 party.friends_frame = To pancerz wspomagany gracza {player}. Gdy jest zaparkowany, możesz do niego wsiąść, aby go pożyczyć, ale jego części należą do właściciela.

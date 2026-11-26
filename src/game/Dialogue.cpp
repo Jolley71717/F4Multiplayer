@@ -1,6 +1,7 @@
 #include "game/Dialogue.h"
 #include "game/StrandedDialogue.h"
 #include "game/Hud.h"
+#include "game/MenuInput.h"
 #include "game/OpenMenus.h"
 
 #include "game/ForeignScene.h"
@@ -271,6 +272,34 @@ namespace Dialogue
 			REX::WARN("Dialogue: the conversation without a speaker is still open after ending it (menuOpen={} inDialogue={}); trying again every {} s",
 				topics->menuOpen, RE::IsPlayerInDialogue(), std::chrono::duration_cast<std::chrono::seconds>(StrandedDialogue::GRACE).count());
 		}
+	}
+
+	std::string End(bool a_forced)
+	{
+		const auto topics = TopicManager();
+		if (!topics || !(InDialogue() || OpenMenus::Open(OpenMenus::Menu::kDialogue))) {
+			return "no conversation";
+		}
+		if (!Hud::IsSettled()) {
+			return "the UI is held";  // asked again
+		}
+		if (!a_forced) {
+			return MenuInput::Tap(RE::DialogueMenu::MENU_NAME, "Cancel", MenuInput::TAB);
+		}
+		// The speaker's side, the scene it plays with the player if it is the one that holds them (a scene starts the menu
+		// again as soon as it is reset), the reset, and the menu: it stays up after the reset (the rig, 2026-11-26), and a
+		// hide while the conversation still held the speaker crashed the game (MenuMessages), so it goes last.
+		if (const auto speaker = topics->speaker.get(); speaker && !speaker->IsDeleted()) {
+			speaker->SetDialoguewithPlayer(false, false, nullptr);
+			if (const auto scene = PlayerScene(); scene && speaker->GetCurrentScene() == scene) {
+				Papyrus::CallMethod(scene, "Scene", "Stop", true);
+			}
+		}
+		ResetMenu(topics);
+		if (const auto queue = RE::UIMessageQueue::GetSingleton()) {
+			queue->AddMessage(RE::DialogueMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide);
+		}
+		return {};
 	}
 
 	std::string ResetForTest(bool a_overScene)

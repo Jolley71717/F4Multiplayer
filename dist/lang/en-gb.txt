@@ -90,6 +90,7 @@ party.called = Ping: {what} ({where})
 party.ping_here = over here!
 party.ping_you = you
 party.ping_something = something
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = No emotes in power armour
 party.friends_frame = This is {player}'s power armour. Once it is parked you can get in to borrow it, but its pieces stay theirs.

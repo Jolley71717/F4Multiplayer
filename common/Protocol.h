@@ -185,8 +185,13 @@ namespace Protocol
 	// 86: a plugin NPC's vendor factions, `NpcIdentity::kVendorFactions` (a new flag in kReportNpcIdentity and kNpcIdentity,
 	// the factions list holding only the vendor factions its game's own scripts put it in, told by whichever game says so and kept by
 	// the server as the union): a settler assigned to a store in the game whose scripts ran the job is put in the store's vendor faction in the
-	// other games too, so their barter menu shows the store's stock (their own). And an invisible wall (a CollisionMarker, base 00000021, src/game/BlockerShare.h)
-	// that a game's script took down is a RefState too: open = kYes says the marker is disabled (the way is open), kNo that it stands, locked is never said,
+	// other games too, so their barter menu shows the store's stock (their own).
+	// And in the same number:
+	// a player's status names the NPC they are in a conversation with (PlayerStatus::talkingTo, an id as a claim names
+	// it, 0: none; the new field is last): one conversation per NPC, whoever starts first owns it, and a friend who presses E
+	// on an NPC another player talks to is told so instead of getting a conversation of their own (src/game/TalkOwner.h).
+	// And in the same number: an invisible wall (a CollisionMarker, base 00000021, src/game/BlockerShare.h) that a game's script
+	// took down is a RefState too: open = kYes says the marker is disabled (the way is open), kNo that it stands, locked is never said,
 	// and only a wall coming down is reported and applied; the server keeps it in its ref-state table as any door's, and replays it to a joiner.
 	// No new message ids, no welcome bytes, no session layout change. 85 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 86;
@@ -2394,6 +2399,9 @@ namespace Protocol
 		// these (sLegendaryDifficulty, common/SessionLevel.h).
 		std::uint8_t  difficulty = NO_DIFFICULTY;
 		std::uint16_t legendaryMult = 0;
+		// The NPC they are in a conversation with, as a claim names it (0: none; protocol 86). Only while the conversation
+		// is theirs: one a friend owns first is ended in their game and never named (TalkOwner).
+		std::uint32_t talkingTo = 0;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -6393,6 +6401,7 @@ namespace Protocol
 		w.U8(a_msg.menu);
 		w.U8(a_msg.difficulty);  // protocol 57
 		w.U16(a_msg.legendaryMult);
+		w.U32(a_msg.talkingTo);  // protocol 86
 		return w.Data();
 	}
 
@@ -6438,13 +6447,14 @@ namespace Protocol
 		msg.menu = r.U8();
 		msg.difficulty = r.U8();
 		msg.legendaryMult = r.U16();
+		msg.talkingTo = r.U32();
 		if ((msg.difficulty > MAX_DIFFICULTY && msg.difficulty != NO_DIFFICULTY) || msg.legendaryMult > MAX_LEGENDARY_MULT) {
 			return std::nullopt;
 		}
 		// A frame is parked, and a seat is told, only while they are out of power armor (a frame is furniture too, but
 		// a frame's own path handles that).
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || msg.menu > MenuKind::kMax || (msg.powerArmorFrameRef != 0 && !IsActorRef(msg.powerArmorFrameRef)) ||
-			(msg.parked && (msg.powerArmor || !msg.parked->Valid())) || (msg.seat && (msg.powerArmor || !msg.seat->Valid()))) {
+			(msg.talkingTo != 0 && !IsActorRef(msg.talkingTo)) || (msg.parked && (msg.powerArmor || !msg.parked->Valid())) || (msg.seat && (msg.powerArmor || !msg.seat->Valid()))) {
 			return std::nullopt;
 		}
 		return msg;

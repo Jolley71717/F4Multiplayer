@@ -77,6 +77,7 @@ party.called = Marcado: {what} ({where})
 party.ping_here = por aqui!
 party.ping_you = você
 party.ping_something = algo
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = Sem emotes na armadura de energia
 party.friends_frame = Esta é a armadura de energia de {player}. Quando estiver estacionada, você pode entrar para pegá-la emprestada, mas as peças continuam sendo do dono.

@@ -369,6 +369,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.ping_here", {}, "over here!" },
 		{ "party.ping_you", {}, "you" },
 		{ "party.ping_something", {}, "something" },
+		{ "talk.busy", { { "npc", "Codsworth" }, { "player", "Sam" } }, "Codsworth is talking to Sam" },
 		{ "party.where", { { "player", "Sam" }, { "where", "240 m NE" } }, "Sam: 240 m NE" },
 		{ "party.no_emote_armor", {}, "No emotes in power armor" },
 		{ "party.friends_frame", { { "player", "Sam" } }, "This is Sam's power armor. Once it is parked you can get in to borrow it, but its pieces stay theirs." },
@@ -847,7 +848,8 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 		// Pip-Boy and the "Multiplayer:" of a server's notice.
 		if (file.stem() != "en" && file.stem() != "en-gb") {
 			for (const auto& [key, translated] : table) {
-				static const std::set<std::string_view> KEPT = { "mainmenu.entry", "menu.hc_password_button", "menu.kb_ping", "party.ping_info", "party.tag_pipboy", "session.notice" };
+				static const std::set<std::string_view> KEPT = { "mainmenu.entry", "menu.hc_password_button", "menu.kb_ping", "party.ping_info", "party.tag_pipboy", "session.notice",
+					"talk.busy" /* English in every file until translated (0.23.0) */ };
 				if (key.starts_with("key.") || KEPT.contains(key)) {
 					continue;
 				}

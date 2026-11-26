@@ -77,6 +77,7 @@ party.called = 标记：{what}（{where}）
 party.ping_here = 这边！
 party.ping_you = 你
 party.ping_something = 某样东西
+talk.busy = {npc} is talking to {player}
 party.where = {player}：{where}
 party.no_emote_armor = 穿着动力装甲时无法使用表情
 party.friends_frame = 这是{player}的动力装甲。停放时你可以进入借用，但部件仍归其主人所有。
