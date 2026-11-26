@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T21:46:58+00:00",
+ "updated": "2026-11-26T21:47:46+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -637,8 +637,8 @@
    "title": "Nuka-World Grandchester Mystery Mansion: an open door blocks the host with an invisible wall, lets the client through; host can close but not reopen it",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Player report: Grandchester Mansion doors block the host"
+   "stage": 1,
+   "note": "logs read; agent reproducing on the rig"
   },
   {
    "id": "4vk9",
