@@ -43,6 +43,14 @@ namespace NpcSync
 	// The NPC the player is talking to (0 = none).
 	[[nodiscard]] std::uint32_t TalkingTo();
 
+	// The NPC in our conversation when it is ours and the engine's own speaker (0: none): what our status tells friends
+	// (PlayerStatus::talkingTo). One conversation per NPC: whoever starts first owns it (TalkOwner).
+	[[nodiscard]] std::uint32_t TalkClaimed();
+
+	// A friend's status named the NPC they talk to (0: none), or the friend left.
+	void OnPeerTalk(std::uint32_t a_player, std::uint32_t a_talkingTo);
+	void OnPeerGone(std::uint32_t a_player);
+
 	// The NPC fired in its owner's world: play the firing animation on our copy, with the sound of the
 	// owner's copy's gun (Shot::sound).
 	void ApplyShot(std::uint32_t a_refId, std::uint32_t a_sound);

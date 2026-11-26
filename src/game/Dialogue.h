@@ -30,6 +30,13 @@ namespace Dialogue
 	// out of dialogue it only checks that.
 	void Frame();
 
+	// Ends the conversation the engine has open with a speaker, as a player ends one that lets them go: a_forced false asks
+	// the menu to cancel (Tab, its Goodbye: MenuInput), which the engine ends the conversation itself on; true ends it
+	// ourselves with the reset every conversation ends with, for one that took no cancel (a greeting that can't be skipped).
+	// For a conversation our game must not have (NpcSync, TalkOwner): never a hide message to the menu, which crashed the
+	// game (MenuMessages). Empty when it went, else why not. Main thread.
+	std::string End(bool a_forced);
+
 	// Test: runs the reset every conversation ends with (lets go of its input layer, clears menuOpen), and with
 	// a_overScene also clears overSceneActor, which a conversation ended out of turn can leave set. Returns
 	// the fields before and after.

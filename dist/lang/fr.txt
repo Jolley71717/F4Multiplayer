@@ -81,6 +81,7 @@ party.called = Signalé : {what} ({where})
 party.ping_here = par ici !
 party.ping_you = vous
 party.ping_something = quelque chose
+talk.busy = {npc} is talking to {player}
 party.where = {player} : {where}
 party.no_emote_armor = Pas d'émotes en armure assistée
 party.friends_frame = C'est l'armure assistée de {player}. Une fois garée, vous pouvez y monter pour l'emprunter, mais ses pièces restent à son propriétaire.

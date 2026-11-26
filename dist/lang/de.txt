@@ -77,6 +77,7 @@ party.called = Markiert: {what} ({where})
 party.ping_here = Hier drüben!
 party.ping_you = dich
 party.ping_something = etwas
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = Keine Gesten in der Powerrüstung
 party.friends_frame = Das ist die Powerrüstung von {player}. Wenn sie geparkt ist, kannst du einsteigen und sie ausleihen, ihre Teile bleiben aber beim Besitzer.

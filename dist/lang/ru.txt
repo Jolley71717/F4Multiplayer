@@ -92,6 +92,7 @@ party.called = Метка: {what} ({where})
 party.ping_here = сюда!
 party.ping_you = вас
 party.ping_something = что-то
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = В силовой броне эмоции недоступны
 party.friends_frame = Это силовая броня игрока {player}. Когда она припаркована, в неё можно сесть и взять её взаймы, но её части остаются у владельца.

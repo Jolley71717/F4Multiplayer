@@ -88,6 +88,7 @@ party.called = マーク：{what}（{where}）
 party.ping_here = こっちだ！
 party.ping_you = あなた
 party.ping_something = 何か
+talk.busy = {npc} is talking to {player}
 party.where = {player}：{where}
 party.no_emote_armor = パワーアーマー着用中はエモートできません
 party.friends_frame = これは{player}のパワーアーマーです。置いてあるときは乗り込んで借りられますが、パーツは持ち主のものです。
