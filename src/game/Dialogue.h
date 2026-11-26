@@ -1,5 +1,8 @@
 #pragma once
 
+#include <chrono>
+#include <optional>
+
 // The player's conversation as the engine holds it (MenuTopicManager). While one is open the player
 // can't draw a weapon, open the Pip-Boy or build. Main thread only.
 namespace Dialogue
@@ -11,6 +14,10 @@ namespace Dialogue
 	// Whether a_ref is in the player's conversation: the one speaking to them, or in the scene they are
 	// in. Deleting it now would leave the conversation without its speaker.
 	[[nodiscard]] bool Holds(RE::TESObjectREFR* a_ref);
+
+	// Whether a stage of a_quest set in this game is not reported now: a scene of the quest was stopped here lately
+	// (ForeignScene::Guard), so a stage its end set is not progress. a_remote: when a stage of it last came from another game.
+	[[nodiscard]] bool StageHeldBack(std::uint32_t a_quest, std::optional<std::chrono::steady_clock::time_point> a_remote);
 
 	// The plugin is taking a reference (form ID a_id; a_ref when its handle still resolves) out of the
 	// world: a conversation it leaves open as its speaker is the plugin's to end (see StrandedDialogue).

@@ -3,6 +3,10 @@
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
 
+#include "game/ForeignScene.h"
+#include "game/NpcSync.h"
+#include "game/Papyrus.h"
+#include "game/PlacedScenes.h"
 #include "game/Puppets.h"
 #include "game/QuestSync.h"
 
@@ -48,6 +52,84 @@ namespace Dialogue
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return player ? player->GetCurrentScene() : nullptr;
+		}
+
+		// The scene our player is in when another game's NPCs play it (ForeignScene.h): looked at a few times a second while
+		// there is one, stopped here once it has been for the grace, and its NPCs not claimed (Holds).
+		ForeignScene::Watch foreign;
+		ForeignScene::Guard guard;
+		ForeignScene::Facts sceneFacts;
+		Clock::time_point   sceneLooked{};
+		constexpr auto      SCENE_LOOK = std::chrono::milliseconds(100);
+		std::uint32_t       foreignStopped = 0;  // scenes stopped here
+
+		ForeignScene::Facts LookAtScene()
+		{
+			ForeignScene::Facts facts;
+			const auto          scene = PlayerScene();
+			if (!scene) {
+				return facts;
+			}
+			facts.scene = scene->GetFormID();
+			facts.talking = OpenMenus::Open(OpenMenus::Menu::kDialogue);
+			facts.shared = scene->parentQuest && QuestSync::SharesHere(scene->parentQuest);
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!facts.shared || facts.talking || !lists) {
+				return facts;
+			}
+			const auto me = NpcSync::LocalPlayer();
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || actor->IsPlayerRef() || actor->GetCurrentScene() != scene) {
+					continue;
+				}
+				const auto id = actor->GetFormID();
+				const auto session = NpcSync::SessionId(id);
+				if (!session) {
+					continue;  // not one the session shares (a friend's stand-in, a creature of ours)
+				}
+				const auto owner = NpcSync::Owner(session);
+				if (owner == 0 || owner == me || PlacedScenes::Holds(id)) {
+					facts.ourNpcs = true;
+				} else {
+					facts.foreignNpcs = true;
+				}
+			}
+			return facts;
+		}
+
+		// The scene facts as of the last look, looked at again after SCENE_LOOK.
+		const ForeignScene::Facts& SceneNow(Clock::time_point a_now)
+		{
+			if (a_now - sceneLooked >= SCENE_LOOK) {
+				sceneLooked = a_now;
+				sceneFacts = LookAtScene();
+			}
+			return sceneFacts;
+		}
+
+		void StopForeignScene()
+		{
+			const auto now = Clock::now();
+			if (!sceneFacts.scene && now - sceneLooked < SCENE_LOOK) {
+				return;  // out of any scene a moment ago: nothing to look at
+			}
+			const auto verdict = foreign.Update(SceneNow(now), now);
+			if (verdict != ForeignScene::Verdict::kStop) {
+				return;
+			}
+			const auto scene = PlayerScene();
+			if (!scene || scene->GetFormID() != foreign.Foreign()) {
+				return;
+			}
+			++foreignStopped;
+			REX::INFO("Dialogue: stopping scene {:08X} of quest {:08X} here: it holds our player, and the NPCs in it are run by another game, whose player plays it (stop {} of {})",
+				scene->GetFormID(), scene->parentQuest ? scene->parentQuest->GetFormID() : 0, foreign.Stops(), ForeignScene::MAX_TRIES);
+			if (scene->parentQuest) {
+				guard.Stopped(scene->parentQuest->GetFormID(), now);
+			}
+			Papyrus::CallMethod(scene, "Scene", "Stop", true);
 		}
 
 		// The engine's own test: menuOpen, or the camera in its dialogue state. It reads the MenuTopicManager
@@ -122,7 +204,16 @@ namespace Dialogue
 		// playing it, and its people are theirs to run; claimed for it, Codsworth would be taken from the friend
 		// mid-search. The friend's later stages end it here.
 		const auto scene = PlayerScene();
-		return scene && scene->GetFormID() != QuestSync::SessionScene() && a_ref->GetCurrentScene() == scene;
+		if (!scene || scene->GetFormID() == QuestSync::SessionScene() || a_ref->GetCurrentScene() != scene) {
+			return false;
+		}
+		// Not a scene another game's NPCs play, which is stopped here and whose NPCs stay theirs (ForeignScene.h).
+		return !ForeignScene::IsForeign(SceneNow(Clock::now()));
+	}
+
+	bool StageHeldBack(std::uint32_t a_quest, std::optional<std::chrono::steady_clock::time_point> a_remote)
+	{
+		return guard.Holds(a_quest, Clock::now(), a_remote);
 	}
 
 	void Removed(std::uint32_t a_id, RE::TESObjectREFR* a_ref)
@@ -133,6 +224,7 @@ namespace Dialogue
 
 	void Frame()
 	{
+		StopForeignScene();
 		// Out of dialogue, as the player nearly always is, nothing more is looked at.
 		const auto topics = TopicManager();
 		if (!topics || !InDialogue()) {
@@ -204,6 +296,6 @@ namespace Dialogue
 	std::string Describe()
 	{
 		const auto topics = TopicManager();
-		return std::format("dialogue: open={} ended={}", topics && topics->menuOpen, ended);
+		return std::format("dialogue: open={} ended={} foreignScenes={}", topics && topics->menuOpen, ended, foreignStopped);
 	}
 }

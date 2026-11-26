@@ -3425,6 +3425,28 @@ and the companion a faction's kick-out turns (Danse, Gage), which is the kick-ou
 the player and is no bridge is not made kHostile by an actor's row alone (StageRules::ActorsHold; no row's own stage
 moves the player today): it is set only beside the friend, and nothing can turn its actor here without the stage.
 
+### A scene another game's NPCs play is stopped here (src/game/ForeignScene.h, Dialogue.cpp)
+
+A shared quest's stage runs its fragment in every game, and a scene's start conditions hold in every game the quest has
+reached, so a quest NPC's conversation or forced greeting the host just finished started again in the friend's game with the
+friend as its player (a Nexus report, 2026-11-25). The NPC is the host's, its copy there runs no AI, so the scene could not go
+on: the engine held the friend in it (no weapons, Pip-Boy or workshop; on the rig the friend stayed in Codsworth's search scene
+for as long as it was watched, after the host's own had ended), and a friend who walked up to the NPC answered a conversation
+the host had had. A scene that began more than 30 s after a friend's stage was taken for the friend's own, so NpcSync claimed
+its NPCs (`Dialogue::Holds`): the NPC changed hands, ran its scene package in the friend's game waiting for them, and the
+host's quest never got it where it had to go.
+A scene that holds our player, of a quest the session shares, whose NPCs are all run by another game (none ours, none a town
+scene's of ours), with no conversation of ours open, is stopped here (`Scene.Stop`, after 1.5 s, asked again every 5 s up to
+3 times) and its NPCs are not claimed meanwhile. The game that runs the NPCs plays it. Dialogue::Describe's `foreignScenes=`
+counts the stops, and the log says "Dialogue: stopping scene". Not yet seen: a scene whose NPC our game runs because a friendly
+hand-off gave it to us (FriendlyHandOff) and whose conditions hold here too.
+Stopping a scene ends it, and its end or a phase's end fragment can set a stage of its quest, which would be reported as this
+game's progress while the other game's scene still plays (`ForeignScene::Guard`, `Dialogue::StageHeldBack`): for 10 s after a stop,
+a stage of that scene's quest set here is not reported (logged each), unless the other game's own stage of the quest came after the stop.
+The talk partner (`NpcSync::FindPartner`) is the engine's conversation speaker when the dialogue menu is open, the NPC the player
+activated or the nearest one only as a fallback: a forced greeting by an NPC with another standing nearer no longer claims the
+nearer one.
+
 ### Companions' quests (QuestFilter::COMPANION_QUESTS, StageRules kEach and EACH, QuestSync::SetEachHere)
 
 Curie's Emergent Behavior (COMCurieQuest) and MacCready's Long Road Ahead (COMMacCreadyQuest) are filed under no type, so
