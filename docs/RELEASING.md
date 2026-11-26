@@ -165,8 +165,8 @@ The soak of the rc's zip is a 90-minute run after the gate passes:
 (movement through the cell churn, every step with its checks, both directions where a step has two) round after round,
 25 to 30 minutes a round (three in 90 minutes), until the 90 minutes are up, then the end steps once: the VM's
 game is restarted and rejoins, fuzz, the cleanup of test pieces, and the end checks of the crash logs, the plugin logs'
-new errors and the privacy scan. A failure names its round. The working set's growth from the first combat to each
-churn's end is printed and warned on, not failed. The soak used to be cell churn alone (and before 0.11.0 a 3-hour loop
+new errors and the privacy scan. A failure names its round. The memory's growth from the first combat to each
+churn's end (the host's working set, the VM game's private bytes: Windows trims the VM's working set) is printed and warned on, not failed. The soak used to be cell churn alone (and before 0.11.0 a 3-hour loop
 that asserted only that both games were alive); looping the set exercises what players do over the same time. When it
 exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict goes
 in `dist/out/soak-verdict.txt`:
