@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T02:58:07+00:00",
+ "updated": "2026-11-26T03:07:46+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -146,6 +146,14 @@
    "stage": 7,
    "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
    "pr": 245
+  },
+  {
+   "id": "0vo1",
+   "title": "Race-changing player mods (playable Deathclaw) crash the game in a session: changing race in a session, or joining after changing in single player",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "queued, 1.1"
   },
   {
    "id": "0wtb",
@@ -2716,6 +2724,14 @@
    "priority": 2,
    "stage": 7,
    "note": "Fixed and shipped."
+  },
+  {
+   "id": "kyxg",
+   "title": "Quest NPC re-runs the host's just-finished conversation with the friend (no forced start); left waiting, it blocks the quest for both",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "queued, 1.0"
   },
   {
    "id": "l15g",
