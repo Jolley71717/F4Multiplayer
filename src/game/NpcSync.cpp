@@ -251,6 +251,12 @@ namespace NpcSync
 		// rolled as and the others make theirs that roll (NpcRoll.h); a spawn's copy takes its factions too.
 		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
 		NpcRoll::Book                                                 rolls;      // mirrored NPCs: their owners' reports
+		NpcRoll::Book                                                 vendors;    // a plugin NPC's vendor factions, as the others' scripts have them (the server's union)
+		NpcRoll::VendorSent                                           sentVendors;  // ...and ours, as last told
+		Clock::time_point                                             nextVendors{};
+		static constexpr auto                                         VENDOR_INTERVAL = std::chrono::seconds(2);
+		std::uint32_t                                                 vendorsSent = 0;  // vendor lists we told
+		std::uint32_t                                                 vendorsSet = 0;   // ...and tries to put ours in the others'
 		std::uint32_t                                                 rollsSent = 0, rollsWritten = 0, rollsKept = 0, factionsSet = 0;
 		std::unordered_set<std::uint32_t>                             rollsDiffered;  // NPCs whose runner's report differed from ours (counted once)
 		std::uint32_t                                        lastActivated = 0;
@@ -1285,6 +1291,79 @@ namespace NpcSync
 					meter.Count(Rolls::Apply(actor, *theirs, plan));
 					rollsWritten += plan.templates || plan.level;
 					factionsSet += !plan.add.empty() || !plan.remove.empty();
+					break;
+				}
+			}
+		}
+
+		// A plugin NPC's vendor factions (protocol 86). The ones our own scripts put an NPC in (a settler given a store's job at our
+		// settlement) are told whenever they change, for each NPC we run or mirror: the settlement's owner's game is the one
+		// that ran the job, whoever runs the settler now. The server tells the others the union of what the games say.
+		void SendVendors(Clock::time_point a_now)
+		{
+			if (GamePaused() || !Rolls::VendorSync() || a_now < nextVendors) {
+				return;
+			}
+			nextVendors = a_now + VENDOR_INTERVAL;
+			const auto tell = [&](std::uint32_t a_id) {
+				if (!Protocol::IsShareableRef(a_id) || !NpcRoll::Rolled(a_id)) {
+					return;
+				}
+				const auto actor = LoadedActor(a_id);
+				if (!actor || actor->IsDead(false) || Spawns::CopyIdOf(actor->GetFormID()) != 0) {
+					return;  // a spawn's copy takes its factions whole (kFactions)
+				}
+				auto own = Rolls::OwnVendorFactions(actor);
+				if (!sentVendors.Changed(a_id, own)) {
+					return;
+				}
+				Protocol::NpcIdentity identity;
+				identity.refId = a_id;
+				NpcRoll::SetVendorFactions(identity, std::move(own));
+				outgoing.push_back({ Protocol::Encode(identity, Protocol::MessageType::kReportNpcIdentity), true });
+				++vendorsSent;
+			};
+			for (const auto& [id, track] : owned) {
+				tell(id);
+			}
+			for (const auto& [id, mirror] : mirrors) {
+				tell(id);
+			}
+		}
+
+		// ...and the ones the others' scripts put an NPC in, put on our NPC (loaded, alive; looked at again until it is): a few
+		// tries each, as a roll.
+		void CheckVendors(Clock::time_point a_now)
+		{
+			if (!Rolls::VendorSync()) {
+				return;  // dev: left pending
+			}
+			for (const auto id : vendors.Due()) {
+				const auto theirs = vendors.Find(id);
+				if (!theirs) {
+					vendors.Settled(id);
+					continue;
+				}
+				const auto actor = LoadedActor(id);
+				if (!actor || actor->IsDead(false) || Spawns::CopyIdOf(actor->GetFormID()) != 0) {
+					continue;
+				}
+				const auto ours = Rolls::ReadOurs(actor, false);
+				const auto plan = NpcRoll::Decide(ours, *theirs, [](std::uint32_t) { return false; });
+				if (!plan.vendor || !plan.Any()) {
+					vendors.Settled(id);
+					continue;
+				}
+				switch (vendors.Ask(id, a_now)) {
+				case NpcRoll::Book::Go::kWait:
+					break;
+				case NpcRoll::Book::Go::kGiveUp:
+					vendors.Settled(id);
+					REX::INFO("NpcSync: {:08X} is still not in the vendor factions player {}'s game has it in after {} tries; left as it is", id, theirs->playerId, NpcRoll::Book::TRIES);
+					break;
+				case NpcRoll::Book::Go::kTry:
+					meter.Count(Rolls::Apply(actor, *theirs, plan));
+					++vendorsSet;
 					break;
 				}
 			}
@@ -2531,6 +2610,8 @@ namespace NpcSync
 			ApplyActorMods(now);
 			SendOwnedRolls();
 			CheckRolls(now);
+			SendVendors(now);
+			CheckVendors(now);
 			std::vector<std::uint32_t> ids;
 			for (const auto& [id, track] : owned) {
 				if (const auto local = LocalId(id)) {
@@ -2653,6 +2734,12 @@ namespace NpcSync
 		if (!NpcRoll::Rolled(a_identity.refId)) {
 			return;
 		}
+		// A plugin NPC's vendor factions (protocol 86): what the others' scripts put it in, whoever runs it here: put on ours
+		// (CheckVendors) once it is loaded, never a roll.
+		if (a_identity.mask == 0 && (a_identity.flags & Protocol::NpcIdentity::kVendorFactions) != 0) {
+			vendors.Learn(a_identity, localId);
+			return;
+		}
 		// The session's roll: any game that builds the NPC from here on builds it so (RollHook), whoever runs it.
 		RollHook::Learn(a_identity, true);
 		// Not for one we run: what our game has is what we report.
@@ -2674,11 +2761,16 @@ namespace NpcSync
 	{
 		rolls.Forget(a_refId);
 		sentRolls.Forget(a_refId);
+		vendors.Forget(a_refId);
+		sentVendors.Forget(a_refId);
 	}
 
 	void OnGameLoaded()
 	{
 		MirrorFrames::Forget();  // every mirror left its copy before the load (Session's LeaveAll step); what is noted names the old game
+		vendors.Clear();  // the world is another: the welcome tells what the others' scripts have in it
+		sentVendors.Clear();
+		Rolls::RemoveSavedVendorFactions();  // a save made in a session may keep a friend's store on a settler
 		// The VM's calls queued before the load don't run on this world's references: an NPC isn't kept in flight for one.
 		modCallBook.Clear();
 		modCall.reset();
@@ -2711,7 +2803,10 @@ namespace NpcSync
 		modScriptLateSaid.clear();
 		modCall.reset();  // a call still in flight is let run, and its NPC kept in flight until it lands (modCallBook)
 		frameSaid.clear();
+		Rolls::UndoVendorFactions();  // the stores a friend's game put NPCs in leave with the session
 		sentRolls.Clear();
+		vendors.Clear();
+		sentVendors.Clear();
 		rolls.Clear();
 		rollsDiffered.clear();
 		owners.clear();

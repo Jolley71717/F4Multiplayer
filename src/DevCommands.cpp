@@ -2304,6 +2304,56 @@ namespace DevCommands
 			return std::format("{:08X} in {:08X}: {}", actor->GetFormID(), faction->GetFormID(), actor->IsInFaction(faction));
 		}
 
+		// barterinfo <actorHex>: whether the barter menu is open, and the chest it shows for that vendor: the merchant container of
+		// the vendor faction the engine worked out when it opened (Actor::vendorFaction), else the actor's own things. The menu is
+		// not looked up (OpenMenus says it is up); `menu BarterMenu hide` closes it. Read only.
+		std::string BarterInfoCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: barterinfo <actorHex>";
+			}
+			if (!OpenMenus::Open(OpenMenus::Menu::kBarter)) {
+				return "barter closed";
+			}
+			std::uint32_t chest = actor->GetFormID();
+			if (const auto faction = actor->vendorFaction; faction && faction->vendorData.merchantContainer) {
+				const auto raw = reinterpret_cast<std::uintptr_t>(faction->vendorData.merchantContainer);
+				chest = raw <= 0xFFFFFFFFull ? static_cast<std::uint32_t>(raw) : faction->vendorData.merchantContainer->GetFormID();
+			}
+			return std::format("barter open vendor={:08X} chest={:08X} | {}", actor->GetFormID(), chest, Rolls::DescribeVendor(actor));
+		}
+
+		// vendorinfo <actorHex> [reset]: what makes an actor a vendor here: its cached vendor faction, the vendor factions it is in (`told=`, what a report says)
+		// (`told=`: what a report says), every faction with a merchant container it is in now with that container and its stacks
+		// (`in=`), and how many we put it in from a friend's report (`synced=`). reset: its cached vendor faction forgotten first, so the next barter works it out again.
+		std::string VendorInfoCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: vendorinfo <actorHex> [reset]";
+			}
+			if (args.size() > 1 && args[1] == "reset") {
+				Rolls::ForgetVendorCache(actor);
+			}
+			return Rolls::DescribeVendor(actor);
+		}
+
+		// vendorsync [on|off]: whether a settler's store (an NPC's vendor factions) is told to the other games and taken from
+		// theirs (protocol 86). Off, each game's own scripts decide alone, as before; the rig uses it for its "before".
+		std::string VendorSyncCommand(std::string_view a_args)
+		{
+			if (a_args == "on" || a_args == "off") {
+				Rolls::SetVendorSync(a_args == "on");
+			} else if (!a_args.empty()) {
+				return "error: usage: vendorsync [on|off]";
+			}
+			return std::format("vendorsync {}", Rolls::VendorSync() ? "on" : "off");
+		}
+
 		// near <factionHex> [radius]: the faction's members that a held hostile stage counts as near (QuestSync's FactionNear),
 		// read the same way: among the actors in the game's high process (every loaded cell, not only the player's, unlike
 		// `actors`), alive, enabled, not a friend's stand-in, not following a player, within the radius (default
@@ -5415,6 +5465,9 @@ namespace DevCommands
 			Entry{ "av", ActorValueCommand },
 			Entry{ "factions", FactionsCommand },
 			Entry{ "infaction", InFactionCommand },
+			Entry{ "vendorinfo", VendorInfoCommand },
+			Entry{ "barterinfo", BarterInfoCommand },
+			Entry{ "vendorsync", VendorSyncCommand },
 			Entry{ "near", NearCommand },
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },

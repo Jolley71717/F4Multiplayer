@@ -13,6 +13,7 @@
 #include "game/LooksMenu.h"
 #include "RewardBook.h"
 #include "game/QuestRewards.h"
+#include "game/Rolls.h"
 #include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
@@ -291,6 +292,10 @@ namespace
 	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT) + 8 + 4 * static_cast<std::uint32_t>(Protocol::MAX_STORAGE_LACKING);
 	// The friends' rewards judged here, by the server run's id (RewardBook::Receiver::SaveRecord): a reward sent again after a
 	// leave the server wasn't sure of is had by a game that saved it.
+	// What we put NPCs in from a friend's report (Rolls::SaveVendorRecord): taken off after a load of this save.
+	constexpr std::uint32_t VENDOR_RECORD = 'VNDR';
+	constexpr std::uint32_t VENDOR_VERSION = 1;
+	constexpr std::uint32_t VENDOR_MAX_LENGTH = 2 + 256 * (4 + 1 + 4 * 32);
 	constexpr std::uint32_t REWARD_RECORD = 'QRWD';
 	constexpr std::uint32_t REWARD_VERSION = 1;
 	constexpr std::uint32_t REWARD_MAX_LENGTH = static_cast<std::uint32_t>(RewardBook::Receiver::MAX_RECORD);
@@ -338,6 +343,10 @@ namespace
 		// each copy loads after a load of this save.
 		if (const auto ghosts = WeaponFire::SaveGhostRecord(); !ghosts.empty() && a_intfc->OpenRecord(GHOST_RECORD, GHOST_VERSION)) {
 			a_intfc->WriteRecordData(ghosts.data(), static_cast<std::uint32_t>(ghosts.size()));
+		}
+		// What we put NPCs in from a friend's report (a settler's store), taken off again after a load of this save (Rolls).
+		if (const auto vendors = Rolls::SaveVendorRecord(); !vendors.empty() && a_intfc->OpenRecord(VENDOR_RECORD, VENDOR_VERSION)) {
+			a_intfc->WriteRecordData(vendors.data(), static_cast<std::uint32_t>(vendors.size()));
 		}
 		// The friends' rewards our game judged (QuestRewards): a game restarted with this save knows them when they are sent again.
 		if (const auto rewards = QuestRewards::SaveRecord(); !rewards.empty() && a_intfc->OpenRecord(REWARD_RECORD, REWARD_VERSION)) {
@@ -408,6 +417,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					WeaponFire::LoadGhostRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
 				}
+			} else if (type == VENDOR_RECORD && version == VENDOR_VERSION && length <= VENDOR_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Rolls::LoadVendorRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
+				}
 			} else if (type == REWARD_RECORD && version == REWARD_VERSION && length <= REWARD_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -435,6 +449,7 @@ namespace
 		WorkshopSync::RevertResourceRecord();
 		WorkshopSync::RevertCopiesRecord();
 		QuestRewards::RevertRecord();
+		Rolls::RevertVendorRecord();
 		QuestSync::RevertBodyRecord();
 	}
 

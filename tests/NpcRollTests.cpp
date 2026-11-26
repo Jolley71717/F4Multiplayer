@@ -623,3 +623,218 @@ TEST("npc roll: a body a quest's globals roll (Curie's) is nobody's to share: ne
 	CHECK(told.contains(BLOATFLY));
 	CHECK(!told.contains(CURIE));
 }
+
+// ---- a settler's store ---------------------------------------------------------------------------------------------
+
+namespace
+{
+	constexpr std::uint32_t GENERAL_STORE = 0x0006E7A1;  // vendor factions: any form with a merchant container
+	constexpr std::uint32_t ARMOR_STORE = 0x0006E7A2;
+	constexpr std::uint32_t CODSWORTH = 0x00019FF4;
+}
+
+TEST("npc roll: a plugin NPC in a store at its owner's is put in the store's vendor faction, and taken out of it again")
+{
+	NpcIdentity theirs{ .playerId = 1, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(theirs, { { GENERAL_STORE, 0 } });
+	CHECK((theirs.flags & NpcIdentity::kVendorFactions) != 0);
+	CHECK((theirs.flags & NpcIdentity::kFactions) == 0);
+
+	// A friend's copy of the settler, in no store: put in theirs.
+	NpcRoll::Ours bare{};
+	auto plan = NpcRoll::Decide(bare, theirs, Reachable);
+	CHECK(plan.vendor);
+	CHECK((plan.add == std::vector<FactionRank>{ { GENERAL_STORE, 0 } }));
+	CHECK(plan.remove.empty());
+
+	// In it already (put there, or its own game's): nothing to do.
+	NpcRoll::Ours inIt{ .vendor = { { GENERAL_STORE, 0 } }, .vendorGiven = { GENERAL_STORE } };
+	CHECK(!NpcRoll::Decide(inIt, theirs, Reachable).Any());
+
+	// Reassigned to another store: the new one in, the one we gave out.
+	NpcIdentity moved{ .playerId = 1, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(moved, { { ARMOR_STORE, 0 } });
+	plan = NpcRoll::Decide(inIt, moved, Reachable);
+	CHECK((plan.add == std::vector<FactionRank>{ { ARMOR_STORE, 0 } }));
+	CHECK((plan.remove == std::vector<std::uint32_t>{ GENERAL_STORE }));
+
+	// Unassigned: an empty list takes out what we gave, and only that.
+	NpcIdentity none{ .playerId = 1, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(none, {});
+	plan = NpcRoll::Decide(inIt, none, Reachable);
+	CHECK(plan.add.empty());
+	CHECK((plan.remove == std::vector<std::uint32_t>{ GENERAL_STORE }));
+	NpcRoll::Ours own{ .vendor = { { ARMOR_STORE, 0 } } };  // our own game's, never given by a friend's report
+	CHECK(!NpcRoll::Decide(own, none, Reachable).Any());
+
+	// A cut list says nothing of what else theirs is in: nothing is taken out. Unlisted reports and spawn copies are not this.
+	auto cut = moved;
+	cut.flags |= NpcIdentity::kFactionsCut;
+	CHECK(NpcRoll::Decide(inIt, cut, Reachable).remove.empty());
+	CHECK(!NpcRoll::Decide(inIt, NpcIdentity{ .playerId = 1, .refId = CODSWORTH }, Reachable).Any());
+	NpcRoll::Ours spawnCopy{ .copy = true };
+	CHECK(!NpcRoll::Decide(spawnCopy, theirs, Reachable).vendor);
+	// A player's own faction is never set.
+	NpcIdentity player{ .playerId = 1, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(player, { { NpcRoll::PLAYER_FACTION, 0 } });
+	CHECK(!NpcRoll::Decide(bare, player, Reachable).Any());
+}
+
+TEST("npc roll: a game tells the vendor factions its scripts put an NPC in when they change, and that it has none once it told some")
+{
+	NpcRoll::VendorSent sent;
+	const std::vector<FactionRank> store{ { GENERAL_STORE, 0 } };
+	CHECK(!sent.Changed(CODSWORTH, {}));  // nothing to say of an NPC in none
+	CHECK(sent.Changed(CODSWORTH, store));
+	CHECK(!sent.Changed(CODSWORTH, store));
+	const std::vector<FactionRank> armor{ { ARMOR_STORE, 0 } };
+	CHECK(sent.Changed(CODSWORTH, armor));  // another store: news
+	CHECK(sent.Changed(CODSWORTH, {}));     // unassigned: news
+	CHECK(!sent.Changed(CODSWORTH, {}));
+	CHECK(sent.Changed(CODSWORTH, store));
+	sent.Forget(CODSWORTH);
+	CHECK(sent.Size() == 0);
+	CHECK(sent.Changed(CODSWORTH, store));  // told afresh once forgotten
+	sent.Clear();
+	CHECK(sent.Size() == 0);
+}
+
+TEST("npc roll: a vendor list reads back, and is refused beside the spawn list or with nothing flagged")
+{
+	NpcIdentity store{ .playerId = 2, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(store, { { GENERAL_STORE, 0 }, { ARMOR_STORE, 1 } });
+	const auto back = Protocol::DecodeNpcIdentity(Protocol::Encode(store, MT::kNpcIdentity));
+	REQUIRE(back);
+	CHECK(*back == store);
+
+	auto both = store;
+	both.flags |= NpcIdentity::kFactions;
+	CHECK(!Protocol::DecodeNpcIdentity(Protocol::Encode(both, MT::kNpcIdentity)));
+	auto unflagged = store;
+	unflagged.flags = 0;
+	CHECK(!Protocol::DecodeNpcIdentity(Protocol::Encode(unflagged, MT::kNpcIdentity)));
+	NpcIdentity empty{ .playerId = 2, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(empty, {});
+	CHECK(Protocol::DecodeNpcIdentity(Protocol::Encode(empty, MT::kNpcIdentity)));
+}
+
+TEST("npc roll: each game's word of a plugin NPC's vendor factions is told as the union, whoever runs the NPC, and goes when they leave")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(bob);
+	f.fake->Deliver(2, Claim(CODSWORTH));  // Bob runs the settler; Alice's game ran the job at her settlement
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+
+	NpcIdentity store{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(store, { { GENERAL_STORE, 0 } });
+	f.fake->Deliver(1, Report(store));
+	const auto latest = [&](std::uint32_t a_peer) {  // the last word told it (each report is told to both)
+		std::optional<NpcIdentity> last;
+		while (const auto next = Told(*f.fake, a_peer, 300ms)) {
+			last = next;
+		}
+		return last;
+	};
+	auto told = Told(*f.fake, 2);
+	REQUIRE(told);
+	CHECK(told->playerId == alice->playerId);  // as the report of the game whose word changed it
+	CHECK((told->flags & NpcIdentity::kVendorFactions) != 0);
+	CHECK((told->factions == std::vector<FactionRank>{ { GENERAL_STORE, 0 } }));
+	CHECK(Told(*f.fake, 1));  // she is told it too (her game has it already)
+	f.fake->Deliver(1, Report(store));
+	CHECK(!Told(*f.fake, 2, 300ms));  // no news
+
+	// Bob's game says another: the union.
+	NpcIdentity armor{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(armor, { { ARMOR_STORE, 0 } });
+	f.fake->Deliver(2, Report(armor));
+	told = latest(1);
+	REQUIRE(told);
+	CHECK((told->factions == std::vector<FactionRank>{ { GENERAL_STORE, 0 }, { ARMOR_STORE, 0 } }) || (told->factions == std::vector<FactionRank>{ { ARMOR_STORE, 0 }, { GENERAL_STORE, 0 } }));
+
+	// A newcomer is told it with the rolls.
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	auto rolls = WelcomeRolls(f, 3);
+	REQUIRE(rolls.contains(CODSWORTH));
+	CHECK(rolls.at(CODSWORTH).factions.size() == 2);
+
+	// Alice's scripts let the settler go: Bob's word stays. Then Bob's, and the NPC is in none.
+	NpcIdentity none{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(none, {});
+	f.fake->Deliver(1, Report(none));
+	told = latest(2);
+	REQUIRE(told);
+	CHECK((told->factions == std::vector<FactionRank>{ { ARMOR_STORE, 0 } }));
+	f.fake->Drop(2);  // Bob leaves: what his game said goes with him
+	told = latest(1);
+	REQUIRE(told);
+	CHECK(told->factions.empty());
+	CHECK((told->flags & NpcIdentity::kVendorFactions) != 0);
+}
+
+TEST("npc roll: a game that loads a save in the session is told the vendor union again, and what it said of the world before goes")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Deliver(2, Claim(CODSWORTH));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+
+	NpcIdentity store{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(store, { { GENERAL_STORE, 0 } });
+	f.fake->Deliver(1, Report(store));
+	NpcIdentity armor{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(armor, { { ARMOR_STORE, 0 } });
+	f.fake->Deliver(2, Report(armor));
+	Clear(f, { 1, 2 });
+
+	// Bob's game loads a save: it forgot Alice's word, and its own word was of the world before.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0, Protocol::WorldRequest::kLoad }));
+	const auto packets = Received(f, 2);
+	std::map<std::uint32_t, NpcIdentity> lists;
+	for (const auto& list : Decoded(packets, MT::kNpcIdentities, [](auto a_data) { return Protocol::DecodeNpcIdentities(a_data); })) {
+		for (const auto& entry : list) {
+			lists[entry.refId] = entry;
+		}
+	}
+	REQUIRE(lists.contains(CODSWORTH));
+	CHECK((lists.at(CODSWORTH).flags & NpcIdentity::kVendorFactions) != 0);
+	CHECK((lists.at(CODSWORTH).factions == std::vector<FactionRank>{ { GENERAL_STORE, 0 } }));  // Alice's alone now
+	const auto alices = Told(*f.fake, 1);
+	REQUIRE(alices);
+	CHECK((alices->factions == std::vector<FactionRank>{ { GENERAL_STORE, 0 } }));
+
+	// A gap asked again changes nothing.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0, Protocol::WorldRequest::kGap }));
+	CHECK(Count(Received(f, 2), MT::kNpcIdentities) == 0);
+	CHECK(!Told(*f.fake, 1, 300ms));
+}
+
+TEST("npc roll: a runner's roll of an NPC another game told vendor factions of is kept and told")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(bob);
+	f.fake->Deliver(2, Claim(BLOATFLY));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+	NpcIdentity store{ .playerId = 0, .refId = BLOATFLY };
+	NpcRoll::SetVendorFactions(store, { { GENERAL_STORE, 0 } });
+	f.fake->Deliver(1, Report(store));  // Alice's word first
+	REQUIRE(Told(*f.fake, 2));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Report(Rolled(GLOWING, GLOWING)));  // then its runner's roll
+	const auto told = Told(*f.fake, 1);
+	REQUIRE(told);
+	CHECK(told->playerId == bob->playerId);
+	CHECK(told->mask != 0);
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	const auto rolls = WelcomeRolls(f, 3);
+	REQUIRE(rolls.contains(BLOATFLY));
+	CHECK(rolls.at(BLOATFLY).mask != 0);  // the session keeps the roll
+}

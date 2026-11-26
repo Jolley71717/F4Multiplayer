@@ -90,6 +90,18 @@ namespace NpcRoll
 		a_identity.factions = std::move(a_factions);
 	}
 
+	// The vendor factions in a report of a plugin's NPC (an empty list says it has none now).
+	inline void SetVendorFactions(Protocol::NpcIdentity& a_identity, std::vector<FactionRank> a_factions)
+	{
+		a_identity.flags = static_cast<std::uint8_t>(a_identity.flags & ~Protocol::NpcIdentity::kFactions);
+		a_identity.flags |= Protocol::NpcIdentity::kVendorFactions;
+		if (a_factions.size() > Protocol::MAX_IDENTITY_FACTIONS) {
+			a_factions.resize(Protocol::MAX_IDENTITY_FACTIONS);
+			a_identity.flags |= Protocol::NpcIdentity::kFactionsCut;
+		}
+		a_identity.factions = std::move(a_factions);
+	}
+
 	// The slots a roll filled.
 	[[nodiscard]] constexpr std::uint16_t MaskOf(const Templates& a_templates)
 	{
@@ -186,6 +198,10 @@ namespace NpcRoll
 		std::uint16_t            level = 0;
 		bool                     copy = false;      // our copy of a friend's spawn: its factions are ours to set
 		std::vector<FactionRank> factions;          // Effective
+		// A plugin's NPC (a settler): the vendor factions it is in now (Rolls::VendorFactionsIn), and the ones we put it
+		// in from a friend's report, which a later report may take it out of again. Never one it was in already.
+		std::vector<FactionRank>   vendor;
+		std::vector<std::uint32_t> vendorGiven;
 	};
 
 	enum class Roll
@@ -205,6 +221,7 @@ namespace NpcRoll
 		std::optional<std::uint16_t> level;            // and give it their level
 		std::vector<FactionRank>   add;                // factions to put ours in (or at another rank)
 		std::vector<std::uint32_t> remove;             // and to take it out of
+		bool                       vendor = false;     // add and remove are a plugin NPC's vendor factions (Apply keeps what it gave)
 
 		[[nodiscard]] bool Any() const { return templates || level || !add.empty() || !remove.empty(); }
 	};
@@ -262,6 +279,28 @@ namespace NpcRoll
 				for (const auto& entry : a_ours.factions) {
 					if (Shared(entry.faction) && std::ranges::find(a_theirs.factions, entry.faction, &FactionRank::faction) == a_theirs.factions.end()) {
 						plan.remove.push_back(entry.faction);
+					}
+				}
+			}
+		}
+		// A plugin's NPC (a settler) in a store: its owner's game put it in the store's vendor faction, which no other game's
+		// scripts do, so its barter menu showed the settler's own things. Ours is put in what theirs is in (at their rank),
+		// and taken out of what we put it in once theirs no longer is. Whatever vendor faction our own game gave it stays.
+		if (!a_ours.copy && (a_theirs.flags & Protocol::NpcIdentity::kVendorFactions)) {
+			plan.vendor = true;
+			for (const auto& entry : a_theirs.factions) {
+				if (!Shared(entry.faction) || entry.rank < 0) {
+					continue;
+				}
+				const auto it = std::ranges::find(a_ours.vendor, entry.faction, &FactionRank::faction);
+				if (it == a_ours.vendor.end() || it->rank != entry.rank) {
+					plan.add.push_back(entry);
+				}
+			}
+			if (!(a_theirs.flags & Protocol::NpcIdentity::kFactionsCut)) {
+				for (const auto given : a_ours.vendorGiven) {
+					if (std::ranges::find(a_theirs.factions, given, &FactionRank::faction) == a_theirs.factions.end()) {
+						plan.remove.push_back(given);
 					}
 				}
 			}
@@ -336,6 +375,42 @@ namespace NpcRoll
 
 	private:
 		std::unordered_map<std::uint32_t, std::optional<Protocol::NpcIdentity>> sent;
+	};
+
+	// The owner's, for a plugin NPC's vendor factions (protocol 86): what our game's own scripts put each NPC in, as last told, so
+	// a change is told once, and so is "none now" for one that had some told. Both players tell it, whoever runs the NPC: the
+	// server tells each the union of what the others say.
+	class VendorSent
+	{
+	public:
+		// Whether a_factions (sorted by faction) is news for a_id, and from now on what was told.
+		bool Changed(std::uint32_t a_id, const std::vector<FactionRank>& a_factions)
+		{
+			const auto it = told.find(a_id);
+			if (it == told.end()) {
+				if (a_factions.empty()) {
+					return false;
+				}
+				told.emplace(a_id, a_factions);
+				return true;
+			}
+			if (it->second == a_factions) {
+				return false;
+			}
+			if (a_factions.empty()) {
+				told.erase(it);
+			} else {
+				it->second = a_factions;
+			}
+			return true;
+		}
+
+		void Forget(std::uint32_t a_id) { told.erase(a_id); }
+		void Clear() { told.clear(); }
+		[[nodiscard]] std::size_t Size() const { return told.size(); }
+
+	private:
+		std::unordered_map<std::uint32_t, std::vector<FactionRank>> told;
 	};
 
 	// The others': each friend's report, and which of our copies are still to be checked against it. Making a roll
