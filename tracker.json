@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T02:48:05+00:00",
+ "updated": "2026-11-26T02:50:34+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1391,7 +1391,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Being worked"
+   "note": "Being worked: reproducing on the rig"
   },
   {
    "id": "baor",
