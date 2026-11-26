@@ -22,7 +22,8 @@ T_PA_MOVING=${T_PA_MOVING:-200}; T_PA_SETTLED=${T_PA_SETTLED:-40}
 # the limits below (p50 1.0 ms, p99 4.0 ms) are about twice the baseline's worst p99 and several times its p50: loose on purpose,
 # they catch a real regression and not rig noise. Compare against the baseline in docs/PERF.md for anything finer.
 T_PERF_P50=${T_PERF_P50:-1.0}; T_PERF_P99=${T_PERF_P99:-4.0}
-T_WS_GROWTH_MB=${T_WS_GROWTH_MB:-1000} # working set growth between two warm points of a run (a warning, not a failure: no baseline yet)
+T_WS_GROWTH_MB=${T_WS_GROWTH_MB:-1000} # the host's working set growth between two warm points of a run (a warning, not a failure: no baseline yet)
+T_VM_PRIV_GROWTH_MB=${T_VM_PRIV_GROWTH_MB:-500} # the VM game's private bytes growth over the same span (a 40-minute churn, 2026-11-25: +56 MB after the first 5 minutes)
 
 # ---- small readers ---------------------------------------------------------------------------------------------
 # actor_hp <who> <ref> -> "dead=false hp=57" (empty when the game has no such actor)
@@ -79,10 +80,13 @@ crash_verdict() {  # crash_verdict <label>: no new crash log on either machine, 
 	elif [ -n "$vx" ]; then rig_fault "$vsig" "$1 crash logs (vm)" "can't tell whether a crash log is new: $vx"
 	else pass "$1 crash logs (vm)" "none new$vs ($(crash_count "$v") on disk)"; fi
 }
-# working_set <who>: the game's working set in MB (empty if it can't be read)
+# working_set <who>: what the check of the game's memory reads, in MB (empty if it can't be read). The host's is its working set
+# (flat at 1.9 to 2.1 GB through a 40-minute churn; its private bytes swing 6 to 9 GB with the graphics driver). The VM's is its
+# PRIVATE BYTES: Windows trims the VM game's working set (1.6 GB to 320 MB and back within minutes, 2026-11-25) while its
+# private bytes stay level, so a mark taken in a trimmed moment read as a leak (+1237 MB in 0.22.2's gate, with private bytes +10 MB).
 working_set() {
 	if [ "$1" = host ]; then powershell -NoProfile -Command "[int]((Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).WorkingSet64/1MB)" 2>/dev/null | tr -d '\r'
-	else vmssh '[int]((Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).WorkingSet64/1MB)'; fi
+	else vmssh '[int]((Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).PrivateMemorySize64/1MB)'; fi
 }
 dll_md5() {  # dll_md5 <who>
 	if [ "$1" = host ]; then md5sum "$HOST_GAME/Data/F4SE/Plugins/F4Multiplayer.dll" 2>/dev/null | cut -c1-32
@@ -200,7 +204,7 @@ step_preflight() {
 	dll_preflight
 	WS0_HOST=$(working_set host); WS0_VM=$(working_set vm)
 	host 'perf reset' >/dev/null; vm 'perf reset' >/dev/null
-	pass "baselines taken" "crash logs host $(crash_count "$C_HOST0") vm $(crash_count "$C_VM0"); working set host ${WS0_HOST:-?} MB vm ${WS0_VM:-?} MB"
+	pass "baselines taken" "crash logs host $(crash_count "$C_HOST0") vm $(crash_count "$C_VM0"); memory: host working set ${WS0_HOST:-?} MB, vm private bytes ${WS0_VM:-?} MB"
 }
 
 # ---- movement -----------------------------------------------------------------------------------------------------
@@ -2816,7 +2820,7 @@ step_final() {
 	local g v
 	crash_verdict "run"
 	for g in host vm; do log_check $g "$g"; log_privacy $g "$g"; done
-	if [ -n "$WSB_VM" ]; then v=$(working_set vm); [ -n "$v" ] && warn_gt "working set growth (vm, since the rejoin settled)" "$((v - WSB_VM))" "$T_WS_GROWTH_MB" MB; echo "working set: vm $WSB_VM -> ${v:-?} MB (rejoin settled -> end)"; fi
+	if [ -n "$WSB_VM" ]; then v=$(working_set vm); [ -n "$v" ] && warn_gt "memory growth (vm private bytes, since the rejoin settled)" "$((v - WSB_VM))" "$T_VM_PRIV_GROWTH_MB" MB; echo "memory: vm private bytes $WSB_VM -> ${v:-?} MB (rejoin settled -> end)"; fi
 }
 
 # ---- the cleanup at the start of a run: a known-clean save ----------------------------------------------------------------------------
@@ -2833,9 +2837,9 @@ smoke_cleanup_start() {
 ws_mark() { WSA_HOST=$(working_set host); WSA_VM=$(working_set vm); }
 ws_check() {
 	local h v; h=$(working_set host); v=$(working_set vm)
-	echo "working set: host ${WSA_HOST:-?} -> ${h:-?} MB, vm ${WSA_VM:-?} -> ${v:-?} MB (after combat -> before the reconnect)"
+	echo "memory: host working set ${WSA_HOST:-?} -> ${h:-?} MB, vm private bytes ${WSA_VM:-?} -> ${v:-?} MB (after combat -> before the reconnect)"
 	if [ -n "$WSA_HOST" ] && [ -n "$h" ]; then warn_gt "working set growth (host, combat to churn end)" "$((h - WSA_HOST))" "$T_WS_GROWTH_MB" MB; fi
-	if [ -n "$WSA_VM" ] && [ -n "$v" ]; then warn_gt "working set growth (vm, combat to churn end)" "$((v - WSA_VM))" "$T_WS_GROWTH_MB" MB; fi
+	if [ -n "$WSA_VM" ] && [ -n "$v" ]; then warn_gt "memory growth (vm private bytes, combat to churn end)" "$((v - WSA_VM))" "$T_VM_PRIV_GROWTH_MB" MB; fi
 }
 
 # ---- a story-manager radiant shared by its run: Out of the Fire (DN121) and Troubled Waters (DN151) ----------------------------------------
