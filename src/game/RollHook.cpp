@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "SessionLevel.h"
 #include "game/NpcRoll.h"
+#include "game/LeveledEntries.h"
 #include "game/NpcSync.h"
 #include "game/RollPairing.h"
 #include "game/Rolls.h"
@@ -58,7 +59,6 @@ namespace RollHook
 		constexpr std::size_t ZONE_MIN = 0x31, ZONE_FLAGS = 0x32, ZONE_MAX = 0x33;
 		constexpr std::uint8_t ZONE_MATCH_BELOW_MIN = 1 << 1;
 		constexpr std::uint32_t EACH_SLOT_FLAG = 1u << 9;  // ACTOR_BASE_DATA: each slot rolls its list on its own
-		constexpr std::uint8_t  LIST_ALL_LEVELS = 1 << 0;  // TESLeveledList::llFlags: from all levels up to the player's
 		constexpr std::uint32_t DELETED_FLAG = 1u << 5;    // TESForm::formFlags
 
 		constexpr std::size_t PREWRITE_PER_FRAME = 8;
@@ -279,16 +279,15 @@ namespace RollHook
 			}
 			if (const auto list = form->As<RE::TESLevCharacter>()) {
 				out.kind = SharedRoll::Form::Kind::kList;
-				out.listFlags = (list->llFlags & LIST_ALL_LEVELS) ? SharedRoll::ALL_LEVELS : 0;
-				for (std::int8_t i = 0; list->leveledLists && i < list->baseListCount; ++i) {
-					const auto& entry = list->leveledLists[i];
+				out.listFlags = list->llFlags.any(RE::TESLeveledList::Flag::kCalculateFromAllLevels) ? SharedRoll::ALL_LEVELS : 0;
+				LeveledEntries::Each(list->leveledLists, list->baseListCount, [&](const auto& entry) {
 					out.entries.push_back({ entry.form ? entry.form->GetFormID() : 0, entry.level });
-				}
-				for (std::int8_t i = 0; list->scriptAddedLists && i < list->scriptListCount; ++i) {
-					if (const auto entry = list->scriptAddedLists[i]) {
+				});
+				LeveledEntries::Each(list->scriptAddedLists, list->scriptListCount, [&](const auto entry) {
+					if (entry) {
 						out.entries.push_back({ entry->form ? entry->form->GetFormID() : 0, entry->level });
 					}
-				}
+				});
 				return out;
 			}
 			return out;  // kOther

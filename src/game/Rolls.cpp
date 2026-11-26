@@ -1,4 +1,5 @@
 #include "game/Rolls.h"
+#include "game/LeveledEntries.h"
 
 #include <array>
 #include <format>
@@ -116,14 +117,14 @@ namespace Rolls
 				return node;
 			}
 			if (const auto list = form->As<RE::TESLevCharacter>()) {
-				for (std::int8_t i = 0; list->leveledLists && i < list->baseListCount; ++i) {
-					add(list->leveledLists[i].form, false);
-				}
-				for (std::int8_t i = 0; list->scriptAddedLists && i < list->scriptListCount; ++i) {
-					if (list->scriptAddedLists[i]) {
-						add(list->scriptAddedLists[i]->form, false);
+				LeveledEntries::Each(list->leveledLists, list->baseListCount, [&](const auto& entry) {
+					add(entry.form, false);
+				});
+				LeveledEntries::Each(list->scriptAddedLists, list->scriptListCount, [&](const auto entry) {
+					if (entry) {
+						add(entry->form, false);
 					}
-				}
+				});
 				return node;
 			}
 			return std::nullopt;
