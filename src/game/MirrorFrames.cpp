@@ -66,7 +66,7 @@ namespace MirrorFrames
 		{
 			const auto process = a_actor->currentProcess;
 			return Puppets::IsRegistered(a_actor) && !Puppets::IsPuppet(a_actor) && a_actor->Get3D() && !a_actor->IsDead(false) && !a_actor->IsDisabled() && process &&
-			       process->processLevel <= 1 && a_actor->GetParentCell();
+			       process->processLevel <= 1 && a_actor->GetParentCell() && Equipment::ReadyForItems(a_actor, "power armor frame");
 		}
 
 		// The copy placed for it: by its handle, or the frame the actor is in when that is it under the same ID (a handle that

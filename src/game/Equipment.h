@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <string_view>
 
 #include "Protocol.h"
 #include "game/FrameUse.h"
@@ -13,6 +14,15 @@ namespace Equipment
 	// reference (OwnGear::Judge): never to the local player, whose gear is theirs alone. Every dressing below asks first,
 	// and so do the shared loot and pickups (WorldSync). A refusal is counted and logged.
 	[[nodiscard]] bool MayChange(RE::TESObjectREFR* a_ref, OwnGear::Change a_change);
+
+	// Whether the actor is ready for item work (ItemWork.h): its 3D loaded and unchanged for a moment, its AI process made, its
+	// cell attached. Every change to what an actor carries or wears (Apply, Wear, WearOnStandIn, WearInArmor, PutOnForPick,
+	// HoldThrowable) asks it first and does nothing when not: the engine queues work for the actor on each item change and
+	// runs it a frame or more later, and a 3D that was not there, or was replaced, crashed a joining game in that queue.
+	// A deferral is logged once for each stretch of waiting (a_what names the change). Whoever asked tries again a frame later.
+	// Main thread.
+	[[nodiscard]] bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what);
+	[[nodiscard]] std::uint32_t ItemWorkDeferred();  // deferrals this session
 
 	// MayChange in two steps, for a caller that may wait on a refusal rather than take it (a friend's pickup of an item
 	// in no cell, OwnGear::TryAgain): the verdict, read from the engine and neither counted nor logged; then Count, which
