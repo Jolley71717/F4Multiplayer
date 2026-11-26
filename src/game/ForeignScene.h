@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
+#include <unordered_map>
 
 // A scene of a shared quest that our player is in, played by NPCs another game runs, is not ours to play. Kept free of the
 // game so it can be tested (tests/ForeignSceneTests.cpp).
@@ -50,6 +52,35 @@ namespace ForeignScene
 		kKeep,  // not foreign: ours, or none
 		kWait,  // foreign, not yet for GRACE (or a stop waiting for its retry, or given up)
 		kStop,  // stop it now
+	};
+
+	// Stopping a scene ends it, and its end (or a phase's end) fragment can set a stage of its quest. That stage is not this
+	// game's progress: the game that plays the scene reports its own, when its scene gets there, and a stage reported from
+	// here would move the quest on while the scene still plays there. So for HOLD_BACK after a stop, a stage of the scene's
+	// quest set here is not reported, unless the other game's report of the quest came after the stop (the stage was theirs).
+	inline constexpr auto HOLD_BACK = std::chrono::seconds(10);
+
+	class Guard
+	{
+	public:
+		// A scene of a_quest was stopped at a_now.
+		void Stopped(std::uint32_t a_quest, Clock::time_point a_now) { stops.insert_or_assign(a_quest, a_now); }
+
+		// Whether a stage of a_quest set here is held back from the report at a_now. a_remote: when a stage of that quest last
+		// came from another game (none: never).
+		[[nodiscard]] bool Holds(std::uint32_t a_quest, Clock::time_point a_now, std::optional<Clock::time_point> a_remote = {}) const
+		{
+			const auto it = stops.find(a_quest);
+			if (it == stops.end() || a_now - it->second >= HOLD_BACK) {
+				return false;
+			}
+			return !a_remote || *a_remote < it->second;
+		}
+
+		void Clear() { stops.clear(); }
+
+	private:
+		std::unordered_map<std::uint32_t, Clock::time_point> stops;
 	};
 
 	class Watch

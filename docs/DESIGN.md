@@ -3440,6 +3440,9 @@ scene's of ours), with no conversation of ours open, is stopped here (`Scene.Sto
 3 times) and its NPCs are not claimed meanwhile. The game that runs the NPCs plays it. Dialogue::Describe's `foreignScenes=`
 counts the stops, and the log says "Dialogue: stopping scene". Not yet seen: a scene whose NPC our game runs because a friendly
 hand-off gave it to us (FriendlyHandOff) and whose conditions hold here too.
+Stopping a scene ends it, and its end or a phase's end fragment can set a stage of its quest, which would be reported as this
+game's progress while the other game's scene still plays (`ForeignScene::Guard`, `Dialogue::StageHeldBack`): for 10 s after a stop,
+a stage of that scene's quest set here is not reported (logged each), unless the other game's own stage of the quest came after the stop.
 The talk partner (`NpcSync::FindPartner`) is the engine's conversation speaker when the dialogue menu is open, the NPC the player
 activated or the nearest one only as a fallback: a forced greeting by an NPC with another standing nearer no longer claims the
 nearer one.

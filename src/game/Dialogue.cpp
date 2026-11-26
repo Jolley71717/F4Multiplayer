@@ -57,6 +57,7 @@ namespace Dialogue
 		// The scene our player is in when another game's NPCs play it (ForeignScene.h): looked at a few times a second while
 		// there is one, stopped here once it has been for the grace, and its NPCs not claimed (Holds).
 		ForeignScene::Watch foreign;
+		ForeignScene::Guard guard;
 		ForeignScene::Facts sceneFacts;
 		Clock::time_point   sceneLooked{};
 		constexpr auto      SCENE_LOOK = std::chrono::milliseconds(100);
@@ -125,6 +126,9 @@ namespace Dialogue
 			++foreignStopped;
 			REX::INFO("Dialogue: stopping scene {:08X} of quest {:08X} here: it holds our player, and the NPCs in it are run by another game, whose player plays it (stop {} of {})",
 				scene->GetFormID(), scene->parentQuest ? scene->parentQuest->GetFormID() : 0, foreign.Stops(), ForeignScene::MAX_TRIES);
+			if (scene->parentQuest) {
+				guard.Stopped(scene->parentQuest->GetFormID(), now);
+			}
 			Papyrus::CallMethod(scene, "Scene", "Stop", true);
 		}
 
@@ -205,6 +209,11 @@ namespace Dialogue
 		}
 		// Not a scene another game's NPCs play, which is stopped here and whose NPCs stay theirs (ForeignScene.h).
 		return !ForeignScene::IsForeign(SceneNow(Clock::now()));
+	}
+
+	bool StageHeldBack(std::uint32_t a_quest, std::optional<std::chrono::steady_clock::time_point> a_remote)
+	{
+		return guard.Holds(a_quest, Clock::now(), a_remote);
 	}
 
 	void Removed(std::uint32_t a_id, RE::TESObjectREFR* a_ref)

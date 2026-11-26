@@ -19,6 +19,7 @@
 #include "game/MenuMessages.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
+#include "game/Dialogue.h"
 #include "game/PlacedScenes.h"
 #include "game/StageNeedsRef.h"
 #include "game/Papyrus.h"
@@ -3701,6 +3702,11 @@ namespace QuestSync
 				}
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
+				}
+				// A scene of the quest was stopped here lately (a friend's game plays it): a stage its end set is not progress.
+				if (Dialogue::StageHeldBack(id, remote != remoteStageAt.end() ? std::optional{ remote->second } : std::nullopt)) {
+					REX::INFO("QuestSync: not reporting {:08X} stage {}: set here as a scene of the quest was stopped (another game plays that scene)", id, stage);
+					continue;
 				}
 				if (OthersMemory(quest, stage)) {
 					continue;  // Kellogg's memory's, whose player isn't this one: their game sets it on their walk

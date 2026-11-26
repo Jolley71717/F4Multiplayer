@@ -95,3 +95,35 @@ TEST("foreign scene: another scene taking the place of the watched one starts th
 	CHECK(watch.Update(Theirs(OTHER), T0 + 2s) == Verdict::kWait);
 	CHECK(watch.Update(Theirs(OTHER), T0 + 1s + ForeignScene::GRACE) == Verdict::kStop);
 }
+
+TEST("foreign scene guard: a stage of the quest set here after a stop is held back for the window, then reported")
+{
+	ForeignScene::Guard guard;
+	CHECK(!guard.Holds(0x0001E64E, T0));  // nothing stopped
+	guard.Stopped(0x0001E64E, T0);
+	CHECK(guard.Holds(0x0001E64E, T0));
+	CHECK(guard.Holds(0x0001E64E, T0 + 9s));
+	CHECK(!guard.Holds(0x0001E64E, T0 + ForeignScene::HOLD_BACK));
+	CHECK(!guard.Holds(0x0001E64E, T0 + 30s));
+}
+
+TEST("foreign scene guard: only the stopped scene's quest is held, and a second stop renews the window")
+{
+	ForeignScene::Guard guard;
+	guard.Stopped(0x0001E64E, T0);
+	CHECK(!guard.Holds(0x000229E6, T0 + 1s));
+	guard.Stopped(0x0001E64E, T0 + 8s);
+	CHECK(guard.Holds(0x0001E64E, T0 + 15s));
+	CHECK(!guard.Holds(0x0001E64E, T0 + 19s));
+}
+
+TEST("foreign scene guard: the other game's stage of the quest after the stop ends the hold, one before it does not")
+{
+	ForeignScene::Guard guard;
+	guard.Stopped(0x0001E64E, T0 + 5s);
+	CHECK(guard.Holds(0x0001E64E, T0 + 6s, T0 + 2s));  // theirs came before the stop
+	CHECK(guard.Holds(0x0001E64E, T0 + 6s, std::nullopt));
+	CHECK(!guard.Holds(0x0001E64E, T0 + 7s, T0 + 6s));  // theirs came after: what is set here may be theirs
+	guard.Clear();
+	CHECK(!guard.Holds(0x0001E64E, T0 + 6s));
+}
