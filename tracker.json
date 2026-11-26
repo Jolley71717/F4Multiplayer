@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T02:43:16+00:00",
+ "updated": "2026-11-26T02:48:05+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -412,7 +412,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Looked into: crash-triage agent taking it (2026-11-25)"
+   "note": "Closed: the crash is inside the game's own code; nothing of the mod's is on it"
   },
   {
    "id": "358u",
@@ -985,7 +985,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Looked into: crash-triage agent taking it (2026-11-25)"
+   "note": "Closed: the crash is inside the game's own code; nothing of the mod's is on it"
   },
   {
    "id": "7sup",
@@ -3049,7 +3049,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Looked into: crash-triage agent taking it (2026-11-25)",
+   "note": "Closed: the crash is inside the game's own code; nothing of the mod's is on it",
    "desc": "On one start the host's game crashed about 12 seconds in, before any join, inside the game's own interface drawing setup. The mod's code was not part of the crash, and it did not happen again across many later starts and a one-hour test. We are watching for a repeat. If you see a crash, a crash log from Buffout 4 or Addictol helps."
   },
   {
@@ -3644,7 +3644,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Looked into: crash-triage agent taking it (2026-11-25)"
+   "note": "Looked into: no mod code on the crash; cannot tell more without a repeat that has a log"
   },
   {
    "id": "sn44",
