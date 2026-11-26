@@ -1761,6 +1761,13 @@ namespace WorkshopSync
 			return workshop->data.location.GetDistance(at) <= BUILD_REACH;
 		}
 
+		// Whether a container base holds things of its own (a bureau, a locker with loot): a new reference of it is made full.
+		bool ComesStocked(const RE::TESBoundObject* a_base)
+		{
+			const auto container = a_base ? a_base->As<RE::TESObjectCONT>() : nullptr;
+			return container && container->numContainerObjects != 0;
+		}
+
 		// Whether a copy of the piece may stand here (see WorkshopApply::Placeable).
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item)
 		{
@@ -1780,7 +1787,7 @@ namespace WorkshopSync
 			}
 			// A container the workshop builds starts empty; one whose base holds things of its own (a bureau) would
 			// be loot, ours on opening the copy (and again on every rescue from it): its copy is emptied (Empty).
-			if (const auto container = base->As<RE::TESObjectCONT>(); container && container->numContainerObjects != 0) {
+			if (ComesStocked(base)) {
 				if (stockedBases.insert(base->GetFormID()).second) {
 					REX::INFO("WorkshopSync: container {:08X} comes with things in it: its copies are emptied", base->GetFormID());
 				}
@@ -7749,6 +7756,14 @@ namespace WorkshopSync
 		if (!made || !made->ref.get()) {
 			Answer(a_request, Protocol::WorkshopAnswer::Why::kFailed, 0);
 			return;
+		}
+		// The workshop builds a container empty. One whose base holds things of its own is made full by Create, and would be
+		// loot on the host's own piece (the friend's adopted copy of it is empty: it is the friend's own build), as the copies
+		// of such a base are emptied the moment they are made (World::Empty).
+		if (const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_request.base); ComesStocked(base)) {
+			RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", made->ref.get()->GetFormID()).c_str());
+			REX::INFO("WorkshopSync: {:08X} (base {:08X}) built for player {} comes with things in it: emptied as the workshop builds it", made->ref.get()->GetFormID(), a_request.base,
+				a_request.playerId);
 		}
 		making.push_back({ a_request, made->ref, Clock::now() });
 	}
