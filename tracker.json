@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T02:50:34+00:00",
+ "updated": "2026-11-26T02:58:07+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3624,11 +3624,11 @@
   },
   {
    "id": "sgas",
-   "title": "See every hit before other plugins' event sinks: hook the hit event's send, read-only",
+   "title": "Event tap: see every hit (and other events) before other plugins' sinks can stop them, read-only",
    "kind": "feature",
    "priority": 2,
    "stage": 0,
-   "note": "queued, 1.1"
+   "note": "queued, 1.0"
   },
   {
    "id": "sh2c",
