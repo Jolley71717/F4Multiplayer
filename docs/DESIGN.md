@@ -5925,7 +5925,10 @@ which faction an NPC trades under and keeps the answer (`Actor::vendorFaction` a
 kept showing the old chest: the cache is emptied with each change (`Rolls::ForgetVendorCache`). What a game put NPCs in is taken
 out as the session ends (`Rolls::UndoVendorFactions`) and, for a save made inside the session, which keeps it on the settler
 (the faction is written into the NPC), after that save is loaded: the save holds a record of it (`VNDR`, `Rolls::SaveVendorRecord`,
-`RemoveSavedVendorFactions`). Every store type is the same list (one faction each: general, clothing, weapons, armor, drink,
+`RemoveSavedVendorFactions`). A game that loads a save inside the session forgets the others' word, and its own was of the
+world it threw away: at its world request after the load the server drops what that game said and tells it the union again
+(`forgetVendorWord`), and its game tells the loaded world's afresh. A runner's roll of an NPC takes the place of a vendor list
+kept for it (a leveled plugin vendor): the roll's rules hold for it. Every store type is the same list (one faction each: general, clothing, weapons, armor, drink,
 clinic, bar; the three levels of a store share their type's faction, so a store's level is not in the faction or its rank and is
 the stock its host's scripts put in their own copy of the chest, never told: stock is each game's own). Assignment,
 reassignment and unassignment are each a change of the owning game's list, and both directions are the same code. Not covered:
