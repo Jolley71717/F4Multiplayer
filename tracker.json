@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T00:03:33+00:00",
+ "updated": "2026-11-26T00:05:58+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1158,7 +1158,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Taken on 2026-11-21"
+   "note": "Being looked into"
   },
   {
    "id": "96bz",
@@ -1397,8 +1397,8 @@
    "title": "VM game's working set grows 1237 MB from the first combat to the end of the churn (soft limit 1000; was +1033 in 0.22.1's soak)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Being looked into"
   },
   {
    "id": "bd5v",
@@ -3337,8 +3337,8 @@
    "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus report)",
    "kind": "bug",
    "priority": 1,
-   "stage": 4,
-   "note": "Check on 0.22.2: not reproduced (40 fast travels, 80 saves, 104+ powered pieces at Sanctuary); left open for you to close",
+   "stage": 7,
+   "note": "Not seen on 0.22.2: 40 trips in and out of a built-up Sanctuary with 80 saves, no crash",
    "pr": 291
   },
   {
