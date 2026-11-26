@@ -262,10 +262,19 @@ namespace NpcSync
 		std::optional<Protocol::ActorState> FrameState(std::uint32_t a_id, Clock::time_point a_now);
 		void                                 ApplyFrameState(RE::TESObjectREFR* a_frame, const Protocol::ActorState& a_state, std::uint32_t a_owner, Clock::time_point a_now);
 
-		// Who the player is talking to: the NPC they activated, else the nearest NPC (one who
-		// started the conversation). (MenuTopicManager::speaker isn't reliable in this version.)
+		// Who the player is talking to: the speaker of the conversation the engine has open (an NPC that started it, a
+		// forced greeting or a scene's, is the speaker too), else the NPC they activated, else the nearest NPC.
+		// (MenuTopicManager::speaker was thought unreliable: the library's ID for it is MenuControls', Dialogue::TopicManager
+		// reads the right one and checks it.)
 		std::uint32_t FindPartner(Clock::time_point a_now)
 		{
+			if (const auto topics = Dialogue::TopicManager(); topics && topics->menuOpen) {
+				const auto speaker = topics->speaker.get();
+				const auto id = speaker ? speaker->GetFormID() : 0u;
+				if (id && speaker->As<RE::Actor>() && owners.contains(id) && LoadedActor(id)) {
+					return id;
+				}
+			}
 			if (lastActivated && a_now - lastActivatedAt < ACTIVATION_TO_TALK && LoadedActor(lastActivated)) {
 				return lastActivated;
 			}
