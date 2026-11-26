@@ -248,7 +248,7 @@ namespace Equipment
 		return Count(a_ref, a_change, Judge(a_ref, a_change));
 	}
 
-	bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what)
+	bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what, bool a_waitQuiet)
 	{
 		if (!a_actor) {
 			return false;
@@ -262,7 +262,7 @@ namespace Equipment
 		const auto id = a_actor->GetFormID();
 		auto&      track = itemWork[id];
 		const auto verdict = ItemWork::Check(track, facts, ItemWork::Clock::now());
-		if (verdict == ItemWork::Verdict::kReady) {
+		if (verdict == ItemWork::Verdict::kReady || (!a_waitQuiet && verdict == ItemWork::Verdict::kBusy)) {
 			return true;
 		}
 		++itemWorkDeferred;
@@ -1251,7 +1251,7 @@ namespace Equipment
 		if (!a_actor || !a_actor->Get3D()) {
 			return false;
 		}
-		if (!MayChange(a_actor, Puppets::IsPuppet(a_actor) ? OwnGear::Change::kDressStandIn : OwnGear::Change::kDressCopy) || !ReadyForItems(a_actor, "HoldThrowable")) {
+		if (!MayChange(a_actor, Puppets::IsPuppet(a_actor) ? OwnGear::Change::kDressStandIn : OwnGear::Change::kDressCopy) || !ReadyForItems(a_actor, "HoldThrowable", false)) {  // a throw is replayed once: not held back by the dressing just before it
 			return false;
 		}
 		for (const auto item : a_items) {

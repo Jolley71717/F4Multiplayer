@@ -20,8 +20,9 @@ namespace Equipment
 	// HoldThrowable) asks it first and does nothing when not: the engine queues work for the actor on each item change and
 	// runs it a frame or more later, and a 3D that was not there, or was replaced, crashed a joining game in that queue.
 	// A deferral is logged once for each stretch of waiting (a_what names the change). Whoever asked tries again a frame later.
-	// Main thread.
-	[[nodiscard]] bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what);
+	// a_waitQuiet false: a one-shot change that is never asked again (a replayed throw's grenade) does not wait out the QUIET
+	// after the last item work; only the actor's readiness and its settled 3D. Main thread.
+	[[nodiscard]] bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what, bool a_waitQuiet = true);
 	[[nodiscard]] std::uint32_t ItemWorkDeferred();  // deferrals this session
 
 	// MayChange in two steps, for a caller that may wait on a refusal rather than take it (a friend's pickup of an item
