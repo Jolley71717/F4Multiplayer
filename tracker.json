@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T06:13:25+00:00",
+ "updated": "2026-11-26T06:23:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2355,8 +2355,8 @@
    "title": "Shared workshop: a friend can't move a power piece or anything wired or on the host's grid (generator, lights, switches), their own build included",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
   },
   {
    "id": "ia5v",
@@ -3662,8 +3662,8 @@
    "title": "Shared workshop: a friend can't move a turret (or another built actor) at the host's settlement, their own build included",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
   },
   {
    "id": "sgas",
@@ -3876,8 +3876,8 @@
    "title": "Shared workshop: a friend can't move a piece that something stands on (a floor under walls or furniture), their own build included",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
   },
   {
    "id": "tnl5",
@@ -4334,8 +4334,8 @@
    "title": "Shared workshop: a friend can't scrap or store a wire at the host's settlement, one they strung themselves included",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Taken on for 0.23.0 (friend's moves and wire scraps at the host's settlement)"
   },
   {
    "id": "y1dj",
