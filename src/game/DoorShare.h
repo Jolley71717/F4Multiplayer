@@ -47,6 +47,16 @@ namespace DoorShare
 		QuietScript{ "DefaultBlockFollowerActivation", "keeps companions from being sent to it (on load)" },
 	};
 
+	// A script that does move its door, but only around its own game's player: the door shuts as that player walks in, and
+	// again behind them as they walk out. Each move is one player's doing, in that player's game, so the open state is
+	// shared as a plain door's is, and the others see the door open and shut around their friend. Taking a friend's state
+	// raises at most OnOpen here, never OnActivate: these scripts then wait for their own player to walk in or out, as they
+	// would had that player opened the door, which a friend's game can take. None blocks activation for longer than the
+	// door takes to shut, so nobody is shut in for good.
+	inline constexpr std::array OWN_PLAYER_SCRIPTS{
+		QuietScript{ "PulowskShelterScript", "a Pulowski Preservation Shelter (51 doors): shuts once its game's player is within 55 of it, and behind them once they are 64 out; its light and its voice stay the opener's game's" },
+	};
+
 	// Doors with only such scripts that are still not shared: the story's (docs/script-doors-survey.md, NEVER).
 	struct FileForm
 	{
@@ -64,7 +74,7 @@ namespace DoorShare
 		bool          door = false;       // its base is a door, not an activator, a container or a light
 		std::uint8_t  doorFlags = 0;      // the door's record flags
 		std::uint32_t scripts = 0;        // the scripts bound to it (from its base, or of its own; a plain ObjectReference object is no script)
-		std::uint32_t quietScripts = 0;   // ... of them, ones on QUIET_SCRIPTS
+		std::uint32_t quietScripts = 0;   // ... of them, ones that leave the open state a player's (LeavesOpenShared)
 		bool          listedOut = false;  // it is in NEVER
 	};
 
@@ -74,10 +84,18 @@ namespace DoorShare
 		return ScriptNames::Find(QUIET_SCRIPTS, a_script).has_value();
 	}
 
+	// Whether a door with this script on it still has an open state to share: a quiet script, or one that moves the door
+	// only around its own game's player (OWN_PLAYER_SCRIPTS).
+	constexpr bool LeavesOpenShared(std::string_view a_script)
+	{
+		return IsQuiet(a_script) || ScriptNames::Find(OWN_PLAYER_SCRIPTS, a_script).has_value();
+	}
+
 	// Whether a reference's open state is a player's to share. An activator's open state is always a
 	// script's (an elevator, its car, a gear door, a two-state switch: the security gates among those, run by the
 	// game's standard two-state script, are shared through that script instead, SharedGates); so is a door's
-	// with a script on it other than the quiet ones, and an automatic door's is the game's.
+	// with a script on it other than the quiet ones and the ones that only follow their own player, and an automatic
+	// door's is the game's.
 	constexpr bool SharesOpen(const Facts& a_facts)
 	{
 		return a_facts.door && (a_facts.doorFlags & DOOR_AUTOMATIC) == 0 && a_facts.scripts == a_facts.quietScripts && !a_facts.listedOut;

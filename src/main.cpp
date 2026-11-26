@@ -651,6 +651,7 @@ namespace
 						step("the strays", [] { SaveGuard::BeforeSave(); });
 						step("the frame copies", [] { RemotePlayers::BeforeSave(); });  // after DespawnAll: the copies kept with their wearers are what a load of this save waits on
 						step("the workshops", [] { WorkshopSync::BeforeSave(); });  // no power grid saved names a friend's piece
+						step("the diners", [] { WorldSync::BeforeSave(); });  // no Port-A-Diner is saved with its count of presses held down for a friend's press
 					},
 					"save");
 			} catch (const std::exception& e) {

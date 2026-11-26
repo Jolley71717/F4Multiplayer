@@ -6,6 +6,7 @@
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
 #include "game/DeathReports.h"
+#include "game/DinerShare.h"
 #include "game/DoorShare.h"
 #include "game/EnableParents.h"
 #include "game/EventTap.h"
@@ -246,6 +247,26 @@ namespace WorldSync
 		Clock::time_point                                    applyingSince{};            // since when remote changes could be applied, without a break
 		bool                                                 wasApplying = false;
 		std::uint32_t                                        gatesSet = 0, gateReportsHeld = 0, gatePressesLeft = 0;
+
+		// Port-A-Diners (DinerShare): the presser's dice are the only ones rolled for a pie.
+		struct DinerWork
+		{
+			std::optional<std::int32_t> lever;             // Attempts as we put it for a friend's press, until the script has read it
+			bool                        forcing = false;   // a friend's win is being made through the script (ForcePieSuccess is on)
+			bool                        forceWas = false;  // ... what ForcePieSuccess was before
+			Clock::duration             ran{};             // how long our game has run with it on (DinerShare::Ran)
+		};
+		struct DinerPress
+		{
+			std::uint32_t     player = 0;
+			Clock::time_point at{};
+		};
+		std::unordered_map<std::uint32_t, std::pair<std::uint32_t, bool>> diners;  // per reference looked at: its base, and whether it is a Port-A-Diner
+		std::unordered_map<std::uint32_t, DinerWork>  dinerWork;     // diners with a lever or a forced win on
+		std::unordered_map<std::uint32_t, DinerPress> dinerPresses;  // the last press a friend made at each diner
+		std::unordered_set<std::uint32_t>             dinerWaits;    // diners whose friend's win waits for their script (in pendingRefStates)
+		Clock::time_point                             dinerTick{};   // when the diners at work were last looked at
+		std::uint32_t                                 dinersLost = 0, dinersWon = 0, dinersSet = 0, dinerLeversBack = 0, dinerPressesLeft = 0;
 
 		// Doors only a quest stage opens (ScriptDoors: Vault 114's gear door), and the Prydwen moored at Boston Airport,
 		// which a stage enables: the stage is shared, and set here once its door is loaded (the Prydwen's at once).
@@ -1873,7 +1894,7 @@ namespace WorldSync
 				facts.listedOut = doorRefsOut.contains(a_ref->GetFormID());
 				ForEachScript(a_ref, [&](std::string_view a_name) {
 					++facts.scripts;
-					if (DoorShare::IsQuiet(a_name)) {
+					if (DoorShare::LeavesOpenShared(a_name)) {
 						++facts.quietScripts;
 					} else {
 						others += others.empty() ? "" : ", ";
@@ -1891,7 +1912,7 @@ namespace WorldSync
 					facts.scripts > facts.quietScripts ? std::format("a script on the door ({})", others) :
 														 std::string("itself (an automatic door)"));
 			} else if (shared && facts.scripts > 0 && a_log) {
-				REX::INFO("WorldSync: {:08X} (base {:08X}) has {} quiet script(s); its open state is shared as a plain door's", a_ref->GetFormID(), base ? base->GetFormID() : 0, facts.scripts);
+				REX::INFO("WorldSync: {:08X} (base {:08X}) has {} script(s) that leave it a player's; its open state is shared as a plain door's", a_ref->GetFormID(), base ? base->GetFormID() : 0, facts.scripts);
 			}
 			opensShared.emplace(a_ref->GetFormID(), shared);
 			if (!a_log) {
@@ -2013,6 +2034,253 @@ namespace WorldSync
 			return it != gateLoads.end() ? std::optional{ it->second } : std::nullopt;
 		}
 
+		// A Port-A-Diner's script object, or null (not loaded, or not a diner).
+		RE::BSTSmartPointer<RE::BSScript::Object> DinerObject(RE::TESObjectREFR* a_ref)
+		{
+			return a_ref && !a_ref->IsDeleted() ? Papyrus::BoundObject(a_ref, DinerShare::SCRIPT, false, false) : RE::BSTSmartPointer<RE::BSScript::Object>{};
+		}
+
+		RE::BSScript::Variable* DinerBool(RE::BSScript::Object& a_object, const char* a_name)
+		{
+			const auto variable = a_object.GetProperty(RE::BSFixedString{ a_name });
+			return variable && variable->is<bool>() ? variable : nullptr;
+		}
+
+		RE::BSScript::Variable* DinerTries(RE::BSScript::Object& a_object)
+		{
+			const auto variable = a_object.GetProperty(RE::BSFixedString{ DinerShare::TRIES });
+			return variable && variable->is<std::int32_t>() ? variable : nullptr;
+		}
+
+		// Whether a loaded reference is a Port-A-Diner (DinerShare): an activator the diner's script is bound to. Worked
+		// out once per reference, while it is loaded; false, and asked again later, while it isn't. A lever a save
+		// caught on its count (DinerShare::IsLevered) is taken off when the diner is first seen.
+		bool IsDiner(RE::TESObjectREFR* a_ref)
+		{
+			if (!a_ref) {
+				return false;
+			}
+			// (By its base too: a reference made in play can come back under its id as something else.)
+			const auto base = a_ref->GetObjectReference();
+			const auto baseId = base ? base->GetFormID() : 0;
+			if (const auto it = diners.find(a_ref->GetFormID()); it != diners.end() && it->second.first == baseId) {
+				return it->second.second;
+			}
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kACTI)) {
+				diners[a_ref->GetFormID()] = { baseId, false };
+				return false;
+			}
+			const auto game = RE::GameVM::GetSingleton();
+			if (!a_ref->Get3D() || a_ref->IsDeleted() || !game || !game->GetVM()) {
+				return false;
+			}
+			const auto object = DinerObject(a_ref);
+			const bool diner = object && DinerBool(*object, DinerShare::WON) && DinerTries(*object);
+			if (diner) {
+				const auto tries = DinerTries(*object);
+				const auto count = RE::BSScript::get<std::int32_t>(*tries);
+				if (DinerShare::IsLevered(count) && !dinerWork.contains(a_ref->GetFormID())) {
+					*tries = DinerShare::Restored(count);
+					++dinerLeversBack;
+					REX::WARN("WorldSync: Port-A-Diner {:08X} had its count of presses held down (a save made as a friend pressed it); put back at {}", a_ref->GetFormID(), DinerShare::Restored(count));
+				}
+				REX::INFO("WorldSync: {:08X} (base {:08X}) is a Port-A-Diner; whether its pie was won is shared, and a friend's press rolls no dice here", a_ref->GetFormID(), baseId);
+			}
+			diners[a_ref->GetFormID()] = { baseId, diner };
+			return diner;
+		}
+
+		// What a diner's script says of it, or nullopt if there is no script object to read.
+		std::optional<DinerShare::Script> ReadDiner(RE::BSScript::Object* a_object)
+		{
+			const auto won = a_object ? DinerBool(*a_object, DinerShare::WON) : nullptr;
+			if (!won) {
+				return std::nullopt;
+			}
+			DinerShare::Script script;
+			script.won = RE::BSScript::get<bool>(*won);
+			const auto current = a_object->currentState.c_str();
+			script.busy = current && _stricmp(current, DinerShare::BUSY) == 0;
+			return script;
+		}
+
+		// A friend's press at a diner (DinerShare::OnPress), before their stand-in makes it: false if it isn't to be
+		// made here. At a diner not won here the script's count is levered so that the press cannot win (TickDiners
+		// puts it back once the script has read it).
+		bool PressDiner(RE::TESObjectREFR* a_ref)
+		{
+			const auto id = a_ref->GetFormID();
+			const auto object = DinerObject(a_ref);
+			const auto here = ReadDiner(object.get());
+			if (!here) {
+				return false;
+			}
+			switch (DinerShare::OnPress(*here, dinerWork.contains(id) || GameStop::Now())) {
+			case DinerShare::Press::kNothing:
+				return false;
+			case DinerShare::Press::kReplay:
+				return true;
+			case DinerShare::Press::kLose:
+				break;
+			}
+			const auto tries = DinerTries(*object);
+			const auto lever = tries ? DinerShare::Lever(RE::BSScript::get<std::int32_t>(*tries)) : std::nullopt;
+			if (!lever) {
+				return false;  // not a count we can lever: the press isn't made, rather than rolled here
+			}
+			*tries = *lever;
+			auto& work = dinerWork[id];
+			work.lever = *lever;
+			work.ran = {};
+			++dinersLost;
+			REX::INFO("WorldSync: a friend's press at Port-A-Diner {:08X} is made with no chance of the pie (their game rolled for it)", id);
+			return true;
+		}
+
+		// A friend's word that a diner's pie is won (DinerShare::Decide). Returns false to try again later.
+		bool ApplyDiner(RE::TESObjectREFR* a_ref, const Protocol::RefState& a_state)
+		{
+			const auto id = a_ref->GetFormID();
+			const auto object = DinerObject(a_ref);
+			const auto here = ReadDiner(object.get());
+			if (!here) {
+				return false;
+			}
+			const auto now = Clock::now();
+			const auto work = dinerWork.find(id);
+			std::optional<Clock::duration> sincePress;
+			if (const auto press = dinerPresses.find(id); press != dinerPresses.end() && a_state.playerId != 0 && press->second.player == a_state.playerId && !GameStop::Now()) {
+				sincePress = now - press->second.at;
+			}
+			const auto decided = DinerShare::Decide(a_state.open == Protocol::RefState::kYes, *here, work != dinerWork.end() && work->second.lever.has_value(),
+				work != dinerWork.end() && work->second.forcing, sincePress);
+			if (decided == DinerShare::Apply::kNothing) {
+				return true;
+			}
+			if (decided == DinerShare::Apply::kWait) {
+				dinerWaits.insert(id);
+				return false;
+			}
+			if (decided == DinerShare::Apply::kWin) {
+				// As the winner's game did it: the script plays the claw handing the pie over, and puts it in the box.
+				const auto standIn = RE::TESForm::GetFormByID<RE::Actor>(RemotePlayers::ActorIdOf(a_state.playerId));
+				const auto force = DinerBool(*object, DinerShare::FORCE);
+				if (force && standIn && !standIn->IsDeleted() && standIn->Get3D() && standIn->GetParentCell()) {
+					auto& entry = dinerWork[id];
+					entry.forcing = true;
+					entry.forceWas = RE::BSScript::get<bool>(*force);
+					entry.ran = {};
+					*force = true;
+					a_ref->ActivateRef(standIn, nullptr, 0, false, false, false);
+					++dinersWon;
+					++refStatesApplied;
+					REX::INFO("WorldSync: Port-A-Diner {:08X} gives its pie (player {} won it in their game)", id, a_state.playerId);
+					return true;
+				}
+			}
+			*DinerBool(*object, DinerShare::WON) = true;
+			++dinersSet;
+			++refStatesApplied;
+			REX::INFO("WorldSync: Port-A-Diner {:08X} set won (its pie was won in another player's world)", id);
+			return true;
+		}
+
+		bool CanApply();
+		bool TryApplyRefState(const Protocol::RefState& a_state, bool a_inWorld);
+
+		// Why the diners at work are looked at.
+		enum class DinerEnd : std::uint8_t
+		{
+			kNone,   // the game runs: each lever and forced win comes off in its time
+			kStop,   // our game is stopped (a menu), or about to be saved: all come off now, and a win being made is set
+			kReset,  // the session's end, a load: all come off now, and nothing else is written
+		};
+
+		// The diners at work: a lever comes off once the script has read it (or never did), a forced win's flag once the
+		// pie is won (or never was), and a friend's win that waited for the script is tried again. Nothing of ours stays
+		// on a script that stands still (a stopped game) or goes into a save: a count held down, or a forced win, saved
+		// and loaded without the mod would be a diner that never gives its pie, or always does.
+		void TickDiners(Clock::time_point a_now, DinerEnd a_end = DinerEnd::kNone)
+		{
+			const bool stopped = GameStop::Now();
+			const auto ran = DinerShare::Ran(a_now - dinerTick, stopped);
+			dinerTick = a_now;
+			if (a_end == DinerEnd::kNone && stopped) {
+				a_end = DinerEnd::kStop;
+			}
+			const bool all = a_end != DinerEnd::kNone;
+			for (auto it = dinerWork.begin(); it != dinerWork.end();) {
+				auto&      work = it->second;
+				const auto id = it->first;
+				const auto object = DinerObject(RE::TESForm::GetFormByID<RE::TESObjectREFR>(id));
+				if (!object) {
+					// Gone from the game with it on: looked at again (and a lever taken off) when it is next seen.
+					diners.erase(id);
+					it = dinerWork.erase(it);
+					continue;
+				}
+				work.ran += ran;
+				if (work.lever) {
+					const auto tries = DinerTries(*object);
+					const auto count = tries ? RE::BSScript::get<std::int32_t>(*tries) : 0;
+					const bool read = tries && DinerShare::WasRead(*work.lever, count);
+					if (!tries || read || all || work.ran > DinerShare::LEVER_TIME) {
+						if (tries && DinerShare::IsLevered(count)) {
+							*tries = DinerShare::Restored(count);
+							++dinerLeversBack;
+						}
+						if (!read && all) {
+							REX::INFO("WorldSync: Port-A-Diner {:08X}'s count of presses is put back at {} before its script took the friend's press (our game stopped, a save, or the session's end)", id, DinerShare::Restored(count));
+						} else if (!read) {
+							REX::WARN("WorldSync: Port-A-Diner {:08X}'s script never took the friend's press; its count of presses is back at {}", id, DinerShare::Restored(count));
+						}
+						work.lever.reset();
+					}
+				}
+				if (work.forcing) {
+					const auto here = ReadDiner(object.get());
+					if (!here || here->won || all || work.ran > DinerShare::FORCE_TIME) {
+						if (const auto force = DinerBool(*object, DinerShare::FORCE)) {
+							*force = work.forceWas;
+						}
+						if (here && !here->won && a_end != DinerEnd::kReset) {
+							// The win is theirs whatever our script makes of the press now: set, as a win heard late is.
+							if (const auto won = DinerBool(*object, DinerShare::WON)) {
+								*won = true;
+								++dinersSet;
+							}
+							if (all) {
+								REX::INFO("WorldSync: Port-A-Diner {:08X} set won before its script gave the pie a friend won (our game stopped, or a save)", id);
+							} else {
+								REX::WARN("WorldSync: Port-A-Diner {:08X} never gave the pie a friend won; set won", id);
+							}
+						}
+						work.forcing = false;
+					}
+				}
+				it = !work.lever && !work.forcing ? dinerWork.erase(it) : std::next(it);
+			}
+			if (all || dinerWaits.empty()) {
+				return;
+			}
+			// A copy: asking again may put the diner back on the list.
+			const std::vector<std::uint32_t> waiting(dinerWaits.begin(), dinerWaits.end());
+			dinerWaits.clear();
+			for (const auto id : waiting) {
+				const auto state = pendingRefStates.find(id);
+				if (state == pendingRefStates.end()) {
+					continue;
+				}
+				if (!CanApply()) {
+					dinerWaits.insert(id);
+				} else if (const auto asked = state->second; TryApplyRefState(asked, true)) {
+					pendingRefStates.erase(id);
+				} else {
+					dinerWaits.insert(id);  // (ApplyDiner did already, if the script is still busy)
+				}
+			}
+		}
+
 		// The shared open/lock state of a loaded reference (see DoorShare::Shared; either part may be
 		// unknown), or nullopt if it isn't loaded. A shared gate's open state is where its script is taking it. a_log: as OpensShared's.
 		std::optional<Protocol::RefState> ReadRefState(RE::TESObjectREFR* a_ref, bool a_log = true)
@@ -2028,6 +2296,13 @@ namespace WorldSync
 				}
 				if (const auto lock = a_ref->GetLock()) {
 					state.locked = (lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? Protocol::RefState::kYes : Protocol::RefState::kNo;
+				}
+				return state;
+			}
+			// A Port-A-Diner's open state is whether its pie was won (DinerShare).
+			if (IsDiner(a_ref)) {
+				if (const auto diner = ReadDiner(DinerObject(a_ref).get())) {
+					state.open = diner->won ? Protocol::RefState::kYes : Protocol::RefState::kNo;
 				}
 				return state;
 			}
@@ -2065,6 +2340,9 @@ namespace WorldSync
 			const auto current = ReadRefState(ref);
 			if (!current) {
 				return ref && ref->IsDeleted();  // gone for good: drop it
+			}
+			if (IsDiner(ref)) {
+				return ApplyDiner(ref, a_state);
 			}
 			// A shared gate is opened or closed through its script, once it has settled after loading (SharedGates).
 			const bool gate = a_state.open != Protocol::RefState::kUnknown && IsSharedGate(ref);
@@ -2164,6 +2442,10 @@ namespace WorldSync
 			const auto state = ReadRefState(ref, !a_entry.quiet);
 			if (!state || !DoorShare::Says(*state)) {
 				return false;
+			}
+			// A diner whose pie isn't won says nothing (DinerShare): it stays on watch for the win.
+			if (state->open != Protocol::RefState::kYes && IsDiner(ref)) {
+				return true;
 			}
 			// A gate we set from a friend's state reads as it was until its script gets round to it: not sent back.
 			if (state->open != Protocol::RefState::kUnknown && gatesApplied.Holds(a_id, state->open == Protocol::RefState::kYes, a_now)) {
@@ -3010,6 +3292,14 @@ namespace WorldSync
 			++activationsRefused;
 			return;
 		}
+		// A Port-A-Diner: the presser's game rolled for the pie, ours doesn't (DinerShare).
+		if (IsDiner(ref)) {
+			dinerPresses[a_refId] = DinerPress{ a_playerId, Clock::now() };
+			if (!PressDiner(ref)) {
+				++dinerPressesLeft;
+				return;
+			}
+		}
 		ref->ActivateRef(standIn, nullptr, 0, false, false, false);
 		++activationsApplied;
 	}
@@ -3404,6 +3694,7 @@ namespace WorldSync
 		}
 		WatchNpcDoors(now, newNpcDoors);
 		WatchRefStates(now, newActivations);
+		TickDiners(now);
 		LookAtScriptDoors(now, a_hosting);
 		// Container changes that came before one we still lack, with nothing arriving for a while: the
 		// server is asked again (the answer to the last request may have been refused, or never come), and
@@ -3552,6 +3843,11 @@ namespace WorldSync
 		gates.clear();
 		gateScripts.clear();
 		gatesApplied.Clear();
+		TickDiners(Clock::now(), DinerEnd::kReset);  // no diner is left with a lever on its count, or forced to win
+		diners.clear();
+		dinerWork.clear();
+		dinerPresses.clear();
+		dinerWaits.clear();
 		scriptDoors.Clear();
 		scriptDoorsReported = false;
 		nextDoorLook = {};
@@ -3580,6 +3876,11 @@ namespace WorldSync
 		lootInbox.clear();
 		std::scoped_lock o{ outgoingLock };
 		outgoing.clear();
+	}
+
+	void BeforeSave()
+	{
+		TickDiners(Clock::now(), DinerEnd::kStop);
 	}
 
 	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc)
@@ -3652,10 +3953,10 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} protectedKills={}/{} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} protectedKills={}/{} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} diners={}/{}/{}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Corrected(), killsRetried, protectionsLifted, protectionsKept, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
-			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
+			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), dinersLost, dinersWon, dinersSet, dinerLeversBack, dinerPressesLeft, dinerWork.size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{} doorBudgetHits={}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax, doorBudgetHits) +
 		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
 		       std::format(" friendsKills={}", friendsKills) +

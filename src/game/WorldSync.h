@@ -127,6 +127,10 @@ namespace WorldSync
 	// which container changes the world contains is kept: that belongs to the world, not the connection.
 	void Reset();
 
+	// Before a save is written (the main thread): what we hold on a script for a moment is taken off it (a
+	// Port-A-Diner's count of presses, held down for a friend's press: DinerShare), so no save has it.
+	void BeforeSave();
+
 	// Save-game record (F4SE co-save): which session container changes this save contains.
 	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc);
 	void LoadResyncPoint(const F4SE::SerializationInterface* a_intfc, std::uint32_t a_version, std::uint32_t a_length);
