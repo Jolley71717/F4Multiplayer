@@ -774,3 +774,67 @@ TEST("npc roll: each game's word of a plugin NPC's vendor factions is told as th
 	CHECK(told->factions.empty());
 	CHECK((told->flags & NpcIdentity::kVendorFactions) != 0);
 }
+
+TEST("npc roll: a game that loads a save in the session is told the vendor union again, and what it said of the world before goes")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Deliver(2, Claim(CODSWORTH));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+
+	NpcIdentity store{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(store, { { GENERAL_STORE, 0 } });
+	f.fake->Deliver(1, Report(store));
+	NpcIdentity armor{ .playerId = 0, .refId = CODSWORTH };
+	NpcRoll::SetVendorFactions(armor, { { ARMOR_STORE, 0 } });
+	f.fake->Deliver(2, Report(armor));
+	Clear(f, { 1, 2 });
+
+	// Bob's game loads a save: it forgot Alice's word, and its own word was of the world before.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0, Protocol::WorldRequest::kLoad }));
+	const auto packets = Received(f, 2);
+	std::map<std::uint32_t, NpcIdentity> lists;
+	for (const auto& list : Decoded(packets, MT::kNpcIdentities, [](auto a_data) { return Protocol::DecodeNpcIdentities(a_data); })) {
+		for (const auto& entry : list) {
+			lists[entry.refId] = entry;
+		}
+	}
+	REQUIRE(lists.contains(CODSWORTH));
+	CHECK((lists.at(CODSWORTH).flags & NpcIdentity::kVendorFactions) != 0);
+	CHECK((lists.at(CODSWORTH).factions == std::vector<FactionRank>{ { GENERAL_STORE, 0 } }));  // Alice's alone now
+	const auto alices = Told(*f.fake, 1);
+	REQUIRE(alices);
+	CHECK((alices->factions == std::vector<FactionRank>{ { GENERAL_STORE, 0 } }));
+
+	// A gap asked again changes nothing.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0, Protocol::WorldRequest::kGap }));
+	CHECK(Count(Received(f, 2), MT::kNpcIdentities) == 0);
+	CHECK(!Told(*f.fake, 1, 300ms));
+}
+
+TEST("npc roll: a runner's roll of an NPC another game told vendor factions of is kept and told")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(bob);
+	f.fake->Deliver(2, Claim(BLOATFLY));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+	NpcIdentity store{ .playerId = 0, .refId = BLOATFLY };
+	NpcRoll::SetVendorFactions(store, { { GENERAL_STORE, 0 } });
+	f.fake->Deliver(1, Report(store));  // Alice's word first
+	REQUIRE(Told(*f.fake, 2));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Report(Rolled(GLOWING, GLOWING)));  // then its runner's roll
+	const auto told = Told(*f.fake, 1);
+	REQUIRE(told);
+	CHECK(told->playerId == bob->playerId);
+	CHECK(told->mask != 0);
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	const auto rolls = WelcomeRolls(f, 3);
+	REQUIRE(rolls.contains(BLOATFLY));
+	CHECK(rolls.at(BLOATFLY).mask != 0);  // the session keeps the roll
+}

@@ -1461,9 +1461,10 @@ void Server::Run()
 		broadcast(Protocol::Encode(out, Protocol::MessageType::kNpcIdentity), true, 0);
 	};
 
-	// (An NPC nobody runs has no gear kept: its next runner reports its own.)
-	const auto releaseAll = [&](std::uint32_t a_playerId) {
-		std::vector<std::uint32_t> vendorRefs;  // what their game said of NPCs' vendor factions goes with them
+	// What a player's game said of NPCs' vendor factions goes (they left, or their game loaded another world, which it tells
+	// afresh), and the union is told again where that changed it.
+	const auto forgetVendorWord = [&](std::uint32_t a_playerId) {
+		std::vector<std::uint32_t> vendorRefs;
 		for (auto& [ref, own] : vendorOwn) {
 			if (own.erase(a_playerId) != 0) {
 				vendorRefs.push_back(ref);
@@ -1475,6 +1476,11 @@ void Server::Run()
 				vendorOwn.erase(it);
 			}
 		}
+	};
+
+	// (An NPC nobody runs has no gear kept: its next runner reports its own.)
+	const auto releaseAll = [&](std::uint32_t a_playerId) {
+		forgetVendorWord(a_playerId);
 		std::vector<Protocol::ActorOwner> released;
 		std::erase_if(actorOwners, [&](const auto& a_entry) {
 			if (a_entry.second.playerId != a_playerId) {
@@ -3889,7 +3895,9 @@ void Server::Run()
 		}
 		identity->playerId = a_player.id;
 		const auto known = npcIdentities.find(identity->refId);
-		if (known != npcIdentities.end() && (known->second.playerId != a_player.id || known->second == *identity)) {
+		// A vendor list kept for it (any game's word, settleVendor) gives way to its runner's roll: the roll's rules hold for it from now on.
+		const bool vendorOnly = known != npcIdentities.end() && known->second.mask == 0 && (known->second.flags & Protocol::NpcIdentity::kVendorFactions) != 0;
+		if (known != npcIdentities.end() && !vendorOnly && (known->second.playerId != a_player.id || known->second == *identity)) {
 			return;
 		}
 		if (known == npcIdentities.end() && npcIdentities.size() >= Protocol::MAX_SESSION_ROLLS) {
@@ -5025,6 +5033,23 @@ void Server::Run()
 			// A frame lent to them goes back as it was lent: the loaded game no longer wears it (FrameLoan::AfterLoad). Not at a
 			// gap: its game still wears the frame, and an ended loan would leave the frame its owner's no more under them.
 			endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id; });
+			// A plugin NPC's vendor factions: what its game said was of the world it threw away (its game tells the loaded
+			// world's afresh, NpcSync::SendVendors), and it forgot the others' word at the load (NpcSync::OnGameLoaded): told
+			// the union again, so a friend's store is on its settler once more.
+			forgetVendorWord(a_player.id);
+			std::vector<Protocol::NpcIdentity> vendorLists;
+			for (const auto& [ref, identity] : npcIdentities) {
+				if (identity.mask == 0 && (identity.flags & Protocol::NpcIdentity::kVendorFactions) != 0) {
+					vendorLists.push_back(identity);
+					if (vendorLists.size() == Protocol::MAX_IDENTITIES_PER_PACKET) {
+						send(a_player.key, Protocol::Encode(vendorLists), true);
+						vendorLists.clear();
+					}
+				}
+			}
+			if (!vendorLists.empty()) {
+				send(a_player.key, Protocol::Encode(vendorLists), true);
+			}
 		}
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
