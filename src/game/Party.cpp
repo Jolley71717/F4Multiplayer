@@ -628,6 +628,7 @@ namespace Party
 			status.legendaryMult = difficulty.legendaryMult;
 			status.downed = Downed::WaitsForHelp();
 			status.opening = Story::InOpening();
+			status.talkingTo = NpcSync::TalkClaimed();  // only a conversation that is ours (NpcSync, TalkOwner)
 			status.light = player->IsPipboyLightOn();
 			// The kind of menu we are in (the Pip-Boy, paused, a container...), never what it shows: friends' stand-ins of us
 			// raise their Pip-Boy, and show an icon over the head (MenuIcons).
@@ -1184,6 +1185,7 @@ namespace Party
 				Hud::Notify(Text::Format("party.friend_back_up", { { "player", name } }));
 			}
 		}
+		NpcSync::OnPeerTalk(a_status.playerId, a_status.talkingTo);
 		entry.status = a_status;
 		entry.hasStatus = true;
 		RemotePlayers::SetLight(a_status.playerId, a_status.light);
@@ -1304,6 +1306,7 @@ namespace Party
 	void OnPlayerLeft(std::uint32_t a_id)
 	{
 		known.erase(a_id);
+		NpcSync::OnPeerGone(a_id);
 		Downed::OnPlayerLeft(a_id);
 		pings.Forget(a_id);
 		if (teleportTarget == a_id) {

@@ -77,6 +77,7 @@ party.called = Marcaste: {what} ({where})
 party.ping_here = ¡por aquí!
 party.ping_you = a ti
 party.ping_something = algo
+talk.busy = {npc} is talking to {player}
 party.where = {player}: {where}
 party.no_emote_armor = No se pueden hacer gestos con la servoarmadura
 party.friends_frame = Esta es la servoarmadura de {player}. Cuando esté estacionada, puedes subirte para pedirla prestada, pero sus piezas siguen siendo de su dueño.

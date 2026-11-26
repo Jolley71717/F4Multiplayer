@@ -102,6 +102,7 @@ namespace Text
 		{ "party.ping_here", "over here!" },
 		{ "party.ping_you", "you" },
 		{ "party.ping_something", "something" },
+		{ "talk.busy", "{npc} is talking to {player}" },
 		{ "party.where", "{player}: {where}" },
 		{ "party.no_emote_armor", "No emotes in power armor" },
 		// Our player tried to get into our copy of a friend's frame (FriendFrame.h).

@@ -101,7 +101,7 @@ namespace NpcPlace
 	// Whether ours runs its own AI here whoever runs it elsewhere: our companion follows us, and an NPC our player is
 	// talking to, or one in the scene our player is in, has its lines and the scene to finish here. Mirrored, its AI is
 	// off: the scene never ends, and the engine holds our player in it (no weapons, Pip-Boy or workshop) for as long as
-	// another game runs it. A friend joining, or talking to the same NPC in their own game, takes it over (a story mod's
+	// another game runs it. A friend joining takes it over (a story mod's
 	// opening scene, both players at it).
 	constexpr bool StaysWithUs(const Ours& a_ours)
 	{

@@ -173,6 +173,7 @@ namespace FormTranslate
 			a_ctx.Detail(a_msg.cell);
 			a_ctx.Detail(a_msg.powerArmorFrame);
 			a_ctx.Detail(a_msg.powerArmorFrameRef);
+			a_ctx.Detail(a_msg.talkingTo);  // none when the NPC has no id here: no claim on it
 			if (a_msg.parked) {
 				auto& parked = *a_msg.parked;
 				if (!a_ctx.Key(parked.base) || !a_ctx.Place(parked.cell, parked.worldspace)) {

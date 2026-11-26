@@ -241,6 +241,10 @@ namespace ProtocolSamples
 			PlayerStatus inPipboy{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42 };
 			inPipboy.menu = MenuKind::kPipboy;
 			s.push_back({ "PlayerStatus(menu)", Encode(inPipboy, type), D(DecodePlayerStatus) });
+			PlayerStatus talking{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42 };
+			talking.menu = MenuKind::kTalking;
+			talking.talkingTo = REF_A;
+			s.push_back({ "PlayerStatus(talking)", Encode(talking, type), D(DecodePlayerStatus) });
 		}
 		for (const auto type : { MT::kReportTime, MT::kWorldTime }) {
 			s.push_back({ "WorldTime", Encode(WorldTime{ 1, 13.5f, 21.75f, 0x3C, 0x0001F2A3 }, type), D(DecodeWorldTime) });

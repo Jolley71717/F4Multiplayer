@@ -1050,7 +1050,7 @@ TEST("protocol: PlayerStatus round trips the downed, opening, light and power ar
 				const auto         packet = Encode(in, type);
 				// downed is bit 0, opening bit 1, the Pip-Boy light bit 2 and power armor bit 3 of the flags byte, then the
 				// frame base, the frame reference, the menu (protocol 48), and the difficulty and its multiplier (protocol 57).
-				CHECK(packet[packet.size() - 13] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
+				CHECK(packet[packet.size() - 17] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
 				const auto out = DecodePlayerStatus(packet);
 				REQUIRE(out);
 				CHECK(*out == in);
@@ -1073,6 +1073,7 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U8(MenuKind::kNone);
 	w.U8(NO_DIFFICULTY);  // protocol 57: the game's difficulty and its legendary chance multiplier
 	w.U16(0);
+	w.U32(0);  // protocol 86: no talk partner
 	const auto out = DecodePlayerStatus(w.Data());
 	REQUIRE(out);
 	CHECK(!out->downed);
@@ -1088,7 +1089,7 @@ TEST("protocol: PlayerStatus carries the kind of menu the player is in, and refu
 			in.light = true;
 			in.menu = menu;
 			const auto packet = Encode(in, type);
-			CHECK(packet[packet.size() - 4] == menu);  // after the seat, before the difficulty and its multiplier (protocol 57)
+			CHECK(packet[packet.size() - 8] == menu);  // after the seat, before the difficulty, its multiplier (protocol 57) and the talk partner (86)
 			const auto out = DecodePlayerStatus(packet);
 			REQUIRE(out);
 			CHECK(*out == in);
@@ -2983,5 +2984,24 @@ TEST("protocol: a quest reward round trips, and a bad one is refused")
 			w.U32(1);
 		}
 		CHECK(!DecodeQuestReward(w.Data()));
+	}
+}
+
+TEST("protocol: PlayerStatus carries the NPC the player talks to, and refuses one that is no actor reference")
+{
+	for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
+		PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 60, 12 };
+		in.menu = MenuKind::kTalking;
+		in.talkingTo = REF_A;
+		const auto out = DecodePlayerStatus(Encode(in, type));
+		REQUIRE(out);
+		CHECK(out->talkingTo == REF_A);
+		CHECK(*out == in);
+		in.talkingTo = PLAYER_REF_ID;  // the player is no NPC to talk to
+		CHECK(!DecodePlayerStatus(Encode(in, type)));
+		// A status from before protocol 86 (no talk partner) is cut short: refused, not read past its end.
+		auto old = Encode(PlayerStatus{ 5 }, type);
+		old.resize(old.size() - 4);
+		CHECK(!DecodePlayerStatus(old));
 	}
 }

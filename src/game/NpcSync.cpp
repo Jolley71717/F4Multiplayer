@@ -40,6 +40,8 @@
 #include "game/SettlerCommand.h"
 #include "game/Spawns.h"
 #include "game/StandInRange.h"
+#include "game/TalkOwner.h"
+#include "Text.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
@@ -135,6 +137,19 @@ namespace NpcSync
 		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, companion claims refused, and what our hits asked for
 		NpcHold::Book                                        hold;       // NPCs our player fights, and ours that are dying
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
+		// One conversation per NPC (TalkOwner): talkingTo is the NPC of the conversation that is ours, and talkFirm that it is
+		// the engine's own speaker (a guess from an activation or the nearest NPC is never told to friends: it could keep one
+		// of them from an NPC we don't talk to). What friends' statuses say they talk to is peerTalks. A conversation the engine
+		// opened with an NPC a friend talks to is ended here (refused) with a notice, and it goes on being tried until our dialogue
+		// menu is gone; the NPC stays a mirror here, so our player hears the friend's lines (Conversations::Apply).
+		bool                                                 talkFirm = false;
+		TalkOwner::Book                                      peerTalks;
+		std::uint32_t                                        refusedTalk = 0;  // the NPC of a conversation we are ending (0: none)
+		std::uint32_t                                        refusedOwner = 0;
+		Clock::time_point                                    refusedAt{};
+		Clock::time_point                                    nextTalkEnd{};
+		std::uint32_t                                        talksRefused = 0;
+		std::uint32_t                                        talksForced = 0;  // refused ones that needed the forced ending, not the menu's own cancel
 		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
 		// Workshop mode (SettlerCommand): the workbench our player is at, and its shared settlers as of the last scan.
@@ -275,12 +290,15 @@ namespace NpcSync
 		// forced greeting or a scene's, is the speaker too), else the NPC they activated, else the nearest NPC.
 		// (MenuTopicManager::speaker was thought unreliable: the library's ID for it is MenuControls', Dialogue::TopicManager
 		// reads the right one and checks it.)
-		std::uint32_t FindPartner(Clock::time_point a_now)
+		// a_firm: it is the engine's own speaker, not a guess.
+		std::uint32_t FindPartner(Clock::time_point a_now, bool& a_firm)
 		{
+			a_firm = false;
 			if (const auto topics = Dialogue::TopicManager(); topics && topics->menuOpen) {
 				const auto speaker = topics->speaker.get();
 				const auto id = speaker ? speaker->GetFormID() : 0u;
 				if (id && speaker->As<RE::Actor>() && owners.contains(id) && LoadedActor(id)) {
+					a_firm = true;
 					return id;
 				}
 			}
@@ -301,6 +319,49 @@ namespace NpcSync
 				}
 			}
 			return nearest;
+		}
+
+		// The conversation the engine opened with a_npc, which player a_owner talks to already, is ended: our player is told
+		// who has it, and the engine is asked to close the dialogue (EndRefused, again until it is). The NPC is no part of
+		// our conversation (talkingTo stays 0), so it keeps being mirrored here and our player hears what its owner's
+		// conversation says.
+		void EndRefused(Clock::time_point a_now);
+		void Refuse(std::uint32_t a_npc, std::uint32_t a_owner, Clock::time_point a_now)
+		{
+			refusedTalk = a_npc;
+			refusedOwner = a_owner;
+			refusedAt = a_now;
+			nextTalkEnd = {};
+			++talksRefused;
+			const auto actor = LoadedActor(a_npc);
+			const auto npcName = actor ? actor->GetDisplayFullName() : nullptr;
+			auto       friendName = RemotePlayers::NameOf(a_owner);
+			if (friendName.empty()) {
+				friendName = Text::Get("party.a_friend");
+			}
+			REX::INFO("NpcSync: not talking to {:08X}: player {} is in a conversation with it (the first to start owns it); ours is ended, with a notice, and it stays mirrored here ({} refused so far)", a_npc, a_owner, talksRefused);
+			Hud::Notify(Text::Format("talk.busy", { { "npc", npcName && *npcName ? npcName : Text::Get("party.ping_something") }, { "player", friendName } }));
+			EndRefused(a_now);
+		}
+
+		// Our dialogue menu is still up: the engine is asked to close it, every half second; with no cancel taken for REFUSE_CANCELS
+		// tries, the conversation is ended as a stranded one is (a greeting that can't be skipped).
+		void EndRefused(Clock::time_point a_now)
+		{
+			constexpr auto TALK_END_INTERVAL = 500ms;
+			constexpr int  REFUSE_CANCELS = 4;
+			if (a_now < nextTalkEnd) {
+				return;
+			}
+			nextTalkEnd = a_now + TALK_END_INTERVAL;
+			const bool forced = a_now - refusedAt >= TALK_END_INTERVAL * REFUSE_CANCELS;
+			const auto why = Dialogue::End(forced);
+			if (forced && why.empty()) {
+				++talksForced;
+				REX::WARN("NpcSync: the conversation with {:08X} took no cancel for {:.1f} s: ended by the engine's reset", refusedTalk, std::chrono::duration<float>(a_now - refusedAt).count());
+			} else if (!why.empty() && a_now - refusedAt >= 2 * TALK_END_INTERVAL) {
+				REX::INFO("NpcSync: the conversation with {:08X} is not ended yet: {}", refusedTalk, why);
+			}
 		}
 		std::unordered_map<std::uint32_t, Mirror>            mirrors;
 		std::unordered_map<std::uint32_t, Owned>             owned;
@@ -663,7 +724,7 @@ namespace NpcSync
 					loaded.insert(id);
 					// ... and the NPCs of a town's scene our game runs for the session (PlacedScenes): claimed as a
 					// conversation's speaker is, taken over if a friend's game ran them till now.
-					if (Dialogue::Holds(actor) || PlacedScenes::Holds(id)) {
+					if ((Dialogue::Holds(actor) && id != refusedTalk) || PlacedScenes::Holds(id)) {
 						holding.push_back(id);
 					}
 
@@ -817,6 +878,8 @@ namespace NpcSync
 			}
 			mirrors.clear();
 			talkingTo = 0;
+			talkFirm = false;
+			refusedTalk = 0;
 			holding.clear();
 			commanding.clear();
 			commandBench = 0;
@@ -2484,6 +2547,21 @@ namespace NpcSync
 		return talkingTo;
 	}
 
+	std::uint32_t TalkClaimed()
+	{
+		return talkFirm ? talkingTo : 0;
+	}
+
+	void OnPeerTalk(std::uint32_t a_player, std::uint32_t a_talkingTo)
+	{
+		peerTalks.Heard(a_player, a_talkingTo, Clock::now());
+	}
+
+	void OnPeerGone(std::uint32_t a_player)
+	{
+		peerTalks.Gone(a_player);
+	}
+
 	void ApplyShot(std::uint32_t a_refId, std::uint32_t a_sound)
 	{
 		const auto it = mirrors.find(a_refId);
@@ -2620,16 +2698,37 @@ namespace NpcSync
 			}
 			WeaponFire::SetOwnedNpcs(std::move(ids));
 		}
-		// The partner is found when the conversation starts and kept until it ends.
+		// The partner is found when the conversation starts and kept until it ends. One conversation per NPC (TalkOwner):
+		// the engine opens one on any NPC we press E on, a friend's too, and the one who started first owns it.
 		const bool inConversation = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 		if (!inConversation) {
 			talkingTo = 0;
+			talkFirm = false;
+			if (refusedTalk) {
+				REX::INFO("NpcSync: our dialogue menu is closed {:.1f} s after we ended the conversation with {:08X}, which player {} owns", std::chrono::duration<float>(now - refusedAt).count(), refusedTalk, refusedOwner);
+				refusedTalk = 0;
+			}
+		} else if (refusedTalk) {
+			EndRefused(now);
 		} else if (talkingTo == 0) {
-			talkingTo = FindPartner(now);
-			nextTalkClaim = {};
-			conversations += talkingTo != 0;
-			if (talkingTo) {
-				REX::INFO("NpcSync: talking to {:08X} (owner {})", talkingTo, OwnerOf(talkingTo));
+			bool       firm = false;
+			const auto partner = FindPartner(now, firm);
+			const auto verdict = partner && firm ? TalkOwner::Decide(peerTalks, localId, partner, false, now) : TalkOwner::Verdict{};
+			if (!verdict.ours) {
+				Refuse(partner, verdict.owner, now);
+			} else if (partner) {
+				talkingTo = partner;
+				talkFirm = firm;
+				nextTalkClaim = {};
+				++conversations;
+				REX::INFO("NpcSync: talking to {:08X} (owner {}){}", talkingTo, OwnerOf(talkingTo), firm ? "" : " (a guess: not told to friends)");
+			}
+		} else if (talkFirm) {
+			// A friend started this one at the same moment: both pressed E before either status came. The lower player id keeps it.
+			if (const auto verdict = TalkOwner::Decide(peerTalks, localId, talkingTo, true, now); !verdict.ours) {
+				const auto npc = std::exchange(talkingTo, 0u);
+				talkFirm = false;
+				Refuse(npc, verdict.owner, now);
 			}
 		}
 		// The NPC we talk to, and those holding us (the conversation's speaker, the others in our scene), are claimed
@@ -2821,6 +2920,9 @@ namespace NpcSync
 		stop.Reset();
 		stoppedFor = {};
 		talkingTo = 0;
+		talkFirm = false;
+		peerTalks.Clear();
+		refusedTalk = 0;
 		holding.clear();
 		commanding.clear();
 		commandBench = 0;
@@ -2988,8 +3090,8 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={} actorMods={}/{}/{}/{}/{}/{}/{} modsNoScript={} framesNotShown={}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} talksRefused={}/{} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={} actorMods={}/{}/{}/{}/{}/{}/{} modsNoScript={} framesNotShown={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, talksRefused, talksForced, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
 			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, handOffsCameBack, friendlyHandOffs, friendlyCameBack, handOffBook.BackedOffCount(), handOffsExcused, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
 			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights(), modWork.size(), modCalls, modCallsLate, modCallsRefused, modsMatched, modsGaveUp, modCallBook.Outstanding(), modNoScript.size(), framesNotShown);
