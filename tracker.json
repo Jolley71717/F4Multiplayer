@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-25T23:25:47+00:00",
+ "updated": "2026-11-26T00:03:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2850,8 +2850,8 @@
    "title": "A box a friend builds in front of the host at a settlement fills with random items (and other dupes)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Reproduced on the rig (the host's own copy of a friend's locker-type box came out full); fix in PR 592"
+   "stage": 4,
+   "note": "Rig-tested: all 23 container kinds empty on the host with the fix (PR 592)"
   },
   {
    "id": "ml30",
@@ -3337,8 +3337,8 @@
    "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus report)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Being looked into",
+   "stage": 4,
+   "note": "Check on 0.22.2: not reproduced (40 fast travels, 80 saves, 104+ powered pieces at Sanctuary); left open for you to close",
    "pr": 291
   },
   {
