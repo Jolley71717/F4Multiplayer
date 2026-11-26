@@ -212,6 +212,9 @@ namespace NpcSync
 		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> knownGear;  // mirrored NPCs: what their owner reported
 		std::uint32_t                                                 gearSent = 0;
 		std::uint32_t                                                 gearApplied = 0;
+		// Mirrored NPCs whose owner's gear could not go on yet (Equipment::ReadyForItems: no 3D yet, or a new one): dressed in a later
+		// frame, from knownGear (WearOrLater, RetryWears).
+		std::unordered_set<std::uint32_t>                             wearLater;
 		// The mods on a mirrored NPC's own reference (a robot's parts: ActorMods), as its owner reported them: given to our
 		// copy one Papyrus call at a time (ApplyActorMods), the call in flight told done by the VM (ModCallDone). A call not
 		// answered in MOD_CALL_WAIT lets the other copies' calls go on, but its own NPC stays in flight until it is (modCallBook).
@@ -1088,6 +1091,41 @@ namespace NpcSync
 			return called ? nullptr : "the VM refused the call";
 		}
 
+		// A mirrored NPC dressed like its owner's copy, once the engine has it ready for item work (Equipment::ReadyForItems): not
+		// at once when its 3D is new or its process not made, a moment later (RetryWears). How many equip commands it issued.
+		std::uint32_t WearOrLater(RE::Actor* a_actor, std::uint32_t a_id, const std::vector<std::uint32_t>& a_items)
+		{
+			if (!Equipment::ReadyForItems(a_actor, "Wear")) {
+				wearLater.insert(a_id);
+				return 0;
+			}
+			wearLater.erase(a_id);
+			return Equipment::Wear(a_actor, a_items);
+		}
+
+		// The copies that waited for the engine are dressed as it gets them ready, each frame (usually none are waiting).
+		void RetryWears()
+		{
+			for (auto it = wearLater.begin(); it != wearLater.end();) {
+				const auto id = *it;
+				const auto actor = LoadedActor(id);
+				const auto mirror = mirrors.find(id);
+				const auto gear = knownGear.find(id);
+				if (!actor || mirror == mirrors.end() || mirror->second.registered != actor || gear == knownGear.end()) {
+					it = wearLater.erase(it);  // gone, or no longer ours to dress: a new registration dresses it again
+					continue;
+				}
+				if (!Equipment::ReadyForItems(actor, "Wear")) {
+					++it;
+					continue;
+				}
+				it = wearLater.erase(it);
+				meter.Count(Equipment::Wear(actor, gear->second));
+				++gearApplied;
+				REX::INFO("NpcSync: {:08X}'s gear put on now that the engine has it ready", id);
+			}
+		}
+
 		// Gives the copies we mirror the session's build (ActorMods): one call in flight at a time, the copy read again before
 		// the next. Each GEAR_INTERVAL. Never our own companion: its build is the one our player made, and the session's once
 		// we run it (SessionBuilds: a companion owner's report replaces it).
@@ -1139,7 +1177,7 @@ namespace NpcSync
 						// A part brings its own weapon (a robot's arm): the owner's gear is put on again now that our copy has the
 						// parts, where the Wear that came with the report kept the old arm's weapon.
 						if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
-							meter.Count(Equipment::Wear(actor, gear->second));
+							meter.Count(WearOrLater(actor, id, gear->second));
 							++gearApplied;
 						}
 					} else if (work.noScript) {
@@ -2168,7 +2206,7 @@ namespace NpcSync
 						work->second.Again();  // its mods are looked at afresh (ApplyActorMods): loaded anew, it may be as a save had it
 					}
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
-						meter.Count(Equipment::Wear(actor, gear->second));
+						meter.Count(WearOrLater(actor, id, gear->second));
 						++gearApplied;
 						if (const auto frame = knownFrame.find(id); frame != knownFrame.end() && frame->second != 0) {
 							MirrorFrames::Want(actor, frame->second, gear->second);
@@ -2473,6 +2511,7 @@ namespace NpcSync
 			LeaveAll();
 			return;
 		}
+		RetryWears();
 		if (now >= nextScan) {
 			nextScan = now + SCAN_INTERVAL;
 			Scan(now);
@@ -2591,7 +2630,7 @@ namespace NpcSync
 		// stored pointer is only compared, never followed.
 		const auto actor = LoadedActor(a_equipment.refId);
 		if (const auto it = mirrors.find(a_equipment.refId); actor && it != mirrors.end() && it->second.registered == actor) {
-			meter.Count(Equipment::Wear(actor, a_equipment.items));
+			meter.Count(WearOrLater(actor, a_equipment.refId, a_equipment.items));
 			++gearApplied;
 			// In a frame there, in a copy of it here (MirrorFrames): put in and taken out as the owner's copy gets in and out. A
 			// frame our game lacks is not shown: our copy wears what it can of the owner's gear out of one (GearPlan), said once.
@@ -2662,6 +2701,7 @@ namespace NpcSync
 		sentGear.clear();
 		runBuilds.clear();
 		knownGear.clear();
+		wearLater.clear();
 		knownFrame.clear();
 		MirrorFrames::Forget();  // LeaveAll above left none in a copy
 		modWork.clear();

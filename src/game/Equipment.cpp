@@ -7,6 +7,7 @@
 #include "game/GearReport.h"
 #include "game/Hud.h"
 #include "game/InventoryStacks.h"
+#include "game/ItemWork.h"
 #include "game/MirrorFrames.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
@@ -103,6 +104,8 @@ namespace Equipment
 		// Both start afresh with each session (OnSessionStart).
 		OwnGear::Tally     ownGear;
 		OwnGear::LogBudget ownGearLog;
+		std::unordered_map<std::uint32_t, ItemWork::Track> itemWork;  // by actor: its 3D as last seen (ReadyForItems)
+		std::uint32_t                                      itemWorkDeferred = 0;
 		// Our player's worn items already said in the log as left out of the gear report, or said in it without the mods
 		// made at runtime. Starts afresh with each session too.
 		GearReport::RuntimeWorn runtimeWorn;
@@ -245,6 +248,51 @@ namespace Equipment
 		return Count(a_ref, a_change, Judge(a_ref, a_change));
 	}
 
+	bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what, bool a_waitQuiet)
+	{
+		if (!a_actor) {
+			return false;
+		}
+		ItemWork::Facts facts;
+		facts.exists = !a_actor->IsDeleted();
+		facts.root = reinterpret_cast<std::uintptr_t>(a_actor->Get3D());
+		facts.hasProcess = a_actor->currentProcess != nullptr;
+		const auto cell = a_actor->GetParentCell();
+		facts.cellAttached = cell && cell->cellState == RE::TESObjectCELL::CELL_STATE::kAttached;
+		const auto id = a_actor->GetFormID();
+		auto&      track = itemWork[id];
+		const auto verdict = ItemWork::Check(track, facts, ItemWork::Clock::now());
+		if (verdict == ItemWork::Verdict::kReady || (!a_waitQuiet && verdict == ItemWork::Verdict::kBusy)) {
+			return true;
+		}
+		++itemWorkDeferred;
+		if (ItemWork::FirstSay(track)) {
+			REX::INFO("Equipment: {} for {:08X} deferred: {} (item work waits for a loaded, settled actor; {} deferred so far)", a_what, id, ItemWork::Name(verdict), itemWorkDeferred);
+		}
+		return false;
+	}
+
+	namespace
+	{
+		// Item work on an actor done at the end of the change that made it (ItemWork::Worked): the next waits ItemWork::QUIET.
+		struct WorkMark
+		{
+			explicit WorkMark(const RE::Actor* a_actor) : id(a_actor ? a_actor->GetFormID() : 0) {}
+			~WorkMark()
+			{
+				if (id != 0) {
+					ItemWork::Worked(itemWork[id], ItemWork::Clock::now());
+				}
+			}
+			std::uint32_t id;
+		};
+	}
+
+	std::uint32_t ItemWorkDeferred()
+	{
+		return itemWorkDeferred;
+	}
+
 	bool MayMakeWay(RE::TESObjectREFR* a_ref, bool a_pickedUp)
 	{
 		auto target = Facts(a_ref);
@@ -254,6 +302,8 @@ namespace Equipment
 
 	void OnSessionStart()
 	{
+		itemWork.clear();
+		itemWorkDeferred = 0;
 		ownGear = {};
 		ownGearLog = {};
 		runtimeWorn.Clear();
@@ -545,9 +595,10 @@ namespace Equipment
 
 	std::uint32_t Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
 	{
-		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressCopy)) {
+		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressCopy) || !ReadyForItems(a_actor, "Wear")) {
 			return 0;
 		}
+		const WorkMark done{ a_actor };
 		const auto id = a_actor->GetFormID();
 		const auto has = [&](std::uint32_t a_item) {
 			const auto form = RE::TESForm::GetFormByID(a_item);
@@ -711,9 +762,10 @@ namespace Equipment
 
 	bool WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
-		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
+		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn) || !ReadyForItems(a_actor, "dressing")) {
 			return false;
 		}
+		const WorkMark done{ a_actor };
 		const auto id = a_actor->GetFormID();
 		const auto wearing = Read(a_actor);
 		bool       tookAway = false;
@@ -844,16 +896,18 @@ namespace Equipment
 
 	void PutOnForPick(RE::Actor* a_actor, std::uint32_t a_item)
 	{
-		if (a_actor && RE::TESForm::GetFormByID(a_item) && MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
+		if (a_actor && RE::TESForm::GetFormByID(a_item) && MayChange(a_actor, OwnGear::Change::kDressStandIn) && ReadyForItems(a_actor, "PutOnForPick")) {
+			const WorkMark done{ a_actor };
 			PutOn(a_actor, a_item, {}, std::ranges::binary_search(Read(a_actor), a_item));
 		}
 	}
 
 	bool WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
-		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
+		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn) || !ReadyForItems(a_actor, "dressing")) {
 			return false;
 		}
+		const WorkMark done{ a_actor };
 		const auto id = a_actor->GetFormID();
 		const auto pieceOrWeapon = [](const RE::TESForm* a_form) { return a_form && (a_form->Is(RE::ENUM_FORM_ID::kWEAP) || IsPowerArmorPiece(a_form)); };
 		// What it has on already is left alone, as in Wear: its gun is not equipped over again on a change that keeps it
@@ -1074,10 +1128,11 @@ namespace Equipment
 	bool Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		// It empties the inventory first: a friend's stand-in only.
-		if (!a_puppet || !MayChange(a_puppet, OwnGear::Change::kDressStandIn)) {
+		if (!a_puppet || !MayChange(a_puppet, OwnGear::Change::kDressStandIn) || !ReadyForItems(a_puppet, "Apply")) {
 			return false;
 		}
 		MainThread::Assert("Equipment::Apply");
+		const WorkMark done{ a_puppet };
 		const auto id = a_puppet->GetFormID();
 		const auto wearing = Read(a_puppet);
 		const bool inArmor = InPowerArmor(a_puppet);
@@ -1196,7 +1251,7 @@ namespace Equipment
 		if (!a_actor || !a_actor->Get3D()) {
 			return false;
 		}
-		if (!MayChange(a_actor, Puppets::IsPuppet(a_actor) ? OwnGear::Change::kDressStandIn : OwnGear::Change::kDressCopy)) {
+		if (!MayChange(a_actor, Puppets::IsPuppet(a_actor) ? OwnGear::Change::kDressStandIn : OwnGear::Change::kDressCopy) || !ReadyForItems(a_actor, "HoldThrowable", false)) {  // a throw is replayed once: not held back by the dressing just before it
 			return false;
 		}
 		for (const auto item : a_items) {

@@ -1403,7 +1403,7 @@ namespace RemotePlayers
 			const auto process = a_actor->currentProcess;
 			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_now, a_played);
 			// Not while it lies down for its downed friend (DownRules::StandInDown): it is switched in once it is up.
-			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false) && !a_player.standInDown.Laid();
+			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false) && !a_player.standInDown.Laid() && Equipment::ReadyForItems(a_actor, "power armor switch-in");
 			switchFacts.held = copy == ArmorFrames::Copy::kHold;
 			switch (ArmorFrames::ChooseSwitch(switchFacts)) {
 			case ArmorFrames::Switch::kIn:
@@ -3835,7 +3835,7 @@ namespace RemotePlayers
 			const bool inArmor = Equipment::InPowerArmor(actor);
 			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, playedNow));
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
-			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr, now, HandWeapon,
+			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr && Equipment::ReadyForItems(actor, "stand-in dressing"), now, HandWeapon,
 				[&](const std::vector<std::uint32_t>& a_worn) { return StandInGear::Wears(Wearable(shown()), Wearable(Kept(a_worn, dress)), HandWeapon); });
 			switch (dressing.put) {
 			case StandInGear::Put::kApply:
