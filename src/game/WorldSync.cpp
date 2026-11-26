@@ -6,6 +6,7 @@
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
 #include "game/DeathReports.h"
+#include "game/BlockerShare.h"
 #include "game/DoorShare.h"
 #include "game/EnableParents.h"
 #include "game/EventTap.h"
@@ -220,6 +221,8 @@ namespace WorldSync
 		long long                                            doorPollUs = 0, doorPollUsMax = 0;  // the sweep's cost in a frame: the last, the most
 		std::uint32_t                                        doorBudgetHits = 0;  // frames whose poll went over DoorShare::POLL_BUDGET: the sweep's rest and the walk left for later
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
+		std::uint32_t                                        blockersOpened = 0;    // invisible walls a friend's game took down, taken down here too (BlockerShare)
+		std::uint32_t                                        blockersReported = 0;  // ... and ours that came down, said to them
 
 		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
 		// their stand-in (so our own watcher, which takes only the player's presses, never reports it back).
@@ -2013,10 +2016,22 @@ namespace WorldSync
 			return it != gateLoads.end() ? std::optional{ it->second } : std::nullopt;
 		}
 
+		// Whether a reference is an invisible wall a plugin placed (a CollisionMarker, BlockerShare): its state is whether it
+		// is up, and travels as a door's open state does (open = the wall is down).
+		bool IsBlocker(RE::TESObjectREFR* a_ref)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			return base && BlockerShare::IsBlockerBase(base->GetFormID()) && IsShareableRef(a_ref->GetFormID());
+		}
+
 		// The shared open/lock state of a loaded reference (see DoorShare::Shared; either part may be
 		// unknown), or nullopt if it isn't loaded. A shared gate's open state is where its script is taking it. a_log: as OpensShared's.
 		std::optional<Protocol::RefState> ReadRefState(RE::TESObjectREFR* a_ref, bool a_log = true)
 		{
+			// A wall that is down has no 3D: its state is read from the reference alone.
+			if (a_ref && !a_ref->IsDeleted() && IsBlocker(a_ref)) {
+				return BlockerShare::Read(a_ref->GetFormID(), a_ref->IsDisabled());
+			}
 			if (!a_ref || a_ref->IsDeleted() || !a_ref->Get3D() || a_ref->As<RE::Actor>()) {
 				return std::nullopt;  // talking to someone is an activation too, but an actor has no door or lock state
 			}
@@ -2065,6 +2080,16 @@ namespace WorldSync
 			const auto current = ReadRefState(ref);
 			if (!current) {
 				return ref && ref->IsDeleted();  // gone for good: drop it
+			}
+			// A wall a friend's game took down comes down here too; one they put back up is not put up here (BlockerShare).
+			if (IsBlocker(ref)) {
+				if (BlockerShare::Decide(a_state, ref->IsDisabled()) == BlockerShare::Apply::kOpen) {
+					ref->Disable();
+					++blockersOpened;
+					++refStatesApplied;
+					REX::INFO("WorldSync: invisible wall {:08X} taken down (it came down in another player's world)", a_state.refId);
+				}
+				return true;
 			}
 			// A shared gate is opened or closed through its script, once it has settled after loading (SharedGates).
 			const bool gate = a_state.open != Protocol::RefState::kUnknown && IsSharedGate(ref);
@@ -2165,6 +2190,13 @@ namespace WorldSync
 			if (!state || !DoorShare::Says(*state)) {
 				return false;
 			}
+			const bool blocker = IsBlocker(ref);
+			// A wall put back up is nothing to say: only its coming down is (BlockerShare::Opened).
+			if (blocker && state->open != Protocol::RefState::kYes && a_entry.lastSent.refId != 0) {
+				a_entry.lastSent = *state;
+				a_entry.held = false;
+				return true;
+			}
 			// A gate we set from a friend's state reads as it was until its script gets round to it: not sent back.
 			if (state->open != Protocol::RefState::kUnknown && gatesApplied.Holds(a_id, state->open == Protocol::RefState::kYes, a_now)) {
 				if (!state->SameState(a_entry.lastSent)) {
@@ -2178,8 +2210,8 @@ namespace WorldSync
 			DoorShare::Watch look;
 			look.quiet = a_entry.quiet;
 			look.seen = a_entry.lastSent.refId != 0;
-			look.changed = !state->SameState(a_entry.lastSent);
-			look.used = a_entry.used;
+			look.changed = blocker ? BlockerShare::Opened(*state, a_entry.lastSent) : !state->SameState(a_entry.lastSent);
+			look.used = a_entry.used && !blocker;
 			look.near = a_player && a_player->GetParentCell() &&
 			            a_player->data.location.GetDistance(ref->data.location) <= (IsSharedGate(ref) ? SharedGates::REPORT_REACH : DoorShare::REPORT_REACH);
 			look.pending = pendingRefStates.contains(a_id);
@@ -2200,6 +2232,10 @@ namespace WorldSync
 				a_entry.pace.Spend(a_now);
 				refBook.Sent(*state);
 				Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
+				if (blocker) {
+					++blockersReported;
+					REX::INFO("WorldSync: invisible wall {:08X} is down here; said to the others", a_id);
+				}
 				break;
 			case DoorShare::Look::kNothing:
 				if (!look.changed) {
@@ -2227,7 +2263,15 @@ namespace WorldSync
 					watched.erase(it);
 				}
 			};
-			if (!ref || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell() || !OpensShared(ref, false)) {
+			if (ref && IsBlocker(ref)) {
+				// A wall: read while it stands loaded, and once more when it is down (no 3D then) until that is said.
+				const auto said = watched.find(a_id);
+				if (!ref->GetParentCell() || !BlockerShare::WorthReading(ref->IsDisabled(), ref->Get3D() != nullptr, ref->IsDeleted(),
+						said != watched.end() && said->second.lastSent.open == Protocol::RefState::kYes && !said->second.held)) {
+					forget();
+					return;
+				}
+			} else if (!ref || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell() || !OpensShared(ref, false)) {
 				forget();
 				return;
 			}
@@ -2309,6 +2353,8 @@ namespace WorldSync
 					const auto base = ref ? ref->GetObjectReference() : nullptr;
 					if (base && base->Is(RE::ENUM_FORM_ID::kDOOR) && !ref->IsDeleted() && ref->Get3D() && IsShareableRef(ref->GetFormID())) {
 						doors.push_back(ref->GetFormID());
+					} else if (base && BlockerShare::Polled(BlockerShare::IsBlockerBase(base->GetFormID()), IsShareableRef(ref->GetFormID()), ref->IsDisabled(), ref->Get3D() != nullptr, ref->IsDeleted())) {
+						doors.push_back(ref->GetFormID());  // an invisible wall that stands (BlockerShare)
 					}
 				}
 			}
@@ -2909,11 +2955,17 @@ namespace WorldSync
 			if (a_state.playerId != 0) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
 				if (ref && ref->Get3D()) {
-					const auto senderAt = RemotePlayers::PositionOf(a_state.playerId);
-					const auto reach = IsSharedGate(ref) ? SharedGates::REACH : ACTIVATION_REACH;  // a gate's terminal can be down the corridor
+					// Near the thing means in its own cell (a multi-room interior's doors are in the cell the thing is in, which
+					// is not always the one our player stands in): their position is read against the thing's cell, ours only
+					// when the thing has none.
+					std::string why;
+					const auto  thingCell = ref->GetParentCell();
+					const auto  senderAt = thingCell ? RemotePlayers::PositionIn(a_state.playerId, thingCell, &why) : RemotePlayers::PositionOf(a_state.playerId);
+					const auto  reach = IsSharedGate(ref) ? SharedGates::REACH : ACTIVATION_REACH;  // a gate's terminal can be down the corridor
 					if (!senderAt || senderAt->GetDistance(ref->data.location) > reach) {
 						++refStatesRefused;
-						REX::INFO("WorldSync: {:08X} state from player {} refused: they are {} away", a_state.refId, a_state.playerId, senderAt ? std::format("{:.0f}", senderAt->GetDistance(ref->data.location)) : "nowhere known");
+						REX::INFO("WorldSync: {:08X} (cell {:08X}) state from player {} refused: they are {} away", a_state.refId, thingCell ? thingCell->GetFormID() : 0, a_state.playerId,
+							senderAt ? std::format("{:.0f}", senderAt->GetDistance(ref->data.location)) : std::format("nowhere known ({})", why.empty() ? "no cell to compare with" : why));
 						return;
 					}
 				}
@@ -3445,7 +3497,7 @@ namespace WorldSync
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
 			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
 				gateLoads[id] = now;
-			} else if (base && base->Is(RE::ENUM_FORM_ID::kDOOR)) {
+			} else if (base && (base->Is(RE::ENUM_FORM_ID::kDOOR) || (BlockerShare::IsBlockerBase(base->GetFormID()) && IsBlocker(ref) && !ref->IsDisabled()))) {
 				// Read while it stays loaded (PollDoor), from DoorShare::LOAD_SETTLE on. Loaded again (its cell came back, a
 				// reset relocked it), it is where it stands once more: the poll's look at it starts afresh.
 				loadedDoors.insert_or_assign(id, now);
