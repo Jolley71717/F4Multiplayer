@@ -1761,7 +1761,6 @@ namespace WorkshopSync
 			return workshop->data.location.GetDistance(at) <= BUILD_REACH;
 		}
 
-		// Whether a copy of the piece may stand here (see WorkshopApply::Placeable).
 		// Whether a container base holds things of its own (a bureau, a locker with loot): a new reference of it is made full.
 		bool ComesStocked(const RE::TESBoundObject* a_base)
 		{
@@ -1769,6 +1768,7 @@ namespace WorkshopSync
 			return container && container->numContainerObjects != 0;
 		}
 
+		// Whether a copy of the piece may stand here (see WorkshopApply::Placeable).
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item)
 		{
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
