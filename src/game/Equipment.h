@@ -24,6 +24,13 @@ namespace Equipment
 	// after the last item work; only the actor's readiness and its settled 3D. Main thread.
 	[[nodiscard]] bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what, bool a_waitQuiet = true);
 	[[nodiscard]] std::uint32_t ItemWorkDeferred();  // deferrals this session
+	// Whether the actor's animation graph may be told something now: an action performed on it (Actor::PerformAction), a graph event or a
+	// graph variable set. The same readiness as item work's (ItemWork.h: a 3D, a process, an attached cell, the 3D unchanged for a
+	// moment) without the wait behind earlier item work: the engine makes an actor's graph again whenever it makes its 3D again, and an
+	// event handled by a graph still being built or swapped (hkbStateMachine::getStateIndex through a null array) crashed a host as a
+	// friend joined. A deferral is logged once for each stretch of waiting; whoever asked tries again later. Main thread.
+	[[nodiscard]] bool ReadyForGraph(RE::Actor* a_actor, std::string_view a_what);
+	[[nodiscard]] std::uint32_t GraphDeferred();  // deferrals this session
 	// Item work on the actor was done just now by a caller outside Equipment (the shared loot's change to a corpse or an NPC):
 	// the next waits ItemWork::QUIET, as it does after Equipment's own.
 	void ItemWorkDone(RE::Actor* a_actor);

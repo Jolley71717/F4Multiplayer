@@ -105,6 +105,8 @@ namespace Equipment
 		OwnGear::Tally     ownGear;
 		OwnGear::LogBudget ownGearLog;
 		std::unordered_map<std::uint32_t, ItemWork::Track> itemWork;  // by actor: its 3D as last seen (ReadyForItems)
+		std::unordered_map<std::uint32_t, ItemWork::Track> graphWork; // by actor: its 3D as last seen (ReadyForGraph)
+		std::uint32_t                                      graphDeferred = 0;
 		std::uint32_t                                      itemWorkDeferred = 0;
 		// Our player's worn items already said in the log as left out of the gear report, or said in it without the mods
 		// made at runtime. Starts afresh with each session too.
@@ -272,6 +274,35 @@ namespace Equipment
 		return false;
 	}
 
+	bool ReadyForGraph(RE::Actor* a_actor, std::string_view a_what)
+	{
+		if (!a_actor) {
+			return false;
+		}
+		ItemWork::Facts facts;
+		facts.exists = !a_actor->IsDeleted();
+		facts.root = reinterpret_cast<std::uintptr_t>(a_actor->Get3D());
+		facts.hasProcess = a_actor->currentProcess != nullptr;
+		const auto cell = a_actor->GetParentCell();
+		facts.cellAttached = cell && cell->cellState == RE::TESObjectCELL::CELL_STATE::kAttached;
+		const auto id = a_actor->GetFormID();
+		auto&      track = graphWork[id];
+		const auto verdict = ItemWork::Check(track, facts, ItemWork::Clock::now());
+		if (verdict == ItemWork::Verdict::kReady || verdict == ItemWork::Verdict::kBusy) {
+			return true;
+		}
+		++graphDeferred;
+		if (ItemWork::FirstSay(track)) {
+			REX::INFO("Equipment: {} for {:08X} deferred: {} (an action or graph event waits for a loaded, settled actor; {} deferred so far)", a_what, id, ItemWork::Name(verdict), graphDeferred);
+		}
+		return false;
+	}
+
+	std::uint32_t GraphDeferred()
+	{
+		return graphDeferred;
+	}
+
 	namespace
 	{
 		// Item work on an actor done at the end of the change that made it (ItemWork::Worked): the next waits ItemWork::QUIET.
@@ -308,6 +339,7 @@ namespace Equipment
 	void OnSessionStart()
 	{
 		itemWork.clear();
+		graphWork.clear();
 		itemWorkDeferred = 0;
 		ownGear = {};
 		ownGearLog = {};
