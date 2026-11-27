@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-26T23:47:19+00:00",
+ "updated": "2026-11-27T00:43:58+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1040,6 +1040,14 @@
    "stage": 7,
    "note": "Fix in review: the friend's game now starts the host's settlement attack and shared radiant quests",
    "pr": 416
+  },
+  {
+   "id": "81jf",
+   "title": "rc1 gate: VM stuck in Codsworth's greeting (DialogueMenu won't close)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "rc1 gate stall; agent reproducing and fixing"
   },
   {
    "id": "83dc",
