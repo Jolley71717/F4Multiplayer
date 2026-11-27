@@ -1,7 +1,7 @@
 {
- "release": "0.22.2",
+ "release": "0.23.0",
  "known_issues": [],
- "updated": "2026-11-27T05:12:04+00:00",
+ "updated": "2026-11-27T05:30:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -637,8 +637,8 @@
    "title": "Nuka-World Grandchester Mystery Mansion: an open door blocks the host with an invisible wall, lets the client through; host can close but not reopen it",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 632
   },
   {
@@ -1046,8 +1046,8 @@
    "title": "rc1 gate: VM stuck in Codsworth's greeting (DialogueMenu won't close)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "merged (PR 634); rig-side, in rc2",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 634
   },
   {
@@ -2007,8 +2007,8 @@
    "title": "Client game crashed joining the host's session during quest catch-up (null function call in a game task queue, QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals), main 8754e7e, rig 2026-11-25 19:57",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 628
   },
   {
@@ -2166,8 +2166,8 @@
    "title": "Both players can each talk to the same NPC at once, in separate private conversations",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 631
   },
   {
@@ -2383,8 +2383,8 @@
    "title": "Shared workshop: a friend can't move a power piece or anything wired or on the host's grid (generator, lights, switches), their own build included",
    "kind": "bug",
    "priority": 3,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 623
   },
   {
@@ -2417,8 +2417,8 @@
    "title": "Dev: 'dialogue reset' leaves a stuck dialogue menu",
    "kind": "feature",
    "priority": 4,
-   "stage": 5,
-   "note": "merged (PR 634); rig-side, in rc2",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 634
   },
   {
@@ -2810,8 +2810,8 @@
    "title": "Quest NPC re-runs the host's just-finished conversation with the friend (no forced start); left waiting, it blocks the quest for both",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "fix in 0.23.0 (rc2 soaking); Cabot quest rig check queued",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 621
   },
   {
@@ -2907,8 +2907,8 @@
    "title": "Codsworth's greeting conversation can't be left with Tab or Esc (no Goodbye)",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
-   "note": "merged (PR 634); rig-side, in rc2",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 634
   },
   {
@@ -3741,8 +3741,8 @@
    "title": "Shared workshop: a friend can't move a turret (or another built actor) at the host's settlement, their own build included",
    "kind": "bug",
    "priority": 3,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 623
   },
   {
@@ -3750,8 +3750,8 @@
    "title": "Event tap: see every hit (and other events) before other plugins' sinks can stop them, read-only",
    "kind": "feature",
    "priority": 2,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 626
   },
   {
@@ -3957,8 +3957,8 @@
    "title": "Shared workshop: a friend can't move a piece that something stands on (a floor under walls or furniture), their own build included",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 623
   },
   {
@@ -4002,8 +4002,8 @@
    "title": "Settlement store vendor sells only their own pockets to the friend; the host sees the store stock (Nexus, 2026-11-26)",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 630
   },
   {
@@ -4425,8 +4425,8 @@
    "title": "Shared workshop: a friend can't scrap or store a wire at the host's settlement, one they strung themselves included",
    "kind": "bug",
    "priority": 3,
-   "stage": 6,
-   "note": "in 0.23.0-rc2; gate and soak running",
+   "stage": 7,
+   "note": "shipped in 0.23.0 (GitHub + Nexus, 2026-11-26)",
    "pr": 623
   },
   {
