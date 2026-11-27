@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T17:03:44+00:00",
+ "updated": "2026-11-27T17:07:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2361,6 +2361,14 @@
    "pr": 298
   },
   {
+   "id": "hyzt",
+   "title": "Crash on launch with only the requirements installed (Nexus, Vortex)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "queued"
+  },
+  {
    "id": "i27c",
    "title": "A rejoining game's copies of NPCs a friend runs keep their own health until the NPC's health next changes",
    "kind": "bug",
@@ -4048,6 +4056,14 @@
    "pr": 483
   },
   {
+   "id": "u9y9",
+   "title": "BOS quests split between players: Fire Support and Call to Arms (GitHub #638)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "queued"
+  },
+  {
    "id": "ub47",
    "title": "Mines go off at once for the client, without the warning beep",
    "kind": "bug",
@@ -4761,6 +4777,14 @@
    "priority": 3,
    "stage": 1,
    "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
+  },
+  {
+   "id": "zh8z",
+   "title": "Feature: one button that collects both players' logs into a zip (GitHub #624)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "queued"
   },
   {
    "id": "zk7q",
