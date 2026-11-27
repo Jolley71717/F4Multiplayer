@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T21:59:19+00:00",
+ "updated": "2026-11-27T22:04:27+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -572,8 +572,9 @@
    "title": "Crash on join in the host's game: behavior graph (hkbStateMachine::getStateIndex) from Actor::PerformAction",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "looking into it"
+   "stage": 2,
+   "note": "PR up, CI running",
+   "pr": 646
   },
   {
    "id": "4c0",
