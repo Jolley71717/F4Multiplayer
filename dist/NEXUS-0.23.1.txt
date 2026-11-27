@@ -1,0 +1,2 @@
+Fixed: Quest NPCs no longer pull the other player into a conversation that isn't theirs (for example Jack and Edward at Cabot House), which could split a quest's progress and break it for both
+Same protocol as 0.23.0 (86): they can play together
