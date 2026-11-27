@@ -221,6 +221,40 @@ rwalk vm "$EDWARD" 250 || say "vm's walk ended short ($WALKED)"
 rwalk host "$EDWARD" 130 || say "host's walk ended short ($WALKED)"
 say "distances to Edward: host $(dist_xy "$(pos_of host)" "$(field "$(dc host "refinfo $EDWARD")" x) $(field "$(dc host "refinfo $EDWARD")" y)"), vm $(dist_xy "$(pos_of vm)" "$(field "$(dc vm "refinfo $EDWARD")" x) $(field "$(dc vm "refinfo $EDWARD")" y)")"
 
+# FRIEND_TALK=1 (phase 1): instead of the host's talk, the FRIEND's own conversation with Edward (a quest NPC the host's game runs, the host
+# not talking to him): the friend walks to him, aims, presses E (real input); its dialogue menu must open and stay open FT_SECS s, and the
+# game must not close it ("Dialogue: closing the dialogue menu scene ... opened" is for a scene's menu, never one the friend's player
+# started). Not proven on the rig yet (2026-11-27: a bare "Hey." / "Yeah?" and no wheel at quest stage 0, then the friend could not be placed by Edward at stage 20). REPRO: NO = it did (the 0.23.0 behaviour kept); YES = the menu closed or never opened though Edward was named; VOID = the crosshair never named him.
+if [ "${FRIEND_TALK:-0}" = 1 ]; then
+	FT_SECS=${FT_SECS:-12}
+	# the friend's own MS09Intro is at stage 0 while the host's radiantstart moved the host's to 10, and Edward has nothing to say to a game that never met the quest (a bare "Hey." / "Yeah?", no wheel), so the friend's game is put at the same stage first (console setstage, said)
+	say "FRIEND_TALK: set-up (console): the friend's MS09Intro set to the host's stage $(stage_of host $INTRO)"
+	dc vm "console setstage $INTRO $(stage_of host $INTRO)" >/dev/null; sleep 3
+	say "FRIEND_TALK: the friend walks up to Edward (the pad) and presses E; the host does nothing"
+	rwalk vm "$EDWARD" 130 || say "vm's walk ended short ($WALKED)"
+	dc vm "pad unplug" >/dev/null
+	rmark vm c
+	for i in aim "aim -40" "aim -60" "aim -20" "aim 20" "aim 0 25" "aim 0 -25" "aim -40 25" "aim -40 -25"; do
+		dc vm "turnto $EDWARD 300 $i" >/dev/null; sleep 0.9; ROLLOVER=$(rrollover vm)
+		grep -qi EDWARD <<<"$ROLLOVER" && break
+		say "the friend's crosshair named '$ROLLOVER', not Edward ('$i')"
+	done
+	grep -qi EDWARD <<<"$ROLLOVER" || verdict VOID "the friend's crosshair never named Edward"
+	say "the friend's crosshair named '$ROLLOVER'; the friend presses E"
+	rkey vm "$VK_E" 100
+	ft_open=no; ft_end=0
+	if wait_for 10 menu_open vm DialogueMenu; then
+		ft_open=yes; t0=$SECONDS
+		while [ $((SECONDS - t0)) -lt "$FT_SECS" ]; do menu_open vm DialogueMenu || { ft_end=$((SECONDS - t0)); break; }; sleep 1; done
+	fi
+	ft_n=$(rsince vm c | grep -c "closing the dialogue menu")
+	say "the friend's menu opened: $ft_open; closed after: $ft_end s (0 = still open after $FT_SECS s); talkingTo $(field "$(dc vm 'net status')" talkingTo); 'closing the dialogue menu' lines: $ft_n"
+	rsince vm c | grep -E "Dialogue: (stopping|closing)|NpcSync: (talking to|not talking to|our dialogue menu)" | cut -c1-230 | tee -a "$REPRO_OUT/run.log" | head -8
+	rkeep vm after; rkeep host after
+	if [ "$ft_open" = yes ] && [ "$ft_end" = 0 ] && [ "$ft_n" = 0 ]; then verdict NO "the friend's own conversation with Edward opened and stayed open $FT_SECS s; the game closed none"; fi
+	verdict YES "the friend's own conversation with Edward did not stay open (opened: $ft_open, closed after $ft_end s, $ft_n 'closing the dialogue menu' lines)"
+fi
+
 # the friend's samples: how many looks it was in a scene with no conversation of its own open, with its own conversation open
 FRIEND_SCENE=0; FRIEND_MENU=0; LOOKS=0; FRIEND_SCENES=""
 look() {
