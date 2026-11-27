@@ -1,0 +1,4 @@
+Fixed: the Brotherhood of Steel quests (Fire Support, Call to Arms) no longer split between players, so Danse talks to both
+Fixed: a crash in the host's game while a friend joins
+A version mismatch now names both versions and says who should update, instead of protocol numbers
+Same protocol as 0.23.0 and 0.23.1 (86): they can play together
