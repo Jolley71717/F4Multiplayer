@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T20:41:57+00:00",
+ "updated": "2026-11-27T21:56:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2051,7 +2051,7 @@
    "title": "Crash on join is back on 0.23.1, now in the host's game: null call in QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 4,
    "note": "looking into it",
    "pr": 643
   },
@@ -4078,7 +4078,7 @@
    "title": "BOS quests split between players: Fire Support and Call to Arms (GitHub #638)",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 4,
    "note": "PR 642 draft; rig re-run: 1 clean NO, stopped after 2 host join crashes",
    "pr": 642
   },
