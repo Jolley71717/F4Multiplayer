@@ -24,6 +24,9 @@ namespace Equipment
 	// after the last item work; only the actor's readiness and its settled 3D. Main thread.
 	[[nodiscard]] bool ReadyForItems(RE::Actor* a_actor, std::string_view a_what, bool a_waitQuiet = true);
 	[[nodiscard]] std::uint32_t ItemWorkDeferred();  // deferrals this session
+	// Item work on the actor was done just now by a caller outside Equipment (the shared loot's change to a corpse or an NPC):
+	// the next waits ItemWork::QUIET, as it does after Equipment's own.
+	void ItemWorkDone(RE::Actor* a_actor);
 
 	// MayChange in two steps, for a caller that may wait on a refusal rather than take it (a friend's pickup of an item
 	// in no cell, OwnGear::TryAgain): the verdict, read from the engine and neither counted nor logged; then Count, which

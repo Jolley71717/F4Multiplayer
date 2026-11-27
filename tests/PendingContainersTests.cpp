@@ -517,3 +517,44 @@ TEST("history notice: how full the session looks goes by its fullest table")
 	CHECK(SharedHistoryPercent(10, 10, 54000) == 90);
 	CHECK(SharedHistoryPercent(10, Protocol::MAX_WORLD_STATE_ACTORS, 10) == 100);
 }
+
+// A change to an actor (a corpse, an NPC) goes in only once the engine has it ready for item work: the change queues engine
+// work that reads its 3D, and a host's game crashed in that queue as a friend joined and the loot was caught up.
+TEST("pending loot: a change to an actor that is not ready for item work waits, in order, and goes in once it is")
+{
+	LootSync::Loot            loot;
+	bool                      ready = false;
+	std::vector<std::int32_t> applied;
+	ChestWorld                world{ [](std::uint32_t) { return true; }, [&](const Change& a_change) { applied.push_back(a_change.count); } };
+	world.ready = [&](std::uint32_t) { return ready; };
+	const auto now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, -1 }), now, world);
+	loot.Live(Numbered(1, ALICE, { CHEST_A, ITEM, 2 }), now, world);
+	CHECK(applied.empty());  // nothing touched the actor
+	CHECK(loot.Waiting().size() == 2);
+	CHECK(loot.Retry(CHEST_A, world) == 0);  // still not ready
+	CHECK(applied.empty());
+	CHECK(loot.Stats().notReady >= 2);
+	ready = true;
+	CHECK(loot.Retry(CHEST_A, world) == 2);
+	CHECK((applied == std::vector<std::int32_t>{ -1, 2 }));
+	CHECK(loot.Waiting().empty());
+}
+
+TEST("pending loot: a holder that is not ready does not hold up another's changes, and each change tells the world it worked on its holder")
+{
+	LootSync::Loot             loot;
+	std::vector<std::uint32_t> worked;
+	std::vector<std::int32_t>  applied;
+	ChestWorld                 world{ [](std::uint32_t) { return true; }, [&](const Change& a_change) { applied.push_back(a_change.count); } };
+	world.ready = [](std::uint32_t a_holder) { return a_holder == CHEST_B; };
+	world.worked = [&](std::uint32_t a_holder) { worked.push_back(a_holder); };
+	const auto now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, -1 }), now, world);
+	loot.Live(Numbered(1, ALICE, { CHEST_B, ITEM, 3 }), now, world);
+	CHECK((applied == std::vector<std::int32_t>{ 3 }));
+	CHECK((worked == std::vector<std::uint32_t>{ CHEST_B }));
+	CHECK(loot.Waiting().size() == 1);
+}

@@ -18,12 +18,23 @@ namespace TestServer
 
 		std::function<bool(std::uint32_t)>  loaded;
 		std::function<void(const Change&)> put;
+		std::function<bool(std::uint32_t)>  ready;   // the holder takes item work (an actor the engine has ready); empty: always
+		std::function<void(std::uint32_t)>  worked;  // a change went into the holder
 
 		ChestWorld(std::function<bool(std::uint32_t)> a_loaded, std::function<void(const Change&)> a_put) :
 			loaded(std::move(a_loaded)), put(std::move(a_put))
 		{}
 
 		bool Loaded(std::uint32_t a_holder) override { return loaded(a_holder); }
+
+		bool ReadyForItems(std::uint32_t a_holder) override { return !ready || ready(a_holder); }
+
+		void ItemWorked(std::uint32_t a_holder) override
+		{
+			if (worked) {
+				worked(a_holder);
+			}
+		}
 
 		LootScope::HolderFacts Holder(std::uint32_t) override { return { .kind = LootScope::Holder::kContainer }; }
 
