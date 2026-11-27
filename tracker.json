@@ -1,7 +1,7 @@
 {
- "release": "0.23.0",
+ "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T12:47:59+00:00",
+ "updated": "2026-11-27T15:36:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3970,6 +3970,14 @@
    "note": "Not working yet: our first attempt was dropped. Groundwork for the next attempt is in the next release.",
    "pr": 169,
    "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
+  },
+  {
+   "id": "tuu6",
+   "title": "Host combat p99 frame time swings 3.5-14 ms on the rig with either DLL (0.23.0 and 0.23.1-rc1); the perf check fails half the time",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "rig perf check flaky on the host"
   },
   {
    "id": "twar",
