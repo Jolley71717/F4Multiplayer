@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <cctype>
 #include <concepts>
 #include <initializer_list>
@@ -12,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "ModVersions.h"
 #include "TextEnglish.h"
 
 // Everything the player reads that the plugin wrote: the HUD's notices, the F1 menu's pages and buttons, the
@@ -314,10 +316,20 @@ namespace Text
 		return Expand(GetEnglish(a_key), a_args);
 	}
 
+	// The running mod's version ("0.23.1"), from the build (xmake.lua's set_version); "" when a build has none.
+	[[nodiscard]] constexpr std::string_view OwnVersion()
+	{
+#ifdef F4MP_VERSION
+		return F4MP_VERSION;
+#else
+		return {};
+#endif
+	}
+
 	// A server's refusal as the joining player reads it. The server's texts are English on the wire (any version of the
 	// server or a dedicated one sends them); the ones this client knows are shown in its language, and any other text
 	// (a changed server's) as it came.
-	[[nodiscard]] inline std::string Reject(std::string_view a_reason)
+	[[nodiscard]] inline std::string Reject(std::string_view a_reason, std::string_view a_ownVersion = OwnVersion())
 	{
 		static constexpr std::pair<std::string_view, std::string_view> WHOLE[] = {
 			{ "Not an F4Multiplayer client", "reject.not_client" },
@@ -346,6 +358,20 @@ namespace Text
 				const auto you = rest.substr(middle + VERSION_MIDDLE.size());
 				const auto digits = [](std::string_view a_s) { return !a_s.empty() && a_s.size() < 10 && std::ranges::all_of(a_s, [](char a_c) { return a_c >= '0' && a_c <= '9'; }); };
 				if (digits(server) && digits(you)) {
+					const auto host = static_cast<std::uint32_t>(std::stoul(std::string{ server }));
+					const auto mine = static_cast<std::uint32_t>(std::stoul(std::string{ you }));
+					const auto names = ModVersions::NamesOf(host);
+					// Versions, not protocol numbers: a player can't tell who must update from "85" and "86". The host's
+					// number being higher is a newer mod than this one; lower, an older one (named when known).
+					if (!a_ownVersion.empty() && host != mine) {
+						if (host > mine) {
+							return Format("reject.version_newer", { { "you", a_ownVersion } });
+						}
+						if (!names.empty()) {
+							return Format("reject.version_older", { { "host", names }, { "you", a_ownVersion } });
+						}
+						return Format("reject.version_older_unknown", { { "you", a_ownVersion } });
+					}
 					return Format("reject.version", { { "server", server }, { "you", you } });
 				}
 			}
