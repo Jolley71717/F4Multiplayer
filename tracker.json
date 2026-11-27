@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T22:24:30+00:00",
+ "updated": "2026-11-27T22:45:36+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1134,8 +1134,8 @@
    "title": "Version-mismatch reject names protocol numbers, not mod versions",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "merged (PR 641)",
+   "stage": 6,
+   "note": "in 0.23.2-rc1",
    "pr": 641
   },
   {
@@ -2052,8 +2052,8 @@
    "title": "Crash on join is back on 0.23.1, now in the host's game: null call in QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "merged (PR 643); not reproduced, 15 clean joins",
+   "stage": 6,
+   "note": "in 0.23.2-rc1",
    "pr": 643
   },
   {
@@ -4079,8 +4079,8 @@
    "title": "BOS quests split between players: Fire Support and Call to Arms (GitHub #638)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "merged (PR 642)",
+   "stage": 6,
+   "note": "in 0.23.2-rc1",
    "pr": 642
   },
   {
