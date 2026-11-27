@@ -692,6 +692,9 @@ namespace WeaponFire
 		if (!a_actor || a_actor->IsDead(false) || !a_actor->Get3D()) {
 			return;
 		}
+		if (!Equipment::ReadyForGraph(a_actor, "replayed shot or action")) {
+			return;
+		}
 		// A gun put away (the stand-in draws it again after it is dressed) still sounds: only the firing animation
 		// needs it out (AttackKind::ReplayShot).
 		const auto replay = AttackKind::ReplayShot(HoldsGun(a_actor), a_actor->GetWeaponMagicDrawn());
@@ -801,6 +804,9 @@ namespace WeaponFire
 	{
 		static const RE::BSFixedString reloadStart{ "reloadStart" };
 		if (!a_actor || a_actor->IsDead(false) || !a_actor->Get3D()) {
+			return;
+		}
+		if (!Equipment::ReadyForGraph(a_actor, "replayed shot or action")) {
 			return;
 		}
 		// Emotes: an idle, played the way the console does (the stand-in takes it while standing still).

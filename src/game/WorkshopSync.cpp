@@ -2867,6 +2867,12 @@ namespace WorkshopSync
 			if (!parts.model) {
 				return WorkshopPower::Outcome(parts, a_on);
 			}
+			// A copy that is an actor (a turret, a robot) is shown only once the engine has its graph settled (Equipment::ReadyForGraph);
+			// until then it counts as one with no model yet, which is tried again.
+			if (const auto copyActor = a_copy.As<RE::Actor>(); copyActor && !Equipment::ReadyForGraph(copyActor, "workshop power graph event")) {
+				parts.model = false;
+				return WorkshopPower::Outcome(parts, a_on);
+			}
 			const auto id = a_copy.GetFormID();
 			parts.light = IsLightBase(a_copy);
 			if (parts.light && !a_forSave) {

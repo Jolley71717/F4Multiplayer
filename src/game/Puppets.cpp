@@ -876,6 +876,9 @@ namespace Puppets
 			if (puppet->kind == Kind::kPlayer) {
 				KeepHealthy(a_this);
 			}
+			// Nothing is told its graph (variables, events, draw and holster actions) while the engine has no settled 3D and graph
+			// for it: a graph handling an event as it is built or swapped crashed a host as a friend joined (Equipment::ReadyForGraph).
+			const bool graphReady = Equipment::ReadyForGraph(a_this, "puppet animation");
 			// Held for furniture (Hold): in it, the furniture's own graph and marker place and animate it; on its way in, or
 			// left beside it, it stands where it is with its legs stopped. Neither its target's spot nor its locomotion events
 			// reach it: the spot is on the seat (followed, it stood on the couch), and "moveStart" and the rest would fight the
@@ -891,6 +894,9 @@ namespace Puppets
 					}
 				}
 				a_this->UpdateNoAI(a_delta);
+				if (!graphReady) {
+					return;
+				}
 				SetUpRebuiltGraph(a_this, *puppet);
 				if (!OccupiedFurniture(a_this)) {
 					auto still = *puppet;
@@ -921,7 +927,7 @@ namespace Puppets
 					}
 				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
-				if (!puppet->down) {
+				if (!puppet->down && graphReady) {
 					MatchWeaponDrawn(a_this, *puppet);
 				}
 				// The engine feeds its locomotion graph from the actor's desired movement, which for an
@@ -941,6 +947,9 @@ namespace Puppets
 			// The no-AI update only places the actor's 3D (Actor::UpdateActor3DPosition): it writes neither
 			// the desired speed above nor the graph's variables, which DriveAnimation sets below.
 			a_this->UpdateNoAI(a_delta);
+			if (!graphReady) {
+				return;
+			}
 			SetUpRebuiltGraph(a_this, *puppet);
 			if (puppet->hasTarget && !puppet->down) {
 				DriveAnimation(a_this, *puppet);
