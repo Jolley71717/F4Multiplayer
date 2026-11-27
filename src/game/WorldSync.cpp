@@ -5,6 +5,7 @@
 #include "game/CopyRevive.h"
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
+#include "game/Dialogue.h"
 #include "game/DeathReports.h"
 #include "game/BlockerShare.h"
 #include "game/DoorShare.h"
@@ -3415,6 +3416,7 @@ namespace WorldSync
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
 			NpcSync::OnActivated(activation.ref);
+			Dialogue::OnActivated(activation.ref);
 			Traps::OnPlayerActivated(activation.ref);  // a mine gone a moment later was picked up
 			// A button, switch or lever: the others press it too, so what it drives happens in their games. Not a trap: its
 			// state is shared (Traps), and a press replayed by our stand-in would disarm theirs and give their player the XP.

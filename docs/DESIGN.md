@@ -3489,6 +3489,16 @@ hand-off gave it to us (FriendlyHandOff) and whose conditions hold here too.
 Stopping a scene ends it, and its end or a phase's end fragment can set a stage of its quest, which would be reported as this
 game's progress while the other game's scene still plays (`ForeignScene::Guard`, `Dialogue::StageHeldBack`): for 10 s after a stop,
 a stage of that scene's quest set here is not reported (logged each), unless the other game's own stage of the quest came after the stop.
+The same scene can open the dialogue menu in our game by itself, with no key pressed (the Cabot House's scene of the intercom,
+Jack and Edward, GitHub #614: the friend's game opened it as they came through the door, claimed Jack and Edward as the speaker
+of "its" conversation, and the quest split). So "a conversation of ours" is one our player started: the dialogue menu opened with
+our player's activation of its speaker within 5 s before (`ForeignScene::Talk`, fed by `Dialogue::OnActivated` from the activation
+events), judged once at the menu's opening and kept while it stays open. A menu the scene opened, with its NPCs all another
+game's and none of ours in a shared quest's scene, is not ours: `Dialogue::Holds` and NpcSync's talk partner
+(`Dialogue::ForeignTalk`) don't take its speaker, and after the grace it is ended with `Dialogue::End(true)` (speaker let go,
+scene stopped, reset, menu hidden last) and the scene stopped; the scene may open the menu once more as it stops, and the retry
+(every 5 s, 3 times) ends that one too. A conversation our E opened, a scene with an NPC our game runs (Codsworth's greeting
+when our game runs him), an unshared quest's scene and the session's own scene are left alone.
 The talk partner (`NpcSync::FindPartner`) is the engine's conversation speaker when the dialogue menu is open, the NPC the player
 activated or the nearest one only as a fallback: a forced greeting by an NPC with another standing nearer no longer claims the
 nearer one.
