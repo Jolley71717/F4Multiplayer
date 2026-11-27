@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T17:43:49+00:00",
+ "updated": "2026-11-27T20:25:00+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -4061,8 +4061,9 @@
    "title": "BOS quests split between players: Fire Support and Call to Arms (GitHub #638)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "repro on the rig"
+   "stage": 2,
+   "note": "PR 642 draft; rig re-run: 1 clean NO, stopped after 2 host join crashes",
+   "pr": 642
   },
   {
    "id": "ub47",
