@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T17:23:54+00:00",
+ "updated": "2026-11-27T17:43:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1125,8 +1125,8 @@
    "title": "Version-mismatch reject names protocol numbers, not mod versions",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "PR open",
+   "stage": 5,
+   "note": "merged (PR 641)",
    "pr": 641
   },
   {
