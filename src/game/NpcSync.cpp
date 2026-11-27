@@ -2700,7 +2700,8 @@ namespace NpcSync
 		}
 		// The partner is found when the conversation starts and kept until it ends. One conversation per NPC (TalkOwner):
 		// the engine opens one on any NPC we press E on, a friend's too, and the one who started first owns it.
-		const bool inConversation = OpenMenus::Open(OpenMenus::Menu::kDialogue);
+		// A menu a scene of another game's NPCs opened here is theirs: no partner, nothing claimed (Dialogue::ForeignTalk).
+		const bool inConversation = OpenMenus::Open(OpenMenus::Menu::kDialogue) && !Dialogue::ForeignTalk();
 		if (!inConversation) {
 			talkingTo = 0;
 			talkFirm = false;

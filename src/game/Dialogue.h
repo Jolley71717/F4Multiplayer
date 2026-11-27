@@ -19,6 +19,13 @@ namespace Dialogue
 	// (ForeignScene::Guard), so a stage its end set is not progress. a_remote: when a stage of it last came from another game.
 	[[nodiscard]] bool StageHeldBack(std::uint32_t a_quest, std::optional<std::chrono::steady_clock::time_point> a_remote);
 
+	// Our player activated a_ref (E, a console activate): a dialogue menu that opens next with it as speaker is theirs.
+	void OnActivated(std::uint32_t a_ref);
+
+	// Whether the open dialogue menu is another game's conversation: a scene of a shared quest, played by NPCs another game
+	// runs, opened it (ForeignScene.h). Its speaker is not our conversation's and is not claimed.
+	[[nodiscard]] bool ForeignTalk();
+
 	// The plugin is taking a reference (form ID a_id; a_ref when its handle still resolves) out of the
 	// world: a conversation it leaves open as its speaker is the plugin's to end (see StrandedDialogue).
 	// Call before disabling it, so the scene it is in is still known.

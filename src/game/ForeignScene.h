@@ -17,9 +17,15 @@
 // (Dialogue::Holds): the NPC changes hands to the friend's game, runs its scene package there waiting for the friend, and
 // the host's quest never gets it where it must go.
 //
+// The scene can also open the dialogue menu in our game by itself, with no key pressed (the Cabot House's scene of the
+// intercom, Jack and Edward, 2026-11-27): that menu is the other game's conversation, and if its speaker were taken for ours
+// (Dialogue::Holds, NpcSync's talk partner) the NPCs would change hands and the quest's progress split.
+//
 // So a scene that holds our player, is of a quest the session shares, and is played by NPCs another game runs (and none of
-// ours), with no conversation of ours open, is stopped here (the game that runs its NPCs plays it) and its NPCs are not
-// claimed. A scene with one of our NPCs in it, or one our player's talk is part of, stays.
+// ours), with no conversation of ours open, is stopped here (the game that runs its NPCs plays it), the menu it opened is
+// closed, and its NPCs are not claimed. A conversation of ours is one our player started: the dialogue menu opened with
+// our player's activation of its speaker just before (Talk). A scene with one of our NPCs in it, or one our player's talk
+// is part of, stays.
 namespace ForeignScene
 {
 	using Clock = std::chrono::steady_clock;
@@ -35,10 +41,38 @@ namespace ForeignScene
 	struct Facts
 	{
 		std::uint32_t scene = 0;            // the scene (0: none)
-		bool          talking = false;      // the dialogue menu is open: a conversation of ours (or our talk's scene)
+		bool          talking = false;      // the dialogue menu is open and our player started it (Talk): a conversation of ours
+		bool          menu = false;         // the dialogue menu is open, whoever started it
 		bool          shared = false;       // its quest is one the session shares
 		bool          foreignNpcs = false;  // an NPC in it is run by another game
 		bool          ourNpcs = false;      // an NPC in it is run by ours (or by none yet, or is a town scene's of ours)
+	};
+
+	// How long an activation of an NPC counts as what opened its dialogue menu.
+	inline constexpr auto ACTIVATION = std::chrono::seconds(5);
+
+	// Whether the open dialogue menu was started by our player: its speaker was activated by them just before it opened. Told at
+	// the menu's opening and kept until it closes (a scene's menu opened later is not ours because a talk was).
+	class Talk
+	{
+	public:
+		// a_menu: the dialogue menu is open. a_activated: our player activated its speaker within ACTIVATION of now.
+		bool Update(bool a_menu, bool a_activated)
+		{
+			if (!a_menu) {
+				open = ours = false;
+				return false;
+			}
+			if (!open) {
+				open = true;
+				ours = a_activated;
+			}
+			return ours;
+		}
+
+	private:
+		bool open = false;
+		bool ours = false;
 	};
 
 	// Whether the scene is another game's to play (the facts alone, no wait).

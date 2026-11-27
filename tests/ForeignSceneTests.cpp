@@ -127,3 +127,72 @@ TEST("foreign scene guard: the other game's stage of the quest after the stop en
 	guard.Clear();
 	CHECK(!guard.Holds(0x0001E64E, T0 + 6s));
 }
+
+TEST("foreign scene: a menu the scene opened, its NPCs all another game's and no activation of ours, is stopped")
+{
+	ForeignScene::Talk talk;
+	auto               facts = Theirs();
+	facts.menu = true;
+	facts.talking = talk.Update(true, false);  // no activation of its speaker by our player
+	CHECK(!facts.talking);
+	CHECK(ForeignScene::IsForeign(facts));
+	ForeignScene::Watch watch;
+	CHECK(watch.Update(facts, T0) == Verdict::kWait);
+	CHECK(watch.Foreign() == SEARCH);  // its NPCs are not claimed meanwhile
+	CHECK(watch.Update(facts, T0 + ForeignScene::GRACE) == Verdict::kStop);
+}
+
+TEST("foreign scene: a menu our own E opened is left alone, for as long as it is open")
+{
+	ForeignScene::Talk talk;
+	auto               facts = Theirs();
+	facts.menu = true;
+	facts.talking = talk.Update(true, true);
+	CHECK(facts.talking);
+	CHECK(!ForeignScene::IsForeign(facts));
+	// the activation is old by now, the same menu is still ours
+	CHECK(talk.Update(true, false));
+	ForeignScene::Watch watch;
+	CHECK(watch.Update(facts, T0 + 30s) == Verdict::kKeep);
+	// closed: the next menu is judged afresh
+	CHECK(!talk.Update(false, false));
+	CHECK(!talk.Update(true, false));
+}
+
+TEST("foreign scene: an NPC of ours in the scene keeps it and its menu, whoever opened the menu")
+{
+	auto facts = Theirs();
+	facts.menu = true;
+	facts.ourNpcs = true;
+	CHECK(!ForeignScene::IsForeign(facts));
+	ForeignScene::Watch watch;
+	CHECK(watch.Update(facts, T0 + 30s) == Verdict::kKeep);
+}
+
+TEST("foreign scene: a menu of an unshared quest's scene, or with no scene, is left alone")
+{
+	auto unshared = Theirs();
+	unshared.menu = true;
+	unshared.shared = false;
+	CHECK(!ForeignScene::IsForeign(unshared));
+	ForeignScene::Facts none;
+	none.menu = true;
+	CHECK(!ForeignScene::IsForeign(none));
+}
+
+TEST("foreign scene: a menu the scene opens again after being stopped is stopped again, not taken for ours")
+{
+	ForeignScene::Talk  talk;
+	ForeignScene::Watch watch;
+	auto                facts = Theirs();
+	facts.menu = true;
+	facts.talking = talk.Update(true, false);
+	CHECK(watch.Update(facts, T0) == Verdict::kWait);
+	CHECK(watch.Update(facts, T0 + ForeignScene::GRACE) == Verdict::kStop);
+	// the stop closed the menu, the scene opened it once more
+	facts.talking = talk.Update(false, false);
+	facts.talking = talk.Update(true, false);
+	CHECK(!facts.talking);
+	CHECK(watch.Update(facts, T0 + ForeignScene::GRACE + ForeignScene::RETRY) == Verdict::kStop);
+	CHECK(watch.Stops() == 2);
+}

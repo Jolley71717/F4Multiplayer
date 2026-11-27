@@ -63,16 +63,26 @@ namespace Dialogue
 		Clock::time_point   sceneLooked{};
 		constexpr auto      SCENE_LOOK = std::chrono::milliseconds(100);
 		std::uint32_t       foreignStopped = 0;  // scenes stopped here
+		ForeignScene::Talk  talk;
+		std::uint32_t       activatedRef = 0;  // what our player activated last, and when
+		Clock::time_point   activatedAt{};
 
 		ForeignScene::Facts LookAtScene()
 		{
 			ForeignScene::Facts facts;
-			const auto          scene = PlayerScene();
+			facts.menu = OpenMenus::Open(OpenMenus::Menu::kDialogue);
+			bool activated = false;
+			if (facts.menu) {
+				const auto topics = TopicManager();
+				const auto speaker = topics ? topics->speaker.get() : nullptr;
+				activated = speaker && speaker->GetFormID() == activatedRef && Clock::now() - activatedAt < ForeignScene::ACTIVATION;
+			}
+			facts.talking = talk.Update(facts.menu, activated);
+			const auto scene = PlayerScene();
 			if (!scene) {
 				return facts;
 			}
 			facts.scene = scene->GetFormID();
-			facts.talking = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 			facts.shared = scene->parentQuest && QuestSync::SharesHere(scene->parentQuest);
 			const auto lists = RE::ProcessLists::GetSingleton();
 			if (!facts.shared || facts.talking || !lists) {
@@ -129,6 +139,14 @@ namespace Dialogue
 				scene->GetFormID(), scene->parentQuest ? scene->parentQuest->GetFormID() : 0, foreign.Stops(), ForeignScene::MAX_TRIES);
 			if (scene->parentQuest) {
 				guard.Stopped(scene->parentQuest->GetFormID(), now);
+			}
+			// A menu the scene opened is the other game's conversation: ended as a forced one is (the speaker let go, the scene
+			// stopped, the reset, the menu hidden last). The scene can open it once more as it stops: the retry ends that too.
+			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
+				REX::INFO("Dialogue: closing the dialogue menu scene {:08X} opened: it is the other game's conversation, not one our player started", scene->GetFormID());
+				if (End(true).empty()) {
+					return;
+				}
 			}
 			Papyrus::CallMethod(scene, "Scene", "Stop", true);
 		}
@@ -193,13 +211,26 @@ namespace Dialogue
 		return manager;
 	}
 
+	void OnActivated(std::uint32_t a_ref)
+	{
+		activatedRef = a_ref;
+		activatedAt = Clock::now();
+	}
+
+	bool ForeignTalk()
+	{
+		const auto& facts = SceneNow(Clock::now());
+		return facts.menu && ForeignScene::IsForeign(facts);
+	}
+
 	bool Holds(RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref) {
 			return false;
 		}
 		if (const auto topics = TopicManager(); topics && topics->menuOpen && topics->speaker.get().get() == a_ref) {
-			return true;
+			// Not the speaker of a menu another game's scene opened here: it is not our conversation (ForeignScene.h).
+			return !ForeignScene::IsForeign(SceneNow(Clock::now()));
 		}
 		// Not a scene a friend's stage started here (Codsworth's search, from his talk's stage): the friend is
 		// playing it, and its people are theirs to run; claimed for it, Codsworth would be taken from the friend
