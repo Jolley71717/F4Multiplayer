@@ -63,24 +63,34 @@ rwalk "$FIRST" "$CODS" 200 || say "$FIRST's walk ended short ($WALKED)"
 dc "$FIRST" "pad unplug" >/dev/null
 fp=$(pos_of "$FIRST"); cp=$(field "$(dc "$FIRST" "refinfo $CODS")" x)" "$(field "$(dc "$FIRST" "refinfo $CODS")" y)
 far=$(awk -v a="$fp" -v b="$cp" 'BEGIN{split(a,p," "); split(b,q," "); dx=q[1]-p[1]; dy=q[2]-p[2]; l=sqrt(dx*dx+dy*dy); if (l<1) {dx=1; dy=0; l=1} printf "%d %d", q[1]+dx/l*160, q[2]+dy/l*160}')
-say "$SECOND walks to $far, the far side of Codsworth (the pad)"
-# shellcheck disable=SC2086
-rwalk "$SECOND" $far 80 || say "$SECOND's walk ended short ($WALKED)"
-dc "$SECOND" "pad unplug" >/dev/null
-say "owner of Codsworth before: host sees player $(field "$(dc host "refinfo $CODS")" owner), vm sees player $(field "$(dc vm "refinfo $CODS")" owner)"
+walk_second() {
+	say "$SECOND walks to $far, the far side of Codsworth (the pad)"
+	# shellcheck disable=SC2086
+	rwalk "$SECOND" $far 80 || say "$SECOND's walk ended short ($WALKED)"
+	dc "$SECOND" "pad unplug" >/dev/null
+}
+owner_now() { say "owner of Codsworth before: host sees player $(field "$(dc host "refinfo $CODS")" owner), vm sees player $(field "$(dc vm "refinfo $CODS")" owner)"; }
 
 aim() { dc "$1" "turnto $CODS 300 aim" >/dev/null; }
 focus() { dc "$1" focus >/dev/null; }
 if [ "$RACE" = 1 ]; then
+	walk_second; owner_now
 	say "RACE: both players aim at Codsworth, then press E in the same moment"
 	aim_check host; aim_check vm; focus host; focus vm; sleep 0.5
 	( dc host "key $VK_E 100" >/dev/null & dc vm "key $VK_E 100" >/dev/null & wait )
 	for i in 1 2; do say "host HUD: $(rhud host)"; say "vm HUD: $(rhud vm)"; done
 else
+	# Codsworth greets whoever walks up to him (a vanilla scene: the menu opens by itself and, ended with `dialogue reset`, comes back
+	# every 12-16 s), and the greeting then keeps the other player's walk and aim from working. So the second player walks only once the
+	# first is in a conversation, and a greeting that opens for the first on arrival is their conversation: no press is needed
+	if in_menu "$FIRST" && [ "$(talking_to "$FIRST")" = "$CODS" ]; then say "$FIRST was greeted by Codsworth on arrival: that conversation is the first (menu open, talkingTo=$CODS)"
+	else
 	say "$FIRST aims at Codsworth and presses E (first)"
 	press_on "$FIRST"; say "$FIRST's crosshair named '$ROLLOVER'"
+	fi
 	talk_live() { in_menu "$FIRST" && [ "$(talking_to "$FIRST")" = "$CODS" ]; }
 	scene_live "$FIRST is in a conversation with Codsworth (menu open, talkingTo=$CODS)" 15 talk_live
+	walk_second; owner_now
 	say "$SECOND aims at their copy of Codsworth and presses E (second)"
 	rmark host b; rmark vm b
 	press_on "$SECOND"; say "$SECOND's crosshair named '$ROLLOVER'"
