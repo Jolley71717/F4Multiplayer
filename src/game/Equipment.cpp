@@ -293,6 +293,11 @@ namespace Equipment
 		return itemWorkDeferred;
 	}
 
+	void ItemWorkDone(RE::Actor* a_actor)
+	{
+		const WorkMark mark(a_actor);
+	}
+
 	bool MayMakeWay(RE::TESObjectREFR* a_ref, bool a_pickedUp)
 	{
 		auto target = Facts(a_ref);

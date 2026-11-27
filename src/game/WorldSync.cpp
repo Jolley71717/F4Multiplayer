@@ -1494,6 +1494,29 @@ namespace WorldSync
 				return ref && !ref->IsDeleted() && ref->GetParentCell();
 			}
 
+			// A corpse or an NPC takes a friend's loot only once the engine has it ready and quiet (Equipment::ReadyForItems): the
+			// change (a removeitem or additem) queues inventory work in the engine for the actor, which reads its 3D a frame or
+			// more later. Loaded is true for an actor of a cell that is not loaded here (it has a cell), and for one whose 3D
+			// has just come in: a host's game crashed in that queue (AttachEnchantmentVisuals) as a friend joined and the loot
+			// was caught up. A container is never an actor: always ready.
+			bool ReadyForItems(std::uint32_t a_holder) override
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				const auto actor = ref && !ref->IsDeleted() ? ref->As<RE::Actor>() : nullptr;
+				if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor)) {
+					return true;
+				}
+				return Equipment::ReadyForItems(actor, "loot change");
+			}
+
+			void ItemWorked(std::uint32_t a_holder) override
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				if (const auto actor = ref && !ref->IsDeleted() ? ref->As<RE::Actor>() : nullptr) {
+					Equipment::ItemWorkDone(actor);
+				}
+			}
+
 			// A settlement's workbench shared storage keeps, though Loaded says no: a persistent reference far from our player,
 			// which seems to be in no cell then (an NPC of an unloaded cell logs cell 0 here too). A friend's take at such a
 			// workbench of the host's waited for the host to come near, while the server's book had it taken (the rig, a supply

@@ -360,7 +360,13 @@ namespace RackDisplays
 				return true;
 			}
 			++pickedUp;
-			if (from && Equipment::MayChange(from, OwnGear::Change::kRackCopy) && ItemCopies::TakeOut(from, a_copy.entry.item, 1)) {
+			// An NPC's inventory is worked on only once the engine has the NPC ready and quiet (Equipment::ReadyForItems).
+			const auto holder = from ? from->As<RE::Actor>() : nullptr;
+			const bool ready = !holder || holder->IsPlayerRef() || Equipment::ReadyForItems(holder, "rack copy take-back");
+			if (from && ready && Equipment::MayChange(from, OwnGear::Change::kRackCopy) && ItemCopies::TakeOut(from, a_copy.entry.item, 1)) {
+				if (holder) {
+					Equipment::ItemWorkDone(holder);
+				}
 				++takenBack;
 				REX::WARN("RackDisplays: copy {:08X} of a friend's rack weapon {:08X} was picked up past its block; taken back out of {:08X}", a_copy.refId,
 					a_copy.entry.item.base, from->GetFormID());

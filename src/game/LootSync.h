@@ -61,6 +61,12 @@ namespace LootSync
 		// (Storage::WatchesBench), whose inventory the engine itself changes from afar (a build's supply lines, a settlement's
 		// production), and so does Storage. We are in the world, and its reference is here. None, by default.
 		virtual bool                   FromAfar(std::uint32_t) { return false; }
+		// The holder can take item work now: an actor (a corpse, a living NPC) is one only once the engine has it ready and
+		// quiet (ItemWork.h), as every change to its inventory queues engine work that reads its 3D; anything else always is. A
+		// change to a holder that isn't waits like one that isn't loaded, and goes in on a later try. Always, by default.
+		virtual bool                   ReadyForItems(std::uint32_t) { return true; }
+		// A change went into the holder (Apply): the next waits its quiet time (ItemWork::QUIET). Nothing, by default.
+		virtual void                   ItemWorked(std::uint32_t) {}
 		virtual LootScope::HolderFacts Holder(std::uint32_t a_holder) = 0;
 		// The item's own facts (questAlias is the holder's: see QuestAlias).
 		virtual LootScope::ItemFacts   Item(std::uint32_t a_item) = 0;
@@ -154,6 +160,7 @@ namespace LootSync
 			std::uint32_t storageOverflow = 0; // the player's moves at a friend's storage undone unsent (too many unanswered)
 			std::uint32_t openApplied = 0;     // waiting changes that went in as our player opened their holder (Opened)
 			std::uint32_t fromAfar = 0;        // changes that went in at a workbench shared storage keeps, not loaded here (FromAfar)
+			std::uint32_t notReady = 0;        // tries put off because the holder, an actor, was not ready for item work (ReadyForItems)
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -365,7 +372,7 @@ namespace LootSync
 		// a few at a time: see RetrySchedule), in order, until one can't go in. Time spent waiting for a living
 		// NPC is counted by Retry(World&, elapsed), not here. Returns how many went in (or were left out for
 		// good by the rule).
-		std::size_t Retry(std::uint32_t a_container, World& a_world)
+		std::size_t Retry(std::uint32_t a_container, World& a_world, bool a_menuOpen = false)
 		{
 			std::size_t applied = 0;
 			bool        blocked = false;
@@ -378,7 +385,7 @@ namespace LootSync
 					a_pending.alive = a_pending.alive || alive;
 					return false;
 				}
-				switch (TryApply(a_pending.index, a_pending.change, a_world)) {
+				switch (TryApply(a_pending.index, a_pending.change, a_world, a_menuOpen)) {
 				case Applied::kDone:
 					++applied;
 					return true;
@@ -400,7 +407,7 @@ namespace LootSync
 		// once: what goes in leaves the queue, so the sweep and a later open find nothing more. Returns how many went in.
 		std::size_t Opened(std::uint32_t a_container, World& a_world)
 		{
-			const auto applied = Retry(a_container, a_world);
+			const auto applied = Retry(a_container, a_world, true);
 			counts.openApplied += static_cast<std::uint32_t>(applied);
 			return applied;
 		}
@@ -572,6 +579,7 @@ namespace LootSync
 				a_world.Apply({ a_change.container, stack.item, -static_cast<std::int32_t>(stack.count - kept) });
 				++counts.emptiedStacks;
 			}
+			a_world.ItemWorked(a_change.container);
 			// What friends take after this is told afresh (the holder's loot may respawn, and the next emptying is of that).
 			if (took != friendTook.end()) {
 				friendTook.erase(took);
@@ -672,12 +680,18 @@ namespace LootSync
 		// host's own moves there went on from a pile the book no longer had (up to the first rig test of the supply lines).
 		static bool Reachable(std::uint32_t a_holder, World& a_world) { return a_world.Loaded(a_holder) || a_world.FromAfar(a_holder); }
 
-		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world)
+		// a_menuOpen: our player has the holder's menu open, which the engine draws from its inventory as it is: what a friend took
+		// goes in now, ready for item work or not (waiting would show it, and let it be taken twice).
+		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world, bool a_menuOpen = false)
 		{
 			if (SkipStorage(a_index, a_change, a_world)) {
 				return Applied::kDone;
 			}
 			if (!Reachable(a_change.container, a_world)) {
+				return Applied::kNotLoaded;
+			}
+			if (!a_menuOpen && !a_world.ReadyForItems(a_change.container)) {
+				++counts.notReady;
 				return Applied::kNotLoaded;
 			}
 			const auto keeper = a_world.Keeper(a_change.container);
@@ -736,6 +750,7 @@ namespace LootSync
 				++counts.fromAfar;
 			}
 			a_world.Apply(a_change);
+			a_world.ItemWorked(a_change.container);
 			return Applied::kDone;
 		}
 

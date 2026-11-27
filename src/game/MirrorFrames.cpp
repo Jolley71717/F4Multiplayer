@@ -36,6 +36,10 @@ namespace MirrorFrames
 
 		std::unordered_map<std::uint32_t, Entry> entries;  // by the mirror's form ID
 
+		// What a switch-in gave a mirror that its exit left to be taken back (GetOut), by the mirror: taken back once the engine has the
+		// mirror ready and quiet (Equipment::ReadyForItems), as it has just changed its 3D and queued inventory work for it.
+		std::unordered_map<std::uint32_t, std::vector<Count>> giveBacks;
+
 		struct Counters
 		{
 			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0, released = 0, releasedKnocked = 0,
@@ -139,6 +143,38 @@ namespace MirrorFrames
 			a_entry.in = false;
 		}
 
+		// What the switch-in gave a mirror, taken back out of it.
+		void TakeBack(RE::Actor* a_actor, const std::vector<Count>& a_gained)
+		{
+			for (const auto& gained : a_gained) {
+				const auto object = RE::TESForm::GetFormByID<RE::TESBoundObject>(gained.item);
+				if (!object) {
+					continue;
+				}
+				RE::TESObjectREFR::RemoveItemData data{ object, gained.count };
+				a_actor->RemoveItem(data);
+				counters.givenBack += static_cast<std::uint32_t>(gained.count);
+				REX::INFO("MirrorFrames: {:08X} gives back {} of {:08X} the switch-in gave it", a_actor->GetFormID(), gained.count, gained.item);
+			}
+			Equipment::ItemWorkDone(a_actor);
+		}
+
+		// The waiting give-backs (GetOut) whose mirror is ready for item work now go; one whose mirror is gone is dropped.
+		void TakeBackWaiting()
+		{
+			for (auto it = giveBacks.begin(); it != giveBacks.end();) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(it->first);
+				if (!actor || actor->IsDeleted()) {
+					it = giveBacks.erase(it);
+				} else if (Equipment::ReadyForItems(actor, "power armor give-back")) {
+					TakeBack(actor, it->second);
+					it = giveBacks.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+
 		// Out of its copy (when it is in it), what the switch-in gave it and the exit left taken back, the copy gone.
 		// a_leaving: we stop mirroring it (Leave), so nothing is tried again: a body (Down), or one the exit did not take out,
 		// is left in the copy and the copy left to the game (ChooseLeaving, AfterExit). Else (a frame's own try) one still in
@@ -194,15 +230,14 @@ namespace MirrorFrames
 				}
 			}
 			if (actor && a_entry.in && !Equipment::InPowerArmor(actor)) {
-				for (const auto& gained : Gained(a_entry.before, ArmorOf(actor))) {
-					const auto object = RE::TESForm::GetFormByID<RE::TESBoundObject>(gained.item);
-					if (!object) {
-						continue;
-					}
-					RE::TESObjectREFR::RemoveItemData data{ object, gained.count };
-					actor->RemoveItem(data);
-					counters.givenBack += static_cast<std::uint32_t>(gained.count);
-					REX::INFO("MirrorFrames: {:08X} gives back {} of {:08X} the switch-in gave it", a_id, gained.count, gained.item);
+				// Leaving (a save, a load, the session's end) cannot wait for the engine: done now. Else it waits until the mirror is
+				// ready for item work (TakeBack, from Update): its 3D has just changed with the exit.
+				auto gained = Gained(a_entry.before, ArmorOf(actor));
+				if (a_leaving) {
+					TakeBack(actor, gained);
+				} else if (!gained.empty()) {
+					auto& waiting = giveBacks[a_id];
+					waiting.insert(waiting.end(), gained.begin(), gained.end());
 				}
 			}
 			// Still in it (the exit did not take): never deleted from under it (its frame gone, a save would have it wear one it
@@ -352,10 +387,12 @@ namespace MirrorFrames
 			}
 		}
 		entries.clear();
+		giveBacks.clear();
 	}
 
 	void Update()
 	{
+		TakeBackWaiting();
 		const auto now = Clock::now();
 		for (auto it = entries.begin(); it != entries.end();) {
 			const auto id = it->first;
