@@ -29,9 +29,11 @@ close_talks() {
 	for g in host vm; do
 		menu_open "$g" DialogueMenu || continue
 		rkey "$g" "$VK_TAB" 100; sleep 1.5
-		# Codsworth's own talk has no goodbye, and the engine's reset leaves its menu up: the game's own reload of the cell ends it
-		menu_open "$g" DialogueMenu && { say "end step: $g's dialogue menu is still up: the cell is loaded again (console coc, a reset of the menu)"; dc "$g" "console coc SanctuaryExt" >/dev/null; sleep 3; wait_ingame "$g" 60; }
+		# Codsworth's own talk has no goodbye: the plugin's forced ending (dev `dialogue reset`) closes it, else the game's own reload of the cell does
+		for n in 1 2 3; do menu_open "$g" DialogueMenu || break; dc "$g" "dialogue reset" >/dev/null; sleep 3; done   # the first also stops the scene, which can open the menu once more
+		menu_open "$g" DialogueMenu && { say "end step: $g's dialogue menu is still up after 'dialogue reset': the cell is loaded again (console coc)"; dc "$g" "console coc SanctuaryExt" >/dev/null; sleep 3; wait_ingame "$g" 60; }
 	done
+	return 0
 }
 on_end close_talks
 
