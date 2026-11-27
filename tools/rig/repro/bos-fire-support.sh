@@ -78,16 +78,16 @@ look() {
 }
 # talk <secs>: the host's wheel, the bottom reply each time it takes input, until the menu closes; 0 when it did
 talk() {
-	local secs=$1 t0=$SECONDS opts n=0
+	local secs=$1 t0=$SECONDS opts n=0 idle=0
 	while menu_open host DialogueMenu; do
 		[ $((SECONDS - t0)) -ge "$secs" ] && { say "the host's conversation was still open after $secs s ($n replies)"; return 1; }
 		look
-		if [ "$(field "$(dc host dialogue)" allowInput)" = true ]; then
+		if [ "$(field "$(dc host dialogue)" allowInput)" = true ] || [ "$idle" -ge 2 ]; then
 			opts=$(rgfx_text host DialogueMenu root.Menu_mc.FadeHolder_mc 4 textField_tf | awk '{ $1 = ""; print substr($0, 2) }' | sort -u | paste -sd'|' -)
 			[ -n "$(tr -d '| ' <<<"$opts")" ] || { sleep 1; continue; }
 			n=$((n + 1)); say "reply $n: the wheel offers: $opts; the host takes the bottom one (Down, Enter)"
-			rkey host "$VK_DOWN" 100; sleep 0.6; rkey host "$VK_ENTER" 100; sleep 4
-		else sleep 3; fi
+			rkey host "$VK_DOWN" 100; sleep 0.6; rkey host "$VK_ENTER" 100; sleep 4; idle=0
+		else idle=$((idle + 1)); sleep 3; fi   # allowInput stayed false with the wheel up (2026-11-27, Danse's "ready to move out?"): after two looks the wheel's own text decides
 	done
 	say "the host's conversation ended after $((SECONDS - t0)) s ($n replies)"
 }
@@ -122,7 +122,7 @@ for try in 1 2 3 4; do
 	press_e host
 	wait_for 15 menu_open host DialogueMenu || { say "no menu"; continue; }
 	talk "$HOLD_TALK" || verdict VOID "the host's conversation with Danse did not end"
-	sleep 20
+	p1_done() { [ "$(stage_of host $BOS100)" -ge 255 ] 2>/dev/null; }; wait_for 60 p1_done || say "BoS100 is still at $(stage_of host $BOS100) 60 s after the talk"
 done
 if [ "$FRIEND_FAR" = 1 ]; then
 	say "the friend walks to Danse (the pad)"; rwalk vm $DANSE 200 || say "the friend's walk ended short ($WALKED)"
@@ -147,7 +147,11 @@ rwalk vm $DANSE 300 || say "the friend's walk to Danse ended short ($WALKED)"
 rwalk host $DANSE 130 || say "the host's walk to Danse ended short ($WALKED)"
 say "distances to Danse: host $(dist_xy "$(pos_of host)" "$(danse_at host)") friend $(dist_xy "$(pos_of vm)" "$(danse_at vm)")"
 rmark vm c; rmark host c
-if ! menu_open host DialogueMenu; then press_e host; wait_for 12 menu_open host DialogueMenu || say "the host's menu did not open"; fi
+for try in 1 2 3; do
+	menu_open host DialogueMenu && break
+	[ $try -gt 1 ] && { say "the host tries again (try $try)"; rwalk host $DANSE 130 || say "the host's walk to Danse ended short ($WALKED)"; }
+	press_e host; wait_for 12 menu_open host DialogueMenu && break; say "the host's menu did not open"
+done
 if menu_open host DialogueMenu; then talk "$HOLD_TALK" || say "the host's talk with Danse did not end"; else HOSTNO=1; say "the host's dialogue menu never opened in the station (scene $(scene_of host))"; fi
 for i in $(seq 1 8); do look; sleep 4; done
 say "Danse after the talk: host cell $(danse_cell host) at $(danse_at host); friend cell $(danse_cell vm) at $(danse_at vm)"
