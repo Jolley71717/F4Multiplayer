@@ -38,7 +38,8 @@ namespace Dialogue
 	// Main thread.
 	std::string End(bool a_forced);
 
-	// Test: runs the reset every conversation ends with (lets go of its input layer, clears menuOpen), and with
+	// Test (dev `dialogue reset`): ends the conversation as End(true) does (the reset every conversation ends with, which lets go of
+	// its input layer and clears menuOpen, then the menu hidden: it stays up after the reset alone), and with
 	// a_overScene also clears overSceneActor, which a conversation ended out of turn can leave set. Returns
 	// the fields before and after.
 	std::string ResetForTest(bool a_overScene);

@@ -23,9 +23,13 @@ st_open() {
 # st_close_menus <who>: closes what a player would close (real keys: Enter for a message box, Tab for the Pip-Boy, a terminal,
 # a container, a barter or a lockpick, Esc for the pause menu and anything else, ~ for the console; workshop mode is left by
 # the dev channel's `workshop exit`, as the bench step leaves it) and waits out a loading screen or the level-up prompt.
+# A conversation an NPC started by itself (Codsworth, made a settler, greets whoever walks past: his scene shows the dialogue wheel and
+# waits for a choice nobody on the rig makes) takes neither Tab nor Esc: after two Tabs it is ended by the dev channel's `dialogue
+# reset` (the plugin's forced ending, the one NpcSync ends a refused conversation with), said in what it prints: that is not a
+# player's action, a rig heal.
 # Prints what it closed; 1 when something is still open after 40 s.
 st_close_menus() {
-	local w=$1 t0=$SECONDS open did=""
+	local w=$1 t0=$SECONDS open did="" talk=0
 	while :; do
 		open=$(st_open "$w")
 		[ -z "$open" ] && { echo "${did# }"; return 0; }
@@ -37,6 +41,11 @@ st_close_menus() {
 		*" MessageBoxMenu "*) dc "$w" "key 0x0D 60" >/dev/null; did="$did MessageBoxMenu" ;;
 		*" WorkshopMenu "*) dc "$w" "workshop exit" >/dev/null; did="$did WorkshopMenu" ;;
 		*" Console "*) dc "$w" "key 0xC0 60" >/dev/null; did="$did Console" ;;
+		*" PauseMenu "*) dc "$w" "key 0x1B 60" >/dev/null; did="$did PauseMenu" ;;
+		*" DialogueMenu "*)
+			talk=$((talk + 1))
+			if [ "$talk" -le 2 ]; then dc "$w" "key 0x09 60" >/dev/null; did="$did DialogueMenu(Tab)"
+			else dc "$w" "dialogue reset" >/dev/null; did="$did DialogueMenu(ended by 'dialogue reset': Tab did not close it)"; fi ;;
 		*" PipboyMenu "*|*" TerminalMenu "*|*" TerminalHolotapeMenu "*|*" ContainerMenu "*|*" BarterMenu "*|*" LockpickingMenu "*) dc "$w" "key 0x09 60" >/dev/null; did="$did ${open%% *}" ;;
 		*) dc "$w" "key 0x1B 60" >/dev/null; did="$did ${open%% *}" ;;
 		esac

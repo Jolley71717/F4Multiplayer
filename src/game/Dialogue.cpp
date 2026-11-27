@@ -314,7 +314,11 @@ namespace Dialogue
 				speaker ? speaker->GetFormID() : 0, InDialogue());
 		};
 		const auto before = state();
-		ResetMenu(topics);
+		// The forced ending (End): the reset, and the menu hidden after it (the reset alone leaves a greeting's menu up). With no
+		// conversation open, or the UI held, only the reset runs.
+		if (const auto why = End(true); !why.empty()) {
+			ResetMenu(topics);
+		}
 		if (a_overScene) {
 			topics->overSceneActor = false;
 		}
