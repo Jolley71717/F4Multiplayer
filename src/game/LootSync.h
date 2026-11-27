@@ -372,7 +372,7 @@ namespace LootSync
 		// a few at a time: see RetrySchedule), in order, until one can't go in. Time spent waiting for a living
 		// NPC is counted by Retry(World&, elapsed), not here. Returns how many went in (or were left out for
 		// good by the rule).
-		std::size_t Retry(std::uint32_t a_container, World& a_world)
+		std::size_t Retry(std::uint32_t a_container, World& a_world, bool a_menuOpen = false)
 		{
 			std::size_t applied = 0;
 			bool        blocked = false;
@@ -385,7 +385,7 @@ namespace LootSync
 					a_pending.alive = a_pending.alive || alive;
 					return false;
 				}
-				switch (TryApply(a_pending.index, a_pending.change, a_world)) {
+				switch (TryApply(a_pending.index, a_pending.change, a_world, a_menuOpen)) {
 				case Applied::kDone:
 					++applied;
 					return true;
@@ -407,7 +407,7 @@ namespace LootSync
 		// once: what goes in leaves the queue, so the sweep and a later open find nothing more. Returns how many went in.
 		std::size_t Opened(std::uint32_t a_container, World& a_world)
 		{
-			const auto applied = Retry(a_container, a_world);
+			const auto applied = Retry(a_container, a_world, true);
 			counts.openApplied += static_cast<std::uint32_t>(applied);
 			return applied;
 		}
@@ -680,7 +680,9 @@ namespace LootSync
 		// host's own moves there went on from a pile the book no longer had (up to the first rig test of the supply lines).
 		static bool Reachable(std::uint32_t a_holder, World& a_world) { return a_world.Loaded(a_holder) || a_world.FromAfar(a_holder); }
 
-		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world)
+		// a_menuOpen: our player has the holder's menu open, which the engine draws from its inventory as it is: what a friend took
+		// goes in now, ready for item work or not (waiting would show it, and let it be taken twice).
+		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world, bool a_menuOpen = false)
 		{
 			if (SkipStorage(a_index, a_change, a_world)) {
 				return Applied::kDone;
@@ -688,7 +690,7 @@ namespace LootSync
 			if (!Reachable(a_change.container, a_world)) {
 				return Applied::kNotLoaded;
 			}
-			if (!a_world.ReadyForItems(a_change.container)) {
+			if (!a_menuOpen && !a_world.ReadyForItems(a_change.container)) {
 				++counts.notReady;
 				return Applied::kNotLoaded;
 			}

@@ -558,3 +558,21 @@ TEST("pending loot: a holder that is not ready does not hold up another's change
 	CHECK((worked == std::vector<std::uint32_t>{ CHEST_B }));
 	CHECK(loot.Waiting().size() == 1);
 }
+
+// The menu shows the holder's inventory as it is: what a friend took goes in as our player opens it, ready or not.
+TEST("pending loot: a change waiting on an actor that is not ready goes in when our player opens its menu")
+{
+	LootSync::Loot            loot;
+	std::vector<std::int32_t> applied;
+	ChestWorld                world{ [](std::uint32_t) { return true; }, [&](const Change& a_change) { applied.push_back(a_change.count); } };
+	world.ready = [](std::uint32_t) { return false; };
+	const auto now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, -1 }), now, world);
+	loot.Live(Numbered(1, ALICE, { CHEST_A, ITEM, -2 }), now, world);
+	CHECK(applied.empty());
+	CHECK(loot.Retry(CHEST_A, world) == 0);
+	CHECK(loot.Opened(CHEST_A, world) == 2);
+	CHECK((applied == std::vector<std::int32_t>{ -1, -2 }));
+	CHECK(loot.Waiting().empty());
+}
