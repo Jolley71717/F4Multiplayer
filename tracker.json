@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-27T02:42:47+00:00",
+ "updated": "2026-11-27T03:51:13+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2810,8 +2810,8 @@
    "title": "Quest NPC re-runs the host's just-finished conversation with the friend (no forced start); left waiting, it blocks the quest for both",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "merged; next release",
+   "stage": 6,
+   "note": "fix in 0.23.0 (rc2 soaking); Cabot quest rig check queued",
    "pr": 621
   },
   {
