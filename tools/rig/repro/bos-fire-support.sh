@@ -71,7 +71,7 @@ look() {
 	s=$(scene_of vm); menu_open vm DialogueMenu && m=1 || m=0; t=$(field "$(dc vm 'net status')" talkingTo)
 	LOOKS=$((LOOKS + 1)); [ "$m" = 1 ] && [ -z "$NOCOUNT" ] && FMENU=$((FMENU + 1))
 	if [ "$s" != 00000000 ] && [ "$m" = 0 ]; then FSCENE=$((FSCENE + 1)); FSCENES="$FSCENES $s"; fi
-	o=$(danse_owner host); [ "$o" = 2 ] && CLAIM="Danse owner $o (host's view)"
+	o=$(danse_owner host); [ "$o" = 2 ] && menu_open host DialogueMenu && CLAIM="Danse owner $o (host's view) while the host talks to him"
 	b=$(behind $BOS100 $FIGHT $BOS101 $DPS)
 	if [ -n "$b" ]; then [ -n "$LAGSINCE" ] || LAGSINCE=$SECONDS; [ $((SECONDS - LAGSINCE)) -ge "$LAG" ] && LAGGED="$b"; else LAGSINCE=""; fi
 	say "look $LOOKS: host scene $(scene_of host) menu $(menu_open host DialogueMenu && echo open || echo closed) | friend scene $s menu $([ "$m" = 1 ] && echo open || echo closed) talkingTo $t | BoS100 $(stage_of host $BOS100)/$(stage_of vm $BOS100) fight $(stage_of host $FIGHT)/$(stage_of vm $FIGHT) BoS101 $(stage_of host $BOS101)/$(stage_of vm $BOS101) station-dialogue $(stage_of host $DPS)/$(stage_of vm $DPS) (host/friend) | Danse host cell $(danse_cell host) at $(danse_at host) owner $o, friend cell $(danse_cell vm) at $(danse_at vm)${b:+ BEHIND:$b}"
