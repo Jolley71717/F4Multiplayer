@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T15:36:44+00:00",
+ "updated": "2026-11-27T17:03:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1119,6 +1119,14 @@
    "note": "Built behind the host setting bContainerGifts (off by default) and checked; the test on two real games is still to do.",
    "pr": 180,
    "desc": "Players tried dropping items and putting them in containers to give to each other. Since 0.9.0 you can hand items over by dropping them. This work adds weapons and armor through any chest, cabinet or safe: it goes to the first friend who takes it, and the server makes sure it is never in two inventories or lost. It is a host setting, bContainerGifts, off by default."
+  },
+  {
+   "id": "8mpo",
+   "title": "Version-mismatch reject names protocol numbers, not mod versions",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "queued: version-mismatch message should name mod versions"
   },
   {
    "id": "8muu",
