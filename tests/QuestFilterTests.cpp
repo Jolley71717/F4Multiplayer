@@ -91,9 +91,9 @@ TEST("quest filter: a dialogue quest with objectives, or one of the game's other
 	// With objectives it is started by having one shown, like any quest; the type decides whether it is shared.
 	CHECK(!QuestFilter::IsDialogue(Filed(DC_GATE, 0, true, "DialogueDiamondCityEntrance")));
 	CHECK(!QuestFilter::Watched(Filed(DC_GATE, 0, true, "DialogueDiamondCityEntrance")));
-	// A typed quest is shared by its type, not as a dialogue quest (it is started by an objective).
-	CHECK(!QuestFilter::IsDialogue(Filed(DC_GATE, 7, false, "DialogueDiamondCityEntrance")));
-	CHECK(QuestFilter::Watched(Filed(DC_GATE, 7, false, "DialogueDiamondCityEntrance")));
+	// A typed quest with objectives is shared by its type and started by an objective, not as a dialogue quest.
+	CHECK(!QuestFilter::IsDialogue(Filed(DC_GATE, 7, true, "DialogueDiamondCityEntrance")));
+	CHECK(QuestFilter::Watched(Filed(DC_GATE, 7, true, "DialogueDiamondCityEntrance")));
 	// The game's other quests under no type are each game's own, or run in the background.
 	for (const auto name : { "REChokepointCT01", "RESceneKMK01", "COMPiper", "TutorialQuest", "WorkshopParent", "DN015", "Followers", "MQ101", "DLC03", "DLC03_", "" }) {
 		CHECK(!QuestFilter::IsDialogueName(name));
@@ -464,4 +464,26 @@ TEST("quest filter: the place fights shared whatever sQuests says are few, sorte
 	CHECK(!QuestFilter::IsFight(1, 0x032C24));  // DLC03AcadiaDefense: Acadia's defence, a settlement's outcome, stays sQuests = safe's
 	CHECK(!QuestFilter::IsFight(3, 0x035790));  // DLC04MS01SierraAttacks: the same
 	CHECK(!QuestFilter::IsFight(0, 0x0295C8));  // the Battlezone's id in another file
+}
+
+TEST("quest filter: a dialogue quest the game files under a shared type, with no objectives, counts as a dialogue quest (issue 638)")
+{
+	constexpr std::uint32_t POLICE_STATION = 0x0006F5BB;  // BoSDialoguePoliceStation: Brotherhood (type 2), no objectives
+	constexpr std::uint32_t CONCORD_AREA = 0x000179F3;    // DialogueConcordArea: main quest (type 1), no objectives
+	for (const auto& quest : { Filed(POLICE_STATION, 2, false, "BoSDialoguePoliceStation"), Filed(CONCORD_AREA, 1, false, "DialogueConcordArea"),
+			 Filed(OTHER, 8, false, "DLC03DialogueFarHarbor"), Filed(OTHER, 5, false, "DLC04_DialogueNukaTown") }) {
+		CHECK(QuestFilter::IsDialogue(quest));
+		CHECK(QuestFilter::Watched(quest));
+	}
+	CHECK(QuestFilter::IsTypedDialogueName("BoSDialoguePoliceStation"));
+	CHECK(QuestFilter::IsTypedDialogueName("DialogueConcordArea"));
+	// With an objective it is started by having one shown; an untyped or misc quest is the old rule's.
+	CHECK(!QuestFilter::IsDialogue(Filed(POLICE_STATION, 2, true, "BoSDialoguePoliceStation")));
+	CHECK(!QuestFilter::IsDialogue(Filed(OTHER, 6, false, "DLC04DialogueHubologists")));  // misc: the radiants' and ambient quests
+	CHECK(!QuestFilter::IsDialogue(Filed(OTHER, 0, false, "BoSDialoguePrydwen")));          // untyped: not Dialogue<Place>
+	// The word must stand near the start: a quest that merely mentions it is no dialogue quest.
+	for (const auto name : { "MQ101PrewarDialogue", "BoSPrydwenDialogue", "Dialog", "BoS_Dialogue1", "" }) {
+		CHECK(!QuestFilter::IsTypedDialogueName(name));
+		CHECK(!QuestFilter::IsDialogue(Filed(OTHER, 2, false, name)));
+	}
 }

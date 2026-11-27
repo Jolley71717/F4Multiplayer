@@ -78,9 +78,29 @@ namespace QuestFilter
 	// it ran and stopped it is over (see QuestSync). The game's other quests under no type stay its own:
 	// its random encounters, companions' talks, tutorials and dungeons are each game's, or run in the
 	// background with nothing to show for them.
+	// A few of the game's dialogue quests are filed under a shared type instead (DialogueConcordArea, a main quest;
+	// BoSDialoguePoliceStation, a Brotherhood quest: Haylen and Rhys's scenes at the Cambridge Police Station, which
+	// decide what Danse has to say there). The type shares them, but they have no objective that is ever shown, so a game
+	// that only has them running never counted them as started and their stages were never reported: in 0.23.1 the
+	// friend's game played the scene on the host's Haylen and Rhys, stopped at its 30 while the host's reached 40, and
+	// Danse had nothing to say to the friend (GitHub issue 638). Such a quest names Dialogue after an add-on's prefix and
+	// at most a short faction prefix (BoS), and has no objectives.
+	inline bool IsTypedDialogueName(std::string_view a_editorId)
+	{
+		const auto name = WithoutAddOnPrefix(a_editorId);
+		const auto at = name.find("Dialogue");
+		if (at == std::string_view::npos || at > 4) {
+			return false;
+		}
+		return std::ranges::all_of(name.substr(0, at), [](char a_char) { return std::isalpha(static_cast<unsigned char>(a_char)) != 0; });
+	}
+
 	inline bool IsDialogue(const Quest& a_quest)
 	{
-		return a_quest.type == 0 && !a_quest.hasObjectives && IsDialogueName(a_quest.editorId);
+		if (a_quest.hasObjectives) {
+			return false;
+		}
+		return a_quest.type == 0 ? IsDialogueName(a_quest.editorId) : IsSharedType(a_quest.type) && IsTypedDialogueName(a_quest.editorId);
 	}
 
 	// A quest by the file it comes from (StageRules::File: 0 Fallout4.esm, 1 DLCCoast.esm, 2 DLCRobot.esm, 3
