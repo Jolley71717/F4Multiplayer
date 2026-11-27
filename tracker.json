@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T17:07:31+00:00",
+ "updated": "2026-11-27T17:08:20+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1125,8 +1125,8 @@
    "title": "Version-mismatch reject names protocol numbers, not mod versions",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "queued: version-mismatch message should name mod versions"
+   "stage": 1,
+   "note": "taken: client names versions in the refusal"
   },
   {
    "id": "8muu",
