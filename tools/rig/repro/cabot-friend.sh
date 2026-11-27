@@ -112,7 +112,7 @@ phase2() {
 		done
 		say "the host's conversation ended after $((SECONDS - t0)) s ($n replies)"
 	}
-	rwalk vm 18650 2335 40 || say "the friend walk ended short ($WALKED)"
+	rwalk vm 18590 2335 40 || say "the friend walk ended short ($WALKED)"
 	rwalk host 18701 2334 12 || say "the host walk ended short ($WALKED)"   # straight south of the intercom: from here the crosshair names it, from some other places a sign beside it
 	say "distances to the intercom: host $(dist_xy "$(pos_of host)" "18703 2300"), friend $(dist_xy "$(pos_of vm)" "18703 2300")"
 	# aim_named <who> <ref> <regex>: the aim point is moved until the crosshair names what is wanted (a sign next to the intercom
@@ -137,7 +137,7 @@ phase2() {
 	# The door stayed locked after the intercom talk on the rig (0.22.2, stage 50), so each game's door is unlocked by
 	# the console (said). The crosshair only names the door from 60 to 95 units: a player is stepped to 80 away before its E.
 	say "set-up (console): both players placed at the front door (player.moveto $CABOT_DOOR), its lock opened in both games (console $CABOT_DOOR.unlock; it stayed locked after the intercom)"
-	for g in host vm; do dc "$g" "console $CABOT_DOOR.unlock" >/dev/null; dc "$g" "console player.moveto $CABOT_DOOR" >/dev/null; done
+	for g in host vm; do dc "$g" "console $CABOT_DOOR.unlock" >/dev/null; done; dc host "console player.moveto $CABOT_DOOR" >/dev/null   # (the friend is placed at the door once the host is through: its stand-in in the host's game stood in the host's crosshair, 2026-11-27)
 	sleep 4
 	at_door() { # at_door <who>: stepped to the door's pick range; 0 when its crosshair names something
 		local who=$1 n
@@ -157,6 +157,7 @@ phase2() {
 	[ "$(cell_of host)" = "$CABOT_INT" ] || verdict VOID "the host did not get through the Cabot House door in 3 tries"
 	say "the host is in the Cabot House (scene $(scene_of host))"
 	look2
+	dc vm "console player.moveto $CABOT_DOOR" >/dev/null; sleep 4
 	for try in 1 2; do
 		[ "$(cell_of vm)" = "$CABOT_INT" ] && break
 		at_door vm || say "the friend's crosshair names nothing at the door"
