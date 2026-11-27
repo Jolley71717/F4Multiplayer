@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T20:27:11+00:00",
+ "updated": "2026-11-27T20:37:41+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -4411,6 +4411,14 @@
    "stage": 7,
    "note": "",
    "pr": 282
+  },
+  {
+   "id": "xcyj",
+   "title": "Protocol number = the mod's major.minor: patch versions always join each other",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": "queued for 0.24.0"
   },
   {
    "id": "xegs",
