@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T20:25:00+00:00",
+ "updated": "2026-11-27T20:26:19+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -566,6 +566,14 @@
    "priority": 4,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "498v",
+   "title": "Crash on join in the host's game: behavior graph (hkbStateMachine::getStateIndex) from Actor::PerformAction",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "queued"
   },
   {
    "id": "4c0",
@@ -2037,6 +2045,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "fo9s",
+   "title": "Crash on join is back on 0.23.1, now in the host's game: null call in QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "queued"
   },
   {
    "id": "fx08",
