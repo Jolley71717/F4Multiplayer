@@ -105,7 +105,8 @@ to what goes over the wire (a message layout, a new or removed message type, a c
 field, a different expectation on either side) **bumps `Protocol::VERSION`** in that file. The
 server refuses a different version, which is what makes everyone update together instead of
 desyncing quietly. Say in the pull request that you bumped it, or that the change does not touch
-the wire. Protocol tests live in `tests/ProtocolTests.cpp`.
+the wire. Protocol tests live in `tests/ProtocolTests.cpp`. A bump also adds a line to `ModVersions::TABLE`
+(`src/ModVersions.h`), which lets the refusal name mod versions instead of numbers; a test fails until it is there.
 
 ## Branches and releases
 

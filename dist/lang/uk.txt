@@ -44,6 +44,9 @@ world.history_full = Мультиплеєр: спільна історія се�
 # --- What the server says when it refuses a player (the server sends English; these are shown in the player's language) ---
 reject.not_client = Це не клієнт F4Multiplayer
 reject.version = Незбіг версій: сервер використовує протокол {server}, а у вас {you}. Встановіть однакову версію мода.
+reject.version_older = У хоста F4Multiplayer {host}, а у вас {you}. Потрібна однакова версія: хосту треба оновитися до останньої на вкладці Files на Nexus і видалити або вимкнути стару копію в менеджері модів або в Data\F4SE\Plugins.
+reject.version_older_unknown = У хоста старіша версія F4Multiplayer, ніж ваша {you}. Потрібна однакова версія: хосту треба оновитися до останньої на вкладці Files на Nexus і видалити або вимкнути стару копію в менеджері модів або в Data\F4SE\Plugins.
+reject.version_newer = У хоста новіша версія F4Multiplayer, ніж ваша {you}. Потрібна однакова версія: оновіться до останньої на вкладці Files на Nexus і видаліть або вимкніть стару копію в менеджері модів або в Data\F4SE\Plugins.
 reject.password = Неправильний пароль
 reject.host_not_ready = Хост ще не зайшов у гру
 reject.full = Сервер заповнений

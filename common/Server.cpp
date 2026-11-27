@@ -2,6 +2,7 @@
 
 #include "BanList.h"
 #include "DropStore.h"
+#include "ModVersions.h"
 #include "EnetTransport.h"
 #include "FormIds.h"
 #include "JoinGuard.h"
@@ -1766,6 +1767,13 @@ void Server::Run()
 			return;
 		}
 		if (hello->version != Protocol::VERSION) {
+			// The refusal's text keeps the protocol numbers (old and new clients both read it; the client names versions
+			// from them). The log of this server (the dedicated one's console too) names them as well.
+			const auto named = [](std::uint32_t a_protocol) {
+				const auto names = ModVersions::NamesOf(a_protocol);
+				return names.empty() ? std::format("an unknown version, protocol {}", a_protocol) : std::format("{}, protocol {}", names, a_protocol);
+			};
+			log(std::format("server: player {} refused: a different mod version (they have F4Multiplayer {}; this server has {})", a_player.id, named(hello->version), named(Protocol::VERSION)));
 			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
 			return;
 		}

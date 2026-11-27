@@ -664,7 +664,7 @@ without it they last until it stops.
   public bug report. Crash logs, hang `.dmp` files, screenshots and logs from older versions can still
   hold names: check those first. `sLogLevel = debug` adds more detail when you are asked for it.
 - "Your mods differ from the host's (N): see F1" (joined and told so): the multiplayer menu's *Compare mods* page lists every plugin you are missing and every one only you have (the log has them too); you can play, but what comes from those is left out in the other game. Plugins in another place in your load order are listed as nothing to change. Plugins the host lets differ (`sIgnoredPlugins`) are listed only where they move another plugin. To share a mod's content, install or disable yours to match, then restart the game: it loads mods only when it starts. "You just asked the host; try again in a few seconds": *Ask the host again* works once in five seconds.
-- "Version mismatch": everyone needs the same version of this mod.
+- "The host has F4Multiplayer 0.22 and you have 0.23.1" (or "a newer / an older F4Multiplayer than your ..."): everyone needs the same version of this mod. The message says who is behind: that player updates to the latest from the Nexus Files tab and removes or disables the old copy (in the mod manager, or in `DataF4SEPlugins`).
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.
 - An invite arrives but accepting it (or Join Game) does nothing, and F1 and the hotkeys do nothing
