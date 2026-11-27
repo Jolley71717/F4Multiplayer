@@ -1,7 +1,7 @@
 {
  "release": "0.23.1",
  "known_issues": [],
- "updated": "2026-11-27T20:37:41+00:00",
+ "updated": "2026-11-27T20:41:57+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2051,8 +2051,9 @@
    "title": "Crash on join is back on 0.23.1, now in the host's game: null call in QueueInventoryItemStackUpdated -> AttachEnchantmentVisuals",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "looking into it"
+   "stage": 2,
+   "note": "looking into it",
+   "pr": 643
   },
   {
    "id": "fx08",
