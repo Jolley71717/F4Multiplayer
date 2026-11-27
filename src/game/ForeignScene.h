@@ -51,27 +51,27 @@ namespace ForeignScene
 	// How long an activation of an NPC counts as what opened its dialogue menu.
 	inline constexpr auto ACTIVATION = std::chrono::seconds(5);
 
-	// Whether the open dialogue menu was started by our player: its speaker was activated by them just before it opened. Told at
-	// the menu's opening and kept until it closes (a scene's menu opened later is not ours because a talk was).
+	// Whether the open dialogue menu was started by our player: its speaker was activated by them just before it opened (or
+	// the activation is seen a look later). Kept until it closes.
 	class Talk
 	{
 	public:
 		// a_menu: the dialogue menu is open. a_activated: our player activated its speaker within ACTIVATION of now.
+		// The activation reaches Dialogue through WorldSync's inbox, drained in WorldSync's own frame, so it can arrive a look
+		// after the menu opened: an activation of the speaker seen while the menu is open makes it ours (an E on that NPC is
+		// our player's talk either way; the stop waits GRACE, so a late one is in before it). Ours is never taken back while
+		// the menu stays open.
 		bool Update(bool a_menu, bool a_activated)
 		{
 			if (!a_menu) {
-				open = ours = false;
+				ours = false;
 				return false;
 			}
-			if (!open) {
-				open = true;
-				ours = a_activated;
-			}
+			ours = ours || a_activated;
 			return ours;
 		}
 
 	private:
-		bool open = false;
 		bool ours = false;
 	};
 

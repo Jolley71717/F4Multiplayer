@@ -196,3 +196,18 @@ TEST("foreign scene: a menu the scene opens again after being stopped is stopped
 	CHECK(watch.Update(facts, T0 + ForeignScene::GRACE + ForeignScene::RETRY) == Verdict::kStop);
 	CHECK(watch.Stops() == 2);
 }
+
+TEST("foreign scene: our E seen a look after the menu opened still makes it ours, before the stop")
+{
+	ForeignScene::Talk  talk;
+	ForeignScene::Watch watch;
+	auto                facts = Theirs();
+	facts.menu = true;
+	facts.talking = talk.Update(true, false);  // the menu is up, the activation not drained yet
+	CHECK(watch.Update(facts, T0) == Verdict::kWait);
+	facts.talking = talk.Update(true, true);  // WorldSync's frame passed it on
+	CHECK(facts.talking);
+	CHECK(!ForeignScene::IsForeign(facts));
+	CHECK(watch.Update(facts, T0 + ForeignScene::GRACE) == Verdict::kKeep);
+	CHECK(watch.Stops() == 0);
+}
