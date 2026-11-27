@@ -1,7 +1,7 @@
 {
  "release": "0.22.2",
  "known_issues": [],
- "updated": "2026-11-27T01:40:25+00:00",
+ "updated": "2026-11-27T02:42:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -638,7 +638,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 632
   },
   {
@@ -1046,8 +1046,8 @@
    "title": "rc1 gate: VM stuck in Codsworth's greeting (DialogueMenu won't close)",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "fix in PR 634 (dev reset closes the menu; rig guard uses it); greeting is vanilla",
+   "stage": 5,
+   "note": "merged (PR 634); rig-side, in rc2",
    "pr": 634
   },
   {
@@ -2008,7 +2008,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 628
   },
   {
@@ -2167,7 +2167,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 631
   },
   {
@@ -2384,7 +2384,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 623
   },
   {
@@ -2417,8 +2417,8 @@
    "title": "Dev: 'dialogue reset' leaves a stuck dialogue menu",
    "kind": "feature",
    "priority": 4,
-   "stage": 2,
-   "note": "fix in PR 634 (dev reset closes the menu; rig guard uses it); greeting is vanilla",
+   "stage": 5,
+   "note": "merged (PR 634); rig-side, in rc2",
    "pr": 634
   },
   {
@@ -2907,8 +2907,8 @@
    "title": "Codsworth's greeting conversation can't be left with Tab or Esc (no Goodbye)",
    "kind": "feature",
    "priority": 3,
-   "stage": 2,
-   "note": "fix in PR 634 (dev reset closes the menu; rig guard uses it); greeting is vanilla",
+   "stage": 5,
+   "note": "merged (PR 634); rig-side, in rc2",
    "pr": 634
   },
   {
@@ -3742,7 +3742,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 623
   },
   {
@@ -3751,7 +3751,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 626
   },
   {
@@ -3958,7 +3958,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 623
   },
   {
@@ -4003,7 +4003,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 630
   },
   {
@@ -4426,7 +4426,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 6,
-   "note": "in 0.23.0-rc1; soak running",
+   "note": "in 0.23.0-rc2; gate and soak running",
    "pr": 623
   },
   {
