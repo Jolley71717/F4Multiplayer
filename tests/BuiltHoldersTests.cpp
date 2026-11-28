@@ -163,10 +163,10 @@ TEST("built holders: the book takes no more than a piece holds, and a new copy i
 	CHECK(saved.Of(key) == book.Of(key));
 	CHECK((saved.Show(key, COPY, { { STIM, 4 }, { AMMO, 30 }, { 0x1234, 1 } }).empty()));  // the save's copy holds it already
 
-	// A copy holding less than the book is given the rest; what the book can't explain stays.
+	// A copy never shown (another ID) holding less than the book is given the rest; what the book can't explain stays.
 	BuiltHolders::Book other;
 	REQUIRE(other.Load(book.Record()));
-	const auto deltas = other.Show(key, COPY, { { STIM, 1 } });
+	const auto deltas = other.Show(key, COPY_AGAIN, { { STIM, 1 } });
 	using Delta = std::pair<std::uint32_t, std::int64_t>;
 	CHECK((deltas == BuiltHolders::Book::Deltas{ Delta{ AMMO, 30 }, Delta{ STIM, 3 } }));
 
@@ -182,8 +182,8 @@ TEST("built holders: a copy going hands back what it shows of the book, only tha
 	CHECK((book.Show(key, COPY, {}).size() == 1));
 	book.Own(key, COPY, STIM, -2, 3);  // our player takes 2: the copy holds 3
 	const auto going = book.Going(COPY);
-	CHECK((going == BuiltHolders::Book::Items{ { STIM, 3 } }));
-	CHECK(book.Going(COPY).empty());
+	CHECK((going.items == BuiltHolders::Book::Items{ { STIM, 3 } }));
+	CHECK(book.Going(COPY).items.empty());
 	CHECK((book.Of(key) == BuiltHolders::Book::Items{ { STIM, 3 } }));  // the piece still holds them
 }
 
