@@ -12,7 +12,7 @@ end
 -- set project constants
 set_project("F4Multiplayer")
 set_version("0.23.2")
-add_defines('F4MP_VERSION="0.23.2"')  -- the same number, shown in a refusal for a version mismatch (Text::Reject); a test fails if the two differ
+add_defines('F4MP_VERSION="0.23.2"')  -- the same number: the join hello carries it, the same major.minor joins (common/VersionCheck.h); a test fails if the two differ
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")

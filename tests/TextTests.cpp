@@ -326,10 +326,9 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "host.err_port", { { "port", 7779 } }, "could not host on port 7779" },
 		{ "world.history_full", { { "percent", 85 } }, "Multiplayer: the session's shared history is 85% full; loot and kill sharing stop at 100%. The host can start a fresh session by removing the session file (see the docs)" },
 		{ "reject.not_client", {}, "Not an F4Multiplayer client" },
-		{ "reject.version", { { "server", 31 }, { "you", 30 } }, "Version mismatch: server uses protocol 31, you have 30. Install the same mod version." },
 		{ "reject.version_older", { { "host", "0.22" }, { "you", "0.23.1" } }, "The host has F4Multiplayer 0.22 and you have 0.23.1. Both players need the same version: the host should update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins." },
 		{ "reject.version_older_unknown", { { "you", "0.23.1" } }, "The host has an older F4Multiplayer than your 0.23.1. Both players need the same version: the host should update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins." },
-		{ "reject.version_newer", { { "you", "0.23.1" } }, "The host has a newer F4Multiplayer than your 0.23.1. Both players need the same version: update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins." },
+		{ "reject.version_newer", { { "host", "0.24.0" }, { "you", "0.23.1" } }, "The host has F4Multiplayer 0.24.0 and you have 0.23.1. Both players need the same version: update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins." },
 		{ "reject.password", {}, "Wrong password" },
 		{ "reject.host_not_ready", {}, "The host isn't in the game yet" },
 		{ "reject.full", {}, "Server is full" },
@@ -765,7 +764,7 @@ TEST("text: a server's refusals read in the player's language, and a changed ser
 		"Wrong password",
 		"The host isn't in the game yet",
 		"Server is full",
-		"Version mismatch: server uses protocol 31, you have 30. Install the same mod version.",
+		std::string{ Protocol::REJECT_JOIN_REFUSED },
 		Protocol::LoadOrderDifference({ "Fallout4.esm", "Evil.esp", "Mine.esp" }, { "Fallout4.esm", "Theirs.esp" }),
 		Protocol::LoadOrderDifference({ "Fallout4.esm", "A.esp", "B.esp" }, { "Fallout4.esm", "B.esp", "A.esp" }),
 		Protocol::LoadOrderDifference({ "Fallout4.esm", "ccbgsfo4044-hellfirepowerarmor.esl" }, {}),
@@ -774,22 +773,17 @@ TEST("text: a server's refusals read in the player's language, and a changed ser
 		std::string{ Protocol::REJECT_BANNED },
 		std::string{ Protocol::REJECT_LOCKED },
 	};
-	// In English nothing changes: the text is the server's, byte for byte. (A build that does not know its own version,
-	// "", keeps the protocol numbers of a version mismatch; the next test shows the version names.)
+	// In English nothing changes: the text is the server's, byte for byte (a version mismatch is the next test's).
 	for (const auto& reason : sent) {
 		CHECK(Text::Reject(reason, "") == reason);
 	}
 	// In another language the parts this client knows are translated, the plugin names and numbers stay.
 	Text::Use("de", Text::Parse(
 		"reject.password = Falsches Passwort\n"
-		"reject.version = Versionskonflikt: Server {server}, du {you}.\n"
 		"reject.order = Deine Ladereihenfolge ist anders.\n"
 		"reject.order_all = Alle brauchen dieselben Mods.\n"));
 	CHECK(Text::Reject("Wrong password") == "Falsches Passwort");
 	CHECK(Text::Reject("Server is full") == "Server is full");  // no German text: the English
-	CHECK(Text::Reject(sent[4], "") == "Versionskonflikt: Server 31, du 30.");
-	CHECK(Text::Reject("Version mismatch: server uses protocol x, you have 30. Install the same mod version.", "0.23.1") ==
-		  "Version mismatch: server uses protocol x, you have 30. Install the same mod version.");
 	CHECK(Text::Reject(sent[5]) == "Deine Ladereihenfolge ist anders.");
 	CHECK(Text::Reject(sent[7]) == "Deine Ladereihenfolge ist anders. Alle brauchen dieselben Mods.");
 	// No German text for the texture sentence: it stays English.
@@ -1088,44 +1082,60 @@ TEST("text: the package script ships no settings file, and the install guide nam
 	CHECK(guide.find("F4Multiplayer_lang_") != std::string::npos);
 }
 
-TEST("text: a version mismatch names mod versions, not protocol numbers, and says who updates")
+TEST("text: a version mismatch names mod versions, never a number, and says who updates")
 {
 	English english;
+	const std::string hostUpdates = "Both players need the same version: the host should update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins.";
+	const std::string youUpdate = "Both players need the same version: update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins.";
+	// A server from 0.24.0 on names both versions; the client shows its own text for them.
+	CHECK(Text::Reject(VersionCheck::Refusal(true, "0.24.1", "0.25.0"), "0.25.0") == "The host has F4Multiplayer 0.24.1 and you have 0.25.0. " + hostUpdates);
+	CHECK(Text::Reject(VersionCheck::Refusal(false, "1.0.2", "0.24.3"), "0.24.3") == "The host has F4Multiplayer 1.0.2 and you have 0.24.3. " + youUpdate);
+	// The English of the same, for the log.
+	CHECK(Text::Reject(VersionCheck::Refusal(false, "1.0.2", "0.24.3"), "0.24.3", true) == "The host has F4Multiplayer 1.0.2 and you have 0.24.3. " + youUpdate);
+
+	// A server at 0.23 or older says numbers: the host has the older version (ours is above all of them), named by the table.
 	const auto refusal = [](int a_server, int a_you) {
 		return std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", a_server, a_you);
 	};
-	const std::string tail = "Both players need the same version: the host should update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins.";
-	// The host has an older version (named by the table): the host updates.
-	CHECK(Text::Reject(refusal(85, 86), "0.23.1") == "The host has F4Multiplayer 0.22 and you have 0.23.1. " + tail);
-	CHECK(Text::Reject(refusal(62, 86), "0.23.1") == "The host has F4Multiplayer 0.13.0 to 0.15.1 and you have 0.23.1. " + tail);
-	// A number older than the table's first line: the host's is just "older".
-	CHECK(Text::Reject(refusal(30, 86), "0.23.1") == "The host has an older F4Multiplayer than your 0.23.1. " + tail);
-	CHECK(Text::Reject(refusal(80, 86), "0.23.1") == "The host has an older F4Multiplayer than your 0.23.1. " + tail);  // a number no release used
-	// The host has a newer version (any number above this build's): the joining player updates.
-	const std::string newer = "The host has a newer F4Multiplayer than your 0.22.2. Both players need the same version: update to the latest from the Nexus Files tab, and remove or disable the old copy in the mod manager or Data\\F4SE\\Plugins.";
-	CHECK(Text::Reject(refusal(86, 85), "0.22.2") == newer);
-	CHECK(Text::Reject(refusal(500, 85), "0.22.2") == newer);
-	// Without the build's own version, or with numbers that aren't numbers, the old text stands.
-	CHECK(Text::Reject(refusal(85, 86), "") == refusal(85, 86));
+	CHECK(Text::Reject(refusal(86, Protocol::HELLO_NUMBER), "0.24.0") == "The host has F4Multiplayer 0.23 and you have 0.24.0. " + hostUpdates);
+	CHECK(Text::Reject(refusal(62, Protocol::HELLO_NUMBER), "0.24.0") == "The host has F4Multiplayer 0.13.0 to 0.15.1 and you have 0.24.0. " + hostUpdates);
+	// A number older than the table's first line, or one no release used: the host's is just "older".
+	CHECK(Text::Reject(refusal(30, Protocol::HELLO_NUMBER), "0.24.0") == "The host has an older F4Multiplayer than your 0.24.0. " + hostUpdates);
+	CHECK(Text::Reject(refusal(80, Protocol::HELLO_NUMBER), "0.24.0") == "The host has an older F4Multiplayer than your 0.24.0. " + hostUpdates);
+	// Whatever the text, no number of the protocol's reaches the player.
+	for (const auto& reason : { refusal(86, 87), refusal(30, 87), std::string{ "Version mismatch: server uses protocol x, you have 87. Install the same mod version." } }) {
+		const auto shown = Text::Reject(reason, "0.24.0");
+		CHECK(shown.find("87") == std::string::npos);
+		CHECK(shown.find("protocol") == std::string::npos);
+	}
+
 	// A language file's own text for a key goes over the English, with the same placeholders.
 	Text::Use("de", Text::Parse(
 		"reject.version_older = Der Host hat {host}, du {you}.\n"
-		"reject.version_newer = Der Host hat eine neuere Version als {you}.\n"));
-	CHECK(Text::Reject(refusal(85, 86), "0.23.1") == "Der Host hat 0.22, du 0.23.1.");
-	CHECK(Text::Reject(refusal(87, 86), "0.23.1") == "Der Host hat eine neuere Version als 0.23.1.");
+		"reject.version_newer = Der Host hat {host}, du {you}; aktualisiere.\n"));
+	CHECK(Text::Reject(refusal(85, Protocol::HELLO_NUMBER), "0.24.0") == "Der Host hat 0.22, du 0.24.0.");
+	CHECK(Text::Reject(VersionCheck::Refusal(true, "0.24.1", "0.25.0"), "0.25.0") == "Der Host hat 0.24.1, du 0.25.0.");
+	CHECK(Text::Reject(VersionCheck::Refusal(false, "0.25.0", "0.24.1"), "0.24.1") == "Der Host hat 0.25.0, du 0.24.1; aktualisiere.");
+	// ... and the log keeps the English.
+	CHECK(Text::Reject(VersionCheck::Refusal(true, "0.24.1", "0.25.0"), "0.25.0", true) == "The host has F4Multiplayer 0.24.1 and you have 0.25.0. " + hostUpdates);
 	// No German text for the unknown-host case: the English.
-	CHECK(Text::Reject(refusal(30, 86), "0.23.1") == "The host has an older F4Multiplayer than your 0.23.1. " + tail);
+	CHECK(Text::Reject(refusal(30, Protocol::HELLO_NUMBER), "0.24.0") == "The host has an older F4Multiplayer than your 0.24.0. " + hostUpdates);
 }
 
-TEST("text: every protocol number a release has used is named for the version refusal, this build's included")
+TEST("text: the protocol numbers are frozen, every one a release used is named, and this build's version parses")
 {
-	// A protocol bump needs its line in ModVersions::TABLE (src/ModVersions.h), or a friend on the old version is told only "an older version".
-	CHECK(!ModVersions::NamesOf(Protocol::VERSION).empty());
-	CHECK(ModVersions::NamesOf(Protocol::VERSION).starts_with(std::string_view{ Text::OwnVersion() }.substr(0, Text::OwnVersion().rfind('.'))) || Text::OwnVersion().empty());
+	// Since 0.24.0 the mod's version names the protocol: the table of numbers ends at the last one, 0.23's.
+	CHECK(ModVersions::NamesOf(Protocol::LAST_NUMBER) == "0.23");
+	CHECK(std::ranges::rbegin(ModVersions::TABLE)->protocol == Protocol::LAST_NUMBER);
+	CHECK(ModVersions::NamesOf(Protocol::HELLO_NUMBER).empty());
+	static_assert(Protocol::HELLO_NUMBER > Protocol::LAST_NUMBER);
+	CHECK(VersionCheck::Parse(Text::OwnVersion()).has_value());
+	CHECK(Text::OwnVersion() == VersionCheck::OWN);
 	std::uint32_t last = 0;
 	for (const auto& entry : ModVersions::TABLE) {
 		CHECK(entry.protocol > last);  // ascending, none twice
 		CHECK(!entry.versions.empty());
+		CHECK(entry.versions.size() <= VersionCheck::MAX_NAMED_LENGTH);  // fits a refusal
 		last = entry.protocol;
 	}
 }

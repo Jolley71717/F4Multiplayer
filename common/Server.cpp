@@ -24,6 +24,7 @@
 #include "SettlerRoster.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
+#include "VersionCheck.h"
 #include "WorkshopStore.h"
 #include "game/SettlerSpawns.h"
 #include "game/SettlerTransfers.h"
@@ -1766,15 +1767,27 @@ void Server::Run()
 			reject(a_player, "Not an F4Multiplayer client");
 			return;
 		}
-		if (hello->version != Protocol::VERSION) {
-			// The refusal's text keeps the protocol numbers (old and new clients both read it; the client names versions
-			// from them). The log of this server (the dedicated one's console too) names them as well.
-			const auto named = [](std::uint32_t a_protocol) {
-				const auto names = ModVersions::NamesOf(a_protocol);
-				return names.empty() ? std::format("an unknown version, protocol {}", a_protocol) : std::format("{}, protocol {}", names, a_protocol);
-			};
-			log(std::format("server: player {} refused: a different mod version (they have F4Multiplayer {}; this server has {})", a_player.id, named(hello->version), named(Protocol::VERSION)));
-			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
+		// The mod versions (common/VersionCheck.h): a joiner of this server's major.minor joins, whatever its patch.
+		// The refusal and this server's log (the dedicated one's console too) name both versions, never a number.
+		const auto ours = VersionCheck::Format(*VersionCheck::Parse(VersionCheck::OWN));
+		if (hello->number != Protocol::HELLO_NUMBER) {
+			// A copy at 0.23 or older: its number names its version (src/ModVersions.h), and it is the one to update.
+			// Its game shows the refusal's English as it came.
+			const auto names = ModVersions::NamesOf(hello->number);
+			const std::string theirs = names.empty() ? std::string{ "an older version" } : std::string{ names };
+			log(std::format("server: player {} refused: a different mod version (they have F4Multiplayer {}; this server has {})", a_player.id, theirs, ours));
+			reject(a_player, VersionCheck::Refusal(false, ours, theirs));
+			return;
+		}
+		if (const auto verdict = VersionCheck::Compare(VersionCheck::OWN, hello->modVersion); verdict == VersionCheck::Verdict::kUnreadable) {
+			// Not a version (no build of the mod sends one): neither shown nor logged as it came.
+			log(std::format("server: player {} refused: their hello's mod version is not a version", a_player.id));
+			reject(a_player, "Not an F4Multiplayer client");
+			return;
+		} else if (verdict != VersionCheck::Verdict::kJoins) {
+			const auto theirs = VersionCheck::Format(*VersionCheck::Parse(hello->modVersion));
+			log(std::format("server: player {} refused: a different mod version (they have F4Multiplayer {}; this server has {})", a_player.id, theirs, ours));
+			reject(a_player, VersionCheck::Refusal(verdict == VersionCheck::Verdict::kHostOlder, ours, theirs));
 			return;
 		}
 		// The host's own game: the game this server runs in, by its identity, connecting from this machine.

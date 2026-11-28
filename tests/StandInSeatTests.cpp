@@ -212,7 +212,7 @@ TEST("seats: the furniture told is the one used, never a power armor frame, a po
 TEST("seats: a seat travels in the status (protocol 31), and one while in power armor, or a bad one, is refused")
 {
 	using MT = Protocol::MessageType;
-	static_assert(Protocol::VERSION >= 31);
+	static_assert(Protocol::LAST_NUMBER >= 31);
 	Protocol::PlayerStatus status{ .playerId = 3, .health = 80, .level = 7 };
 	status.seat = StandInSeat::Tell(OnTheCouch());
 	REQUIRE(status.seat);
