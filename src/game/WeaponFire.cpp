@@ -1,5 +1,6 @@
 #include "game/WeaponFire.h"
 
+#include "game/ActionState.h"
 #include "game/BlastShield.h"
 #include "game/GameClock.h"
 #include "game/ClickWatch.h"
@@ -306,6 +307,12 @@ namespace WeaponFire
 		// Where our player aimed as each gunshot not yet taken left (TakeShots), oldest first, at most ShotAim::MAX_QUEUED.
 		std::vector<ShotAim::Sent> shotAims;
 		std::vector<std::uint8_t>  playerActions;
+		// Our player's drink from water, as its graph tells it (ActionState.h): said to the other games as it starts, again
+		// while it lasts and as it ends. Under actionLock.
+		ActionState::Drinking      drinking;
+		std::uint32_t              drinksSaid = 0;  // starts and stops queued: the first few are logged
+		// Our player's legs play faster than this (units a second): they walk, and no drink goes on (MoveSync::START).
+		constexpr float            DRINK_WALK_SPEED = 25.0f;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> npcActions;
 		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
 
@@ -314,6 +321,24 @@ namespace WeaponFire
 		{
 			if (shotsToCheck.size() < MAX_SHOTS_TO_CHECK && std::ranges::find(shotsToCheck, a_shooter) == shotsToCheck.end()) {
 				shotsToCheck.push_back(a_shooter);
+			}
+		}
+
+		// Under actionLock: what ActionState says of our player's drink goes out with the other actions. Returns which say
+		// this was (0: nothing was queued), for the caller to log the first few outside the lock.
+		std::uint32_t QueueDrink(ActionState::Say a_say)
+		{
+			if (a_say == ActionState::Say::kNothing || playerActions.size() >= MAX_PENDING_ACTIONS) {
+				return 0;
+			}
+			playerActions.push_back(a_say == ActionState::Say::kStart ? Protocol::ShotAction::kDrinkStart : Protocol::ShotAction::kDrinkStop);
+			return ++drinksSaid;
+		}
+
+		void LogDrink(std::uint32_t a_said, ActionState::Say a_say, std::string_view a_why)
+		{
+			if (a_said != 0 && a_said <= 12) {
+				REX::INFO("WeaponFire: our player {} from water ({}): told to the other games", a_say == ActionState::Say::kStart ? "drinks" : "no longer drinks", a_why);
 			}
 		}
 
@@ -371,6 +396,16 @@ namespace WeaponFire
 				if (playerActions.size() < MAX_PENDING_ACTIONS) {
 					playerActions.push_back(*action);
 				}
+			}
+			if (const auto drink = ActionState::DrinkOf(tag); drink != ActionState::Drink::kNone) {
+				auto          say = ActionState::Say::kNothing;
+				std::uint32_t said = 0;
+				{
+					std::scoped_lock l{ actionLock };
+					say = ActionState::Heard(drinking, drink, std::chrono::steady_clock::now());
+					said = QueueDrink(say);
+				}
+				LogDrink(said, say, tag);
 			}
 			if (logging) {
 				std::scoped_lock l{ logLock };
@@ -617,8 +652,29 @@ namespace WeaponFire
 		void EndDueShields();
 	}
 
+	namespace
+	{
+		// Each frame: our player's drink is told again while it lasts, and ended when they walk or their graph has said
+		// nothing of it for long (ActionState::Tick): an end the graph never announced leaves no stand-in drinking.
+		void TickDrink()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			const bool moving = middle && middle->animationSpeed > DRINK_WALK_SPEED;
+			auto          say = ActionState::Say::kNothing;
+			std::uint32_t said = 0;
+			{
+				std::scoped_lock l{ actionLock };
+				say = ActionState::Tick(drinking, moving, std::chrono::steady_clock::now());
+				said = QueueDrink(say);
+			}
+			LogDrink(said, say, say == ActionState::Say::kStart ? "it lasts" : moving ? "they walk" : "their graph went quiet");
+		}
+	}
+
 	void Frame()
 	{
+		TickDrink();
 		loopsEnded += static_cast<std::uint32_t>(loopingShots.EndDue(std::chrono::steady_clock::now(), [](RE::BSSoundHandle& a_handle) {
 			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
 		}));

@@ -75,6 +75,10 @@ namespace Puppets
 	// No draw or holster is asked of the puppet for this long (a replayed throw plays first: DrawMatch::THROW_HOLD).
 	void HoldDraw(RE::Actor* a_actor, std::chrono::steady_clock::duration a_for);
 
+	// A player's stand-in drinks from water, as its friend does (ActionState.h): told again while the drink lasts, since it
+	// holds only a moment after the last telling; false ends it at once. Its walking ends it too.
+	void SetDrinking(RE::Actor* a_actor, bool a_drinks);
+
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 

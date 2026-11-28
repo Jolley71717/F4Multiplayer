@@ -1030,7 +1030,8 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 		CHECK(!IsDataFileForm(0xFF000801));
 		CHECK(!IsDataFileForm(0));
 
-		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff, ShotAction::kPoint, ShotAction::kCheer, ShotAction::kClap, ShotAction::kThrow }) {
+		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff, ShotAction::kPoint, ShotAction::kCheer, ShotAction::kClap, ShotAction::kThrow, ShotAction::kDrinkStart,
+			 ShotAction::kDrinkStop }) {
 			const auto other = DecodeShot(Encode(Shot{ 4, 0, action }, type));
 			REQUIRE(other);
 			CHECK(other->action == action);

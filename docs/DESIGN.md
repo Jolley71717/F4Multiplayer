@@ -426,6 +426,29 @@
   stand-in's left thigh is watched (`HolsterWatch`, the bone read `ArmorFrames::Stride` uses): while it should walk
   crouched and the thigh has stood still for 0.6 s, the start is sent again, five times at most. Legs that move are
   never set off again, so a walk that went on through the holster replays no clip. Not proven in a game.
+- Swimming (src/game/ActionState.h, `Puppets::DriveAnimation`). The graphs have no swim variable: the swim states
+  (tread, forward, sprint, the dive) are a state machine entered by the action ActionSwimStart (0014DB5D), whose idles
+  pick the event by the actor's graph and weapon (a person's `g_SwimStart_MT` or `g_SwimStart`, power armor's
+  `..._PA`, a dog's and a mirelurk king's `SwimStart`), and left by ActionSwimStop (0014DB5E, `SwimStop`). The engine
+  performs them as its own actor goes in and out of deep water. A stand-in has no AI and is put where its friend is;
+  it had the friend's move mode (the swim bit, 0x400, with it) and nothing performed the action, so it walked, ran or
+  stood in the water at swimming height. Now a stand-in, and the copy of an NPC another game runs, performs the start
+  as its owner's state says it swims (`kSwimming`, or the move mode's bit: an NPC's state has no flag) and the stop
+  as it no longer does. Since the copy has the owner's move mode, the idles' own IsSwimming conditions hold on it.
+  No graph says whether it swims, so what was asked is kept (`ActionState::Track`): an ask the graph refuses (a draw,
+  a landing, a get-up in the way) is made again every 0.5 s, six times, then let be until the owner's state changes;
+  a graph built anew or put back in its base state is asked again; when the action is not taken at all the bare
+  event is sent. `puppet` shows `swim=<in> asks/taken/giveUps` per stand-in. Nothing is asked of our own player.
+- Drinking from water (a sink, a fountain, open water; ActionState.h, WeaponFire.cpp). Holding the activate key on
+  water has the engine perform ActionActivateLoopingBegin (0002AE5D; the idles pick `g_drinkStart`, or
+  `swimDrinkStart` for a swimmer) and ActionActivateLoopingEnd (0002AE5C, `drinkEnd`) on release. The drinker's game
+  hears its own player's graph announce them and says so on the action channel (`ShotAction::kDrinkStart` 10 and
+  `kDrinkStop` 11, added without a new protocol version as `kThrow` was: a server or a game from before drops them
+  unread), and the stand-in performs the same two actions. The channel is unreliable, so the start is said again
+  every second while the drink lasts and a stand-in drinks for 2.5 s after the last start it heard: a lost stop ends
+  by itself, a lost start is made up by the next. A stand-in that walks or is in the air stops at once; the
+  drinker's game says stop when its player walks, or when the graph has said nothing for 30 s. What the drink does
+  (the water's spell, the radiation) stays the drinker's game's alone.
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 
