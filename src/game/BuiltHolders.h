@@ -73,11 +73,18 @@ namespace BuiltHolders
 	}
 
 	// What the session put into each piece someone else built and took out, item by item, in session order, as our copy of
-	// it would hold it had it stood all along: a take of more than is there takes what is (as removeitem does). And what our
-	// copy of each, while one is here, was last brought to (shown): it is brought on from that, so what our copy holds that
-	// the book can't explain (an item put in before the session shared these, a stack only a mod of ours makes) stays. A
-	// copy newly found is taken to show what it holds of the book already (as much as both have): one just made holds
-	// nothing and is given it all, one a save kept holds it and is given nothing.
+	// it would hold it had it stood all along: a take of more than is there takes what is (as removeitem does). And what
+	// each copy of ours was last brought to (shown), by the copy's own reference ID: it is brought on from that, so what our
+	// copy holds that the book can't explain (an item put in before the session shared these, a stack only a mod of ours
+	// makes) stays. A copy newly found is taken to show what it holds of the book already (as much as both have): one just
+	// made holds nothing and is given it all.
+	//
+	// What a copy shows is the share of the piece's loot that is in the piece itself, in its builder's world: when the copy
+	// goes, that comes out of it first (Going), and only the rest is our player's. So it is kept per copy, not per piece (a
+	// copy waiting to go after its piece was scrapped and another took its ID still shows the old one's), it outlives the
+	// piece's emptying and a session's change, and it goes into the save's record with the book: a copy a save kept is
+	// known by what it showed then. When that can't be known (a record that didn't read, more copies than are kept) the
+	// book is unsure, and a copy it knows nothing of may hold the session's loot: none of it is our player's to have.
 	class Book
 	{
 	public:
@@ -85,7 +92,15 @@ namespace BuiltHolders
 		using Deltas = std::vector<std::pair<std::uint32_t, std::int64_t>>;
 
 		static constexpr std::size_t MAX_PIECES = 4096;  // built containers with anything in the book
+		static constexpr std::size_t MAX_COPIES = 4096;  // copies of ours whose share is kept
 		static constexpr std::size_t MAX_ITEMS = 512;    // items one holds
+
+		// What a copy that goes holds of the session's loot (Going).
+		struct Share
+		{
+			Items items;         // the session's: out of the copy before anything in it is our player's
+			bool  known = true;  // false: the book can't say (unsure, and nothing kept of this copy): none of it is ours
+		};
 
 		// A change the session numbered at the piece (another player's, or ours as we made it: Own).
 		void Apply(const Key& a_key, std::uint32_t a_item, std::int64_t a_count)
@@ -97,7 +112,7 @@ namespace BuiltHolders
 				}
 				it = book.emplace(a_key, Items{}).first;
 			}
-			auto& items = it->second;
+			auto&      items = it->second;
 			const auto have = items.find(a_item);
 			if (have == items.end() && (a_count <= 0 || items.size() >= MAX_ITEMS)) {
 				return;
@@ -112,22 +127,21 @@ namespace BuiltHolders
 			}
 		}
 
-		// The piece was emptied (scrapped: the server's CONTAINER_EMPTIED): a new piece under its key holds nothing of it.
-		void Forget(const Key& a_key)
-		{
-			book.erase(a_key);
-			if (const auto it = shown.find(a_key); it != shown.end()) {
-				it->second.items.clear();
-			}
-		}
+		// The piece was emptied (scrapped: the server's CONTAINER_EMPTIED): a new piece under its key holds nothing of it. What
+		// our copies show stays theirs: brought to the book (Show) they give it up, and one that goes first gives it up then.
+		void Forget(const Key& a_key) { book.erase(a_key); }
 
 		// Our player's own move at our copy a_local (already made there, so a_have is what it holds of the item now).
 		void Own(const Key& a_key, std::uint32_t a_local, std::uint32_t a_item, std::int64_t a_count, std::int64_t a_have)
 		{
 			Apply(a_key, a_item, a_count);
-			auto it = shown.find(a_key);
-			if (it == shown.end() || it->second.local != a_local) {
-				return;  // found anew at its next Show (as much as both have)
+			auto it = shown.find(a_local);
+			if (it == shown.end() || it->second.key != a_key) {
+				// Never shown: it holds nothing of the book but this move. Its next Show gives it the rest.
+				if (!Track(a_local, a_key)) {
+					return;
+				}
+				it = shown.find(a_local);
 			}
 			auto& count = it->second.items[a_item];
 			count = (std::max)(std::int64_t{ 0 }, (std::min)(count + a_count, a_have));
@@ -137,24 +151,26 @@ namespace BuiltHolders
 		}
 
 		// What to put into (> 0) or take out of (< 0) our copy a_local of the piece for it to show the book, a_have being what
-		// it holds of the items the session shares there; it is taken to show the book once they go in.
+		// it holds of the items the session shares there; it is taken to show the book once they go in. Nothing while the
+		// copy can't be kept (MAX_COPIES): it shows what it holds.
 		Deltas Show(const Key& a_key, std::uint32_t a_local, const Items& a_have)
 		{
 			const auto& want = Of(a_key);
-			auto        it = shown.find(a_key);
-			if (it == shown.end() || it->second.local != a_local) {
+			auto        it = shown.find(a_local);
+			if (it == shown.end() || it->second.key != a_key) {
 				// Found anew: it shows what it holds of the book already.
-				for (auto other = shown.begin(); other != shown.end();) {
-					other = other->second.local == a_local ? shown.erase(other) : std::next(other);  // an ID our game gave again
-				}
-				Shown fresh{ a_local, {} };
+				Items fresh;
 				for (const auto& [item, count] : a_have) {
 					const auto wanted = want.find(item);
 					if (const auto both = wanted != want.end() ? (std::min)(count, wanted->second) : 0; both > 0) {
-						fresh.items[item] = both;
+						fresh[item] = both;
 					}
 				}
-				it = shown.insert_or_assign(a_key, std::move(fresh)).first;
+				if (!Track(a_local, a_key)) {
+					return {};
+				}
+				it = shown.find(a_local);
+				it->second.items = std::move(fresh);
 			}
 			Deltas out;
 			auto&  was = it->second.items;
@@ -173,19 +189,19 @@ namespace BuiltHolders
 			return out;
 		}
 
-		// Our copy a_local goes (WorkshopSync removes it): what it shows of the book, to take out of it first, so that only
-		// what is our player's own goes to their pockets (WorkshopApply::Rescues). The book's share is in the piece itself,
-		// in its builder's game: handed over too, it would be had twice.
-		Items Going(std::uint32_t a_local)
+		// Our copy a_local goes (WorkshopSync removes it, whichever way: a scrap, the session's end, a save's leftover, a cell
+		// loading out of a session): what it shows of the book, to take out of it first, so that only what is our player's
+		// own goes to their pockets (WorkshopApply::Rescues). The book's share is in the piece itself, in its builder's game
+		// (or, the piece scrapped, in its builder's workbench): handed over too, it would be had twice.
+		Share Going(std::uint32_t a_local)
 		{
-			for (auto it = shown.begin(); it != shown.end(); ++it) {
-				if (it->second.local == a_local) {
-					auto items = std::move(it->second.items);
-					shown.erase(it);
-					return items;
-				}
+			const auto it = shown.find(a_local);
+			if (it == shown.end()) {
+				return { {}, !unsure };
 			}
-			return {};
+			Share share{ std::move(it->second.items), true };
+			shown.erase(it);
+			return share;
 		}
 
 		[[nodiscard]] const Items& Of(const Key& a_key) const
@@ -197,78 +213,139 @@ namespace BuiltHolders
 
 		[[nodiscard]] std::size_t Pieces() const { return book.size(); }
 		[[nodiscard]] std::size_t Copies() const { return shown.size(); }
+		[[nodiscard]] bool        Unsure() const { return unsure; }
+		[[nodiscard]] bool        Empty() const { return book.empty() && shown.empty() && !unsure; }
+
+		// A different session: none of its changes are in the pieces. What our copies show stays (still the share of the
+		// pieces' loot in them, to come out as they go).
+		void NewSession() { book.clear(); }
+
+		// The world's share can't be known (the save's record didn't read): a copy the book knows nothing of gives our player
+		// nothing as it goes.
+		void MarkUnsure() { unsure = true; }
 
 		void Clear()
 		{
 			book.clear();
 			shown.clear();
+			unsure = false;
 		}
 
-		// For the save's record (WorldSync's): the book (not what copies show: found anew after a load). Each piece's key,
-		// its count of items, and each item and count.
+		// For the save's record (WorldSync's): whether unsure; the number of pieces, then each piece's key, its count of items,
+		// and each item and count; the number of copies, then each copy's ID, its piece's key, and its items the same way.
 		[[nodiscard]] std::vector<std::uint32_t> Record() const
 		{
 			std::vector<std::uint32_t> out;
+			const auto                 items = [&](const Items& a_items) {
+                out.push_back(static_cast<std::uint32_t>(a_items.size()));
+                for (const auto& [item, count] : a_items) {
+                    out.push_back(item);
+                    out.push_back(static_cast<std::uint32_t>((std::min<std::int64_t>)(count, Protocol::MAX_ITEM_COUNT)));
+                }
+			};
+			out.push_back(unsure ? 1 : 0);
 			out.push_back(static_cast<std::uint32_t>(book.size()));
-			for (const auto& [key, items] : book) {
+			for (const auto& [key, held] : book) {
 				out.push_back(key.builder);
 				out.push_back(key.ref);
-				out.push_back(static_cast<std::uint32_t>(items.size()));
-				for (const auto& [item, count] : items) {
-					out.push_back(item);
-					out.push_back(static_cast<std::uint32_t>((std::min<std::int64_t>)(count, Protocol::MAX_ITEM_COUNT)));
-				}
+				items(held);
+			}
+			out.push_back(static_cast<std::uint32_t>(shown.size()));
+			for (const auto& [local, copy] : shown) {
+				out.push_back(local);
+				out.push_back(copy.key.builder);
+				out.push_back(copy.key.ref);
+				items(copy.items);
 			}
 			return out;
 		}
 
-		// A record Record made; false (and nothing kept) for one that doesn't read.
+		// A record Record made; false for one that doesn't read, which leaves the book empty and unsure.
 		bool Load(const std::vector<std::uint32_t>& a_record)
 		{
 			Clear();
 			std::size_t at = 0;
 			const auto  next = [&](std::uint32_t& a_value) {
-				if (at >= a_record.size()) {
-					return false;
-				}
-				a_value = a_record[at++];
-				return true;
+                if (at >= a_record.size()) {
+                    return false;
+                }
+                a_value = a_record[at++];
+                return true;
 			};
-			std::uint32_t pieces = 0;
-			if (!next(pieces) || pieces > MAX_PIECES) {
-				return false;
-			}
-			for (std::uint32_t p = 0; p < pieces; ++p) {
-				Key           key;
-				std::uint32_t items = 0;
-				if (!next(key.builder) || !next(key.ref) || !next(items) || items > MAX_ITEMS) {
-					Clear();
+			const auto items = [&](Items& a_items) {
+				std::uint32_t n = 0;
+				if (!next(n) || n > MAX_ITEMS) {
 					return false;
 				}
-				for (std::uint32_t i = 0; i < items; ++i) {
+				for (std::uint32_t i = 0; i < n; ++i) {
 					std::uint32_t item = 0, count = 0;
 					if (!next(item) || !next(count) || count > static_cast<std::uint32_t>(Protocol::MAX_ITEM_COUNT)) {
-						Clear();
 						return false;
 					}
-					Apply(key, item, count);
+					if (count > 0) {
+						a_items[item] = count;
+					}
+				}
+				return true;
+			};
+			const auto fail = [&] {
+				Clear();
+				unsure = true;
+				return false;
+			};
+			std::uint32_t flag = 0, pieces = 0, copies = 0;
+			if (!next(flag) || flag > 1 || !next(pieces) || pieces > MAX_PIECES) {
+				return fail();
+			}
+			for (std::uint32_t p = 0; p < pieces; ++p) {
+				Key   key;
+				Items held;
+				if (!next(key.builder) || !next(key.ref) || !items(held)) {
+					return fail();
+				}
+				if (!held.empty()) {
+					book[key] = std::move(held);
 				}
 			}
-			if (at != a_record.size()) {
-				Clear();
-				return false;
+			if (!next(copies) || copies > MAX_COPIES) {
+				return fail();
 			}
+			for (std::uint32_t c = 0; c < copies; ++c) {
+				std::uint32_t local = 0;
+				Copy          copy;
+				if (!next(local) || !next(copy.key.builder) || !next(copy.key.ref) || !items(copy.items)) {
+					return fail();
+				}
+				shown[local] = std::move(copy);
+			}
+			if (at != a_record.size()) {
+				return fail();
+			}
+			unsure = flag != 0;
 			return true;
 		}
 
 	private:
-		struct Shown
+		struct Copy
 		{
-			std::uint32_t local = 0;  // our copy's reference ID
-			Items         items;
+			Key   key;    // the piece it is a copy of
+			Items items;  // what it was last brought to
 		};
 
-		std::map<Key, Items> book;
-		std::map<Key, Shown> shown;  // our copies here, what each was last brought to
+		// Keeps a_local as a copy of a_key, none of the book in it yet (an ID our game gave again is that copy now); false when
+		// no more can be kept, and the book is unsure from then on.
+		bool Track(std::uint32_t a_local, const Key& a_key)
+		{
+			if (!shown.contains(a_local) && shown.size() >= MAX_COPIES) {
+				unsure = true;
+				return false;
+			}
+			shown[a_local] = Copy{ a_key, {} };
+			return true;
+		}
+
+		std::map<Key, Items>          book;
+		std::map<std::uint32_t, Copy> shown;  // our copies, by their own ID: what each was last brought to
+		bool                          unsure = false;
 	};
 }

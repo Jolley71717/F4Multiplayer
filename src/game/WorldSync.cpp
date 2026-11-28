@@ -3586,12 +3586,17 @@ namespace WorldSync
 		lootInbox.push_back(Move{ a_bench, a_item, a_count });
 	}
 
-	void CopyGoing(std::uint32_t a_local)
+	bool CopyGoing(std::uint32_t a_local)
 	{
 		MainThread::Assert("WorldSync::CopyGoing");
-		if (const auto taken = loot.CopyGoing(a_local, engine); taken != 0) {
-			REX::INFO("WorldSync: copy {:08X} goes: {} stacks of the session's loot in it stay its builder's", a_local, taken);
+		const auto going = loot.CopyGoing(a_local, engine);
+		if (going.taken != 0) {
+			REX::INFO("WorldSync: copy {:08X} goes: {} stacks of the session's loot in it stay its builder's", a_local, going.taken);
 		}
+		if (!going.known) {
+			REX::WARN("WorldSync: copy {:08X} goes, and what in it is our player's can't be known (the save's record of built containers didn't read): it goes with what it holds", a_local);
+		}
+		return going.known;
 	}
 
 	void FlushLoot()
@@ -3692,7 +3697,9 @@ namespace WorldSync
 	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc)
 	{
 		const auto point = loot.Point();
-		if (point.sessionId == 0) {
+		// With no session, still written while our copies of built containers hold the session's loot (BuiltHolders::Book):
+		// a save made after a session keeps them, and their share must be known when they go.
+		if (point.sessionId == 0 && loot.Built().Empty()) {
 			return;
 		}
 		const auto& waiting = loot.Waiting();
@@ -3732,6 +3739,7 @@ namespace WorldSync
 			a_intfc->ReadRecordData(savedNext) != sizeof(savedNext) ||
 			a_intfc->ReadRecordData(count) != sizeof(count) || count > (a_length - HEADER) / ENTRY) {
 			REX::WARN("WorldSync: ignoring an unreadable session record");
+			loot.BuiltUnsure();  // our copies of built containers may hold the session's loot: none of it is our player's
 			return;
 		}
 		std::vector<LootSync::Pending> saved;
@@ -3758,7 +3766,7 @@ namespace WorldSync
 				}
 			}
 			if (!book.Load(record)) {
-				REX::WARN("WorldSync: the session record's book of built containers doesn't read; copies of them show what the session puts in from now on");
+				REX::WARN("WorldSync: the session record's book of built containers doesn't read; copies of them show what the session puts in from now on, and give nothing to our player as they go");
 			}
 		}
 		const auto waiting = saved.size();
@@ -3797,7 +3805,7 @@ namespace WorldSync
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
 		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft) +
-		       std::format(" built={}/{}/{}/{}/{}/{}/{} builtBook={}/{}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
-			   stats.builtRescued, loot.Built().Pieces(), loot.Built().Copies());
+		       std::format(" built={}/{}/{}/{}/{}/{}/{}/{} builtBook={}/{}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
+			   stats.builtRescued, stats.builtUnknown, loot.Built().Pieces(), loot.Built().Copies());
 	}
 }

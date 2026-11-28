@@ -753,9 +753,10 @@ namespace LootTest
 		// player.
 		void RemoveCopy(std::uint32_t a_local)
 		{
-			loot.CopyGoing(a_local, *this);
-			for (const auto& [item, count] : holders[a_local]) {
-				carried[item] += count;
+			if (loot.CopyGoing(a_local, *this).known) {
+				for (const auto& [item, count] : holders[a_local]) {
+					carried[item] += count;
+				}
 			}
 			holders.erase(a_local);
 			built.erase(a_local);

@@ -113,7 +113,8 @@ namespace WorldSync
 
 	// WorkshopSync is about to remove our copy of a container someone built: what it shows of the session's loot of the piece
 	// comes out of it first (that is in the piece, in its builder's game), so only our player's own things go to their pockets.
-	void CopyGoing(std::uint32_t a_local);
+	// False when what in it is our player's can't be known (BuiltHolders::Book::Unsure): nothing in it is to go to them.
+	[[nodiscard]] bool CopyGoing(std::uint32_t a_local);
 
 	// A put (a_count > 0) or a take (< 0) of ours at a workbench shared storage watches that the container watcher didn't
 	// see (Storage made it as one of its own changes: a build taken back returns what the workbench gave it, and takes out

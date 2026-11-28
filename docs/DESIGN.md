@@ -1962,17 +1962,23 @@ anywhere else.
 - *Every other game* keeps a book of each piece (`BuiltHolders::Book`): what the session put in and took out, in session
   order, clamped at nothing as `removeitem` is. A change goes into the book at once, never waiting, and into the copy if
   one stands here (`WorkshopSync::LiveCopyOf`); a copy not here is brought to the book as its menu opens or with the next
-  change. A copy is brought on from what it was last shown, so what it holds that the book can't explain (things put in
-  before this, a stack a mod of ours alone makes) stays; one newly found is taken to show what it holds of the book
-  already, so a copy a save kept is given nothing twice and one just made is given all of it. The player's own moves at a
-  copy go into the book as they are reported. The book goes into the co-save's session record (version 2, which also
-  keeps each waiting change's builder; version 1 still reads) and is cleared when the session changes.
-- *A copy going* (moved, scrapped, the session's end, a save's leftover: every path goes through WorkshopSync's
-  `Delete`) first takes out what it shows of the book (`WorldSync::CopyGoing`, `builtRescued=`): those are in the piece,
-  in its builder's world. Only what the player kept there beyond that goes to their pockets (`WorkshopApply::Rescues`), so
-  nothing is had twice.
+  change. A copy is brought on from what it was last shown, kept by the copy's own id, so what it holds that the book
+  can't explain (things put in before this, a stack a mod of ours alone makes) stays; one never shown is taken to show
+  what it holds of the book already (one just made is given all of it). The player's own moves at a copy go into the
+  book, and into what the copy shows, as they are reported. Book and shares go into the co-save's session record
+  (version 2, which also keeps each waiting change's builder; version 1 still reads), written while there is a session or
+  any share, so a copy a save kept is known by what it showed then. A new session empties the book; the shares stay.
+- *A copy going* first takes out what it shows of the book (`WorldSync::CopyGoing`, `builtRescued=`): those are in the
+  piece, in its builder's world, or in their workbench once they scrapped it. Only what the player kept there beyond that
+  goes to their pockets (`WorkshopApply::Rescues`), so nothing is had twice. Every path goes through WorkshopSync's
+  `Delete`: the session's end, the host's scrap (its emptying takes the share out of a copy standing here; one away keeps
+  its share, though a new piece takes the id and a new copy is made of it), a save's leftover after the load
+  (SavedCopies' quiet window, the share from the save's record), and a copy removed out of a session as its cell loads.
+  When the share can't be known (the save's record didn't read, or more than 4096 copies), a copy the book doesn't follow
+  gives the player nothing, with a warning in the log (`built=` counts it): a lost item rather than one had twice. A save
+  from before this holds no book, and its copies held only what the player put in: those go to them as before.
 - The session file holds built holders in its container changes as layout 47, written only when there is one; a file
-  of an older layout that holds one is damaged. `net status` counts `built=sent/applied/shown/ours/gone/elsewhere/rescued` and `builtBook=pieces/copies`.
+  of an older layout that holds one is damaged. `net status` counts `built=sent/applied/shown/ours/gone/elsewhere/rescued/unknown` and `builtBook=pieces/copies`.
   Tested without the game (`tests/BuiltHoldersTests.cpp`, two games through the real server); the rig repro is
   `tools/rig/repro/workshop-host-builds.sh` (phase `containers`). Not yet tested in a game.
 

@@ -1382,10 +1382,10 @@ namespace WorkshopSync
 		{
 			// A copy of a container someone built shows the session's loot of the piece (BuiltHolders): that is in the piece,
 			// in its builder's game, and comes out first. Only what our player kept in it beyond that comes to them.
-			if (KindOf(a_ref) == WorkshopApply::Kind::kContainer) {
-				WorldSync::CopyGoing(a_ref->GetFormID());
-			}
-			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref), Blocked(*a_ref) && !IsWorkshopObject(a_ref))) {
+			// When that can't be known (the save's record didn't read), nothing in it goes to them: a lost thing of theirs
+			// rather than the session's loot had twice (WorldSync says so in the log).
+			const bool known = KindOf(a_ref) != WorkshopApply::Kind::kContainer || WorldSync::CopyGoing(a_ref->GetFormID());
+			if (known && WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref), Blocked(*a_ref) && !IsWorkshopObject(a_ref))) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
 				Hud::Notify(Text::Get("workshop.rescued"));

@@ -176,6 +176,7 @@ namespace LootSync
 			std::uint32_t builtGone = 0;       // ...left out: no such piece of ours now (scrapped since)
 			std::uint32_t builtElsewhere = 0;  // changes at a piece of another of our characters' worlds (nothing here)
 			std::uint32_t builtRescued = 0;    // stacks taken out of a copy as it went, as its builder's piece has them
+			std::uint32_t builtUnknown = 0;    // copies that went with what in them was our player's not known: nothing given
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -291,7 +292,7 @@ namespace LootSync
 				pending.clear();  // a different session: none of its changes are in our world yet
 				sessionPut.clear();
 				friendTook.clear();
-				book.Clear();
+				book.NewSession();  // (what our copies show stays: it is still the old session's loot in them)
 			}
 		}
 
@@ -326,7 +327,7 @@ namespace LootSync
 			friendTook.clear();
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
-				book.Clear();
+				book.NewSession();
 			}
 			++asked;
 			return receiver.Request(a_now, Protocol::WorldRequest::kLoad);
@@ -543,22 +544,35 @@ namespace LootSync
 
 		// ---- containers players built (BuiltHolders) -------------------------------------------------
 
-		// Our copy a_local of someone else's piece goes (WorkshopSync removes it): what it shows of the book comes out of it
-		// first, so that only our player's own things in it go to their pockets: the rest is in the piece, in its builder's
-		// game. Returns the stacks taken out.
-		std::size_t CopyGoing(std::uint32_t a_local, World& a_world)
+		struct Going
 		{
-			std::size_t taken = 0;
-			for (const auto& [item, count] : book.Going(a_local)) {
+			std::size_t taken = 0;     // stacks of the session's loot taken out of the copy
+			bool        known = true;  // false: what in it is our player's can't be known (BuiltHolders::Book::Unsure): none is
+		};
+
+		// Our copy a_local of someone else's piece goes (WorkshopSync removes it, any way it does): what it shows of the book
+		// comes out of it first, so that only our player's own things in it go to their pockets: the rest is in the piece, in
+		// its builder's game (or the piece's scrap put it into their workbench). Kept by the copy and in the save's record, so
+		// it is known after a load, out of a session and after the piece's emptying too. When it can't be known, nothing in
+		// the copy is our player's (known false): a lost item of theirs is better than the session's loot had twice.
+		Going CopyGoing(std::uint32_t a_local, World& a_world)
+		{
+			auto  share = book.Going(a_local);
+			Going out{ 0, share.known };
+			for (const auto& [item, count] : share.items) {
 				const auto have = CountOf(a_local, item, a_world);
 				if (const auto take = (std::min)(have, count); take > 0) {
 					a_world.Apply({ a_local, item, -static_cast<std::int32_t>((std::min<std::int64_t>)(take, Protocol::MAX_ITEM_COUNT)) });
-					++taken;
+					++out.taken;
 				}
 			}
-			counts.builtRescued += static_cast<std::uint32_t>(taken);
-			return taken;
+			counts.builtRescued += static_cast<std::uint32_t>(out.taken);
+			counts.builtUnknown += out.known ? 0 : 1;
+			return out;
 		}
+
+		// The save's record didn't read: what the save's copies hold of the session's loot can't be known.
+		void BuiltUnsure() { book.MarkUnsure(); }
 
 		[[nodiscard]] const BuiltHolders::Book& Built() const { return book; }
 

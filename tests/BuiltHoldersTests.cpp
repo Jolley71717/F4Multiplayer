@@ -339,3 +339,175 @@ TEST("built holders: a plugin's container shares loot as it always did")
 	CHECK(p.friendGame.In(CHEST, AMMO) == 30);
 	CHECK(p.friendGame.loot.Stats().builtApplied == 0);
 }
+
+// ---- a copy's removal, every way it goes: only our player's own share comes to them -----------------------------
+
+TEST("built holders: the book keeps each copy's share through the piece's emptying, an ID used again and the save's record")
+{
+	BuiltHolders::Book      book;
+	const BuiltHolders::Key key{ 1, PIECE };
+	book.Apply(key, STIM, 5);
+	CHECK(book.Show(key, COPY, {}).size() == 1);
+	book.Forget(key);  // scrapped while the copy waits to go
+	BuiltHolders::Book saved;
+	REQUIRE(saved.Load(book.Record()));
+	CHECK(!saved.Unsure());
+
+	// A new piece under the same ID, and a new copy of it: the old copy's share stays its own.
+	saved.Apply(key, STIM, 2);
+	CHECK(saved.Show(key, COPY_AGAIN, {}).size() == 1);
+	const auto old = saved.Going(COPY);
+	CHECK(old.known);
+	CHECK((old.items == BuiltHolders::Book::Items{ { STIM, 5 } }));
+	const auto fresh = saved.Going(COPY_AGAIN);
+	CHECK((fresh.items == BuiltHolders::Book::Items{ { STIM, 2 } }));
+
+	// A copy the book knows nothing of is our player's alone, unless the book is unsure.
+	CHECK(saved.Going(0xFF000B00).known);
+	saved.MarkUnsure();
+	CHECK(!saved.Going(0xFF000B00).known);
+	BuiltHolders::Book reread;
+	REQUIRE(reread.Load(saved.Record()));
+	CHECK(reread.Unsure());
+	CHECK(!reread.Load({ 7 }));
+	CHECK(reread.Unsure());  // a record that doesn't read: unsure
+}
+
+TEST("built holders: a copy the book has no room for leaves it unsure, so no copy it can't follow gives anything")
+{
+	BuiltHolders::Book      book;
+	const BuiltHolders::Key key{ 1, PIECE };
+	book.Apply(key, STIM, 1);
+	for (std::uint32_t i = 0; i < BuiltHolders::Book::MAX_COPIES; ++i) {
+		(void)book.Show(key, 0xFF100000 + i, {});
+	}
+	CHECK(!book.Unsure());
+	CHECK(book.Show(key, 0xFF200000, {}).empty());  // not followed: shows nothing
+	CHECK(book.Unsure());
+	CHECK(!book.Going(0xFF200000).known);
+}
+
+TEST("built holders: at the session's end the friend's copy goes and only the friend's own things come to them")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	p.friendGame.holders[COPY][AMMO] = 4;  // the friend's own, the session never saw
+	p.friendGame.Disconnect(p.f);
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 10);
+	CHECK(p.friendGame.Carried(AMMO) == 4);
+	CHECK(p.friendGame.loot.Stats().builtRescued == 1);
+}
+
+TEST("built holders: a copy that goes out of a session as its cell loads, after the game started again, gives nothing of the host's")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	p.friendGame.Put(p.f, COPY, STIM, 3);  // the friend's own put: the session's too (it is in the host's crate)
+	p.Settle();
+	REQUIRE(p.host.In(PIECE, STIM) == 9);
+	p.friendGame.holders[COPY][AMMO] = 2;
+	const auto save = p.friendGame.SaveGame(p.f);
+	p.friendGame.Disconnect(p.f);
+	p.friendGame.Restart(save);  // the game started again; no session
+	// Its cell loads: the graveyard's sweep removes it.
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 7);  // 10 less the 3 put into the host's crate
+	CHECK(p.friendGame.Carried(AMMO) == 2);
+}
+
+TEST("built holders: a save's leftover copy of a piece the host scrapped since goes after the load with none of the host's things for the friend")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 5);
+	p.Settle();
+	REQUIRE(p.friendGame.In(COPY, STIM) == 5);
+	const auto save = p.friendGame.SaveGame(p.f);
+
+	// The host scraps the crate (its scrap puts what it held into the host's workbench) while the friend is elsewhere.
+	p.friendGame.away.insert(COPY);
+	p.host.built.erase(PIECE);
+	Scrap(p.f, 1, PIECE);
+	p.Settle();
+
+	// The friend loads the save: its copy stands again, holding the five, and no report claims it (SavedCopies' quiet
+	// window), so it goes.
+	p.friendGame.LoadGame(p.f, save);
+	p.Settle();
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 10);
+}
+
+TEST("built holders: the host's scrap empties the friend's copy, here or not, and a new piece under the same ID starts empty")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	p.friendGame.holders[COPY][AMMO] = 1;  // the friend's own
+
+	p.host.built.erase(PIECE);
+	Scrap(p.f, 1, PIECE);
+	p.Settle();
+	CHECK(p.friendGame.In(COPY, STIM) == 0);  // the scrap's emptying took the host's things out of the live copy
+	p.friendGame.RemoveCopy(COPY);              // then the relayed scrap removes it
+	CHECK(p.friendGame.Carried(STIM) == 10);
+	CHECK(p.friendGame.Carried(AMMO) == 1);
+}
+
+TEST("built holders: a copy away at the host's scrap gives up the old piece's things when it goes, though a new piece took the ID")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	p.friendGame.away.insert(COPY);
+	p.host.built.erase(PIECE);
+	Scrap(p.f, 1, PIECE);
+	p.Settle();
+
+	// The host's game gives a new crate the same ID and puts 2 in; the friend's game makes its copy.
+	p.host.holders.erase(PIECE);
+	p.host.built[PIECE] = { 0, PIECE };
+	Build(p.f, 1, PIECE);
+	p.friendGame.MakeCopy(COPY_AGAIN, { p.hostId, PIECE });
+	p.host.Put(p.f, PIECE, STIM, 2);
+	p.Settle();
+	CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 2);
+
+	// The old copy's cell loads and the graveyard removes it.
+	p.friendGame.away.erase(COPY);
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 10);
+	CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 2);
+}
+
+TEST("built holders: when the save's record of built containers doesn't read, a copy that goes gives the friend nothing, and says so")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 5);
+	p.Settle();
+	p.friendGame.holders[COPY][AMMO] = 2;
+	auto save = p.friendGame.SaveGame(p.f);
+	save.book = {};
+	save.book.MarkUnsure();  // WorldSync's LoadResyncPoint, on a record that doesn't read
+	p.friendGame.Disconnect(p.f);
+	p.friendGame.Restart(save);
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 10);
+	CHECK(p.friendGame.Carried(AMMO) == 0);
+	CHECK(p.friendGame.loot.Stats().builtUnknown == 1);
+}
+
+TEST("built holders: a save from before built containers were shared still gives the friend what they kept in a copy")
+{
+	Pair p;
+	p.friendGame.holders[COPY][AMMO] = 3;
+	auto save = p.friendGame.SaveGame(p.f);
+	save.book = {};  // no book: such a save's copies held only what the friend put in
+	p.friendGame.Disconnect(p.f);
+	p.friendGame.Restart(save);
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(AMMO) == 3);
+	CHECK(p.friendGame.loot.Stats().builtUnknown == 0);
+}
