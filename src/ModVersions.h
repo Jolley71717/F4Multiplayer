@@ -3,11 +3,12 @@
 #include <cstdint>
 #include <string_view>
 
-// Which mod versions used which protocol number, so a refusal for a version mismatch can name versions (the numbers
-// mean nothing to a player). The server's text is unchanged and still carries the numbers: this client turns them into
-// names. Every release since 0.9.0 is here (the numbers of the ones in between are taken from each tag's
-// Protocol::VERSION); a number not here is older than that, or newer than this build. A protocol bump needs its line
-// added here: a test fails until it is.
+// Which mod versions used which protocol number, so a refusal for a version mismatch with a copy at 0.23 or older can
+// name versions (the numbers mean nothing to a player): a server of those says numbers, and this client turns them into
+// names; this server names the version of an old copy that says hello. Every release from 0.9.0 to 0.23 is here (the
+// numbers of the ones in between are taken from each tag's Protocol::VERSION); a number not here is older than that.
+// The table is complete: from 0.24.0 on the hello carries the mod's version itself (common/VersionCheck.h), and no
+// number is added again (Protocol::LAST_NUMBER is its last line).
 namespace ModVersions
 {
 	struct Entry

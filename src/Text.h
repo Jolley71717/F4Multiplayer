@@ -15,6 +15,7 @@
 
 #include "ModVersions.h"
 #include "TextEnglish.h"
+#include "VersionCheck.h"
 
 // Everything the player reads that the plugin wrote: the HUD's notices, the F1 menu's pages and buttons, the
 // server's refusals as the joining game shows them. Each is a key with an English text compiled in (TextEnglish.h);
@@ -327,10 +328,11 @@ namespace Text
 	}
 
 	// A server's refusal as the joining player reads it. The server's texts are English on the wire (any version of the
-	// server or a dedicated one sends them); the ones this client knows are shown in its language, and any other text
-	// (a changed server's) as it came.
-	[[nodiscard]] inline std::string Reject(std::string_view a_reason, std::string_view a_ownVersion = OwnVersion())
+	// server or a dedicated one sends them); the ones this client knows are shown in its language (a_english: in English,
+	// for the log), and any other text (a changed server's) as it came.
+	[[nodiscard]] inline std::string Reject(std::string_view a_reason, std::string_view a_ownVersion = OwnVersion(), bool a_english = false)
 	{
+		const auto get = [a_english](std::string_view a_key) { return a_english ? GetEnglish(a_key) : Get(a_key); };
 		static constexpr std::pair<std::string_view, std::string_view> WHOLE[] = {
 			{ "Not an F4Multiplayer client", "reject.not_client" },
 			{ "Wrong password", "reject.password" },
@@ -344,37 +346,30 @@ namespace Text
 		};
 		for (const auto& [english, key] : WHOLE) {
 			if (a_reason == english) {
-				return Get(key);
+				return get(key);
 			}
 		}
-		// "Version mismatch: server uses protocol 31, you have 30. Install the same mod version."
+		// A server from 0.24.0 on names both versions and who updates (VersionCheck::Refusal).
+		if (const auto refused = VersionCheck::ReadRefusal(a_reason)) {
+			return Expand(get(refused->hostOlder ? "reject.version_older" : "reject.version_newer"), { { "host", refused->host }, { "you", refused->you } });
+		}
+		// A server at 0.23 or older says its protocol number and ours, which mean nothing to a player:
+		// "Version mismatch: server uses protocol 86, you have 87. Install the same mod version." Ours (Protocol::HELLO_NUMBER)
+		// is above every number such a server can have, so the host is the one to update; its version is named from its
+		// number when the table knows it. The numbers are never shown.
 		constexpr std::string_view VERSION_START = "Version mismatch: server uses protocol ";
 		constexpr std::string_view VERSION_MIDDLE = ", you have ";
 		constexpr std::string_view VERSION_END = ". Install the same mod version.";
-		if (a_reason.starts_with(VERSION_START) && a_reason.ends_with(VERSION_END)) {
-			auto rest = a_reason.substr(VERSION_START.size(), a_reason.size() - VERSION_START.size() - VERSION_END.size());
-			if (const auto middle = rest.find(VERSION_MIDDLE); middle != std::string_view::npos) {
-				const auto server = rest.substr(0, middle);
-				const auto you = rest.substr(middle + VERSION_MIDDLE.size());
-				const auto digits = [](std::string_view a_s) { return !a_s.empty() && a_s.size() < 10 && std::ranges::all_of(a_s, [](char a_c) { return a_c >= '0' && a_c <= '9'; }); };
-				if (digits(server) && digits(you)) {
-					const auto host = static_cast<std::uint32_t>(std::stoul(std::string{ server }));
-					const auto mine = static_cast<std::uint32_t>(std::stoul(std::string{ you }));
-					const auto names = ModVersions::NamesOf(host);
-					// Versions, not protocol numbers: a player can't tell who must update from "85" and "86". The host's
-					// number being higher is a newer mod than this one; lower, an older one (named when known).
-					if (!a_ownVersion.empty() && host != mine) {
-						if (host > mine) {
-							return Format("reject.version_newer", { { "you", a_ownVersion } });
-						}
-						if (!names.empty()) {
-							return Format("reject.version_older", { { "host", names }, { "you", a_ownVersion } });
-						}
-						return Format("reject.version_older_unknown", { { "you", a_ownVersion } });
-					}
-					return Format("reject.version", { { "server", server }, { "you", you } });
-				}
+		if (a_reason.starts_with(VERSION_START) && a_reason.ends_with(VERSION_END) && a_reason.size() >= VERSION_START.size() + VERSION_END.size()) {
+			const auto rest = a_reason.substr(VERSION_START.size(), a_reason.size() - VERSION_START.size() - VERSION_END.size());
+			const auto middle = rest.find(VERSION_MIDDLE);
+			const auto server = rest.substr(0, middle == std::string_view::npos ? 0 : middle);
+			const bool digits = !server.empty() && server.size() < 10 && std::ranges::all_of(server, [](char a_c) { return a_c >= '0' && a_c <= '9'; });
+			const auto names = digits ? ModVersions::NamesOf(static_cast<std::uint32_t>(std::stoul(std::string{ server }))) : std::string_view{};
+			if (!names.empty()) {
+				return Expand(get("reject.version_older"), { { "host", names }, { "you", a_ownVersion } });
 			}
+			return Expand(get("reject.version_older_unknown"), { { "you", a_ownVersion } });
 		}
 		// The load order refusal is a sentence or two (Protocol::LoadOrderDifference; older servers put names between).
 		static constexpr std::pair<std::string_view, std::string_view> SENTENCES[] = {
@@ -387,7 +382,7 @@ namespace Text
 			return out;
 		}
 		for (const auto& [english, key] : SENTENCES) {
-			const auto text = Get(key);
+			const auto text = get(key);
 			for (std::size_t at = out.find(english); at != std::string::npos; at = out.find(english, at + text.size())) {
 				out.replace(at, english.size(), text);
 			}

@@ -40,10 +40,9 @@ world.history_full = マルチプレイ：セッションの共有履歴が{perc
 
 # --- What the server says when it refuses a player ---
 reject.not_client = F4Multiplayerのクライアントではありません
-reject.version = バージョン不一致：サーバーはプロトコル{server}、こちらは{you}です。同じバージョンのMODをインストールしてください。
 reject.version_older = ホストは F4Multiplayer {host}、こちらは {you} です。両方とも同じバージョンが必要です。ホストが Nexus の Files タブから最新版に更新し、古いコピーを MOD マネージャーまたは Data\F4SE\Plugins から削除するか無効にしてください。
 reject.version_older_unknown = ホストの F4Multiplayer は、こちらの {you} より古いバージョンです。両方とも同じバージョンが必要です。ホストが Nexus の Files タブから最新版に更新し、古いコピーを MOD マネージャーまたは Data\F4SE\Plugins から削除するか無効にしてください。
-reject.version_newer = ホストの F4Multiplayer は、こちらの {you} より新しいバージョンです。両方とも同じバージョンが必要です。Nexus の Files タブから最新版に更新し、古いコピーを MOD マネージャーまたは Data\F4SE\Plugins から削除するか無効にしてください。
+reject.version_newer = ホストは F4Multiplayer {host}、こちらは {you} です。両方とも同じバージョンが必要です。Nexus の Files タブから最新版に更新し、古いコピーを MOD マネージャーまたは Data\F4SE\Plugins から削除するか無効にしてください。
 reject.password = パスワードが違います
 reject.host_not_ready = ホストはまだゲームに入っていません
 reject.full = サーバーが満員です

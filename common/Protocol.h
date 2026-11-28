@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "VersionCheck.h"
+
 // Wire protocol shared by the game plugin, the server and test tools.
 // All values are little-endian. Every packet starts with a one-byte MessageType.
 namespace Protocol
@@ -194,7 +196,18 @@ namespace Protocol
 	// took down is a RefState too: open = kYes says the marker is disabled (the way is open), kNo that it stands, locked is never said,
 	// and only a wall coming down is reported and applied; the server keeps it in its ref-state table as any door's, and replays it to a joiner.
 	// No new message ids, no welcome bytes, no session layout change. 85 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 86;
+	// 86 is the last of these numbers: 0.23's (LAST_NUMBER).
+	//
+	// From 0.24.0 on the mod's version names the protocol (common/VersionCheck.h): the hello carries it as a string
+	// (Hello::modVersion, "0.24.1"), and the server lets in a joiner of its own major.minor whatever the patch. A change
+	// to what goes over the wire, or to the session file's layout, is a new minor version (docs/RELEASING.md); a patch
+	// release never makes one. The hello's old number slot holds HELLO_NUMBER, for good, so a copy at 0.23 or older
+	// reads a number other than its own and refuses a new one; a new server reads it to tell such a copy from a new one.
+	// Neither number is ever shown to anyone: refusals, logs and docs name versions.
+	inline constexpr std::uint16_t LAST_NUMBER = 86;
+	// What every hello from 0.24.0 on holds in the old number's slot: above every number a release used, so no server
+	// of an older release takes a new hello for its own, and it never changes again.
+	inline constexpr std::uint16_t HELLO_NUMBER = 87;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -573,7 +586,11 @@ namespace Protocol
 	struct Hello
 	{
 		std::uint32_t magic = MAGIC;
-		std::uint16_t version = VERSION;
+		// The old protocol number's slot: HELLO_NUMBER from 0.24.0 on; a copy at 0.23 or older has its own number here.
+		std::uint16_t number = HELLO_NUMBER;
+		// The joiner's mod version, "0.24.1" (VersionCheck::OWN). Right after the number, for good: whatever else a later
+		// version changes in the hello, every version reads this much of it.
+		std::string   modVersion{ VersionCheck::OWN };
 		std::uint32_t contentHash = 0;  // hash of the client's load order; all players must match
 		std::string   name;
 		std::string   password;
@@ -2934,7 +2951,8 @@ namespace Protocol
 	{
 		Writer w{ MessageType::kHello };
 		w.U32(a_msg.magic);
-		w.U16(a_msg.version);
+		w.U16(a_msg.number);
+		w.Str(a_msg.modVersion, VersionCheck::MAX_LENGTH);
 		w.U32(a_msg.contentHash);
 		w.Str(a_msg.name, MAX_NAME_LENGTH);
 		w.Str(a_msg.password, MAX_PASSWORD_LENGTH);
@@ -2991,18 +3009,27 @@ namespace Protocol
 	}
 
 	// A hello of another version (or with another magic) is read up to its version only: the rest may be laid out
-	// otherwise, and the server needs no more to say the versions differ.
+	// otherwise, and the server needs no more to say the versions differ. A copy at 0.23 or older is read up to its
+	// number (modVersion stays empty); a newer one up to its modVersion, and on only when that is of our major.minor.
 	inline std::optional<Hello> DecodeHello(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
 		r.U8();
 		Hello msg;
+		msg.modVersion.clear();
 		msg.magic = r.U32();
-		msg.version = r.U16();
+		msg.number = r.U16();
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
-		if (msg.magic != MAGIC || msg.version != VERSION) {
+		if (msg.magic != MAGIC || msg.number != HELLO_NUMBER) {
+			return msg;
+		}
+		msg.modVersion = r.Str(VersionCheck::MAX_LENGTH);
+		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		if (VersionCheck::Compare(VersionCheck::OWN, msg.modVersion) != VersionCheck::Verdict::kJoins) {
 			return msg;
 		}
 		msg.contentHash = r.U32();

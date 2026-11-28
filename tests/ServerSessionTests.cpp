@@ -153,17 +153,100 @@ TEST("server session: a truncated hello is rejected")
 	CHECK(f.fake->WaitDisconnected(1));
 }
 
-TEST("server session: a different protocol version is rejected, naming both versions")
+namespace
+{
+	// This build's version with another minor, major or patch: "0.24.1" -> "0.25.1", "1.24.1", "0.24.9".
+	std::string OtherVersion(int a_major, int a_minor, int a_patch)
+	{
+		const auto own = *VersionCheck::Parse(VersionCheck::OWN);
+		return std::format("{}.{}.{}", own.major + a_major, own.minor + a_minor, a_patch < 0 ? own.patch : own.patch + a_patch);
+	}
+}
+
+TEST("server session: a joiner of the same major.minor gets in whatever its patch")
 {
 	Fixture f;
 	auto hello = Fixture::MakeHello("Alice");
-	hello.version = Protocol::VERSION + 7;
-	const auto reject = JoinRejected(f, 1, Protocol::Encode(hello));
-	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "Version mismatch"));
-	CHECK(Contains(reject->reason, std::format("protocol {}", Protocol::VERSION)));
-	CHECK(Contains(reject->reason, std::format("you have {}", Protocol::VERSION + 7)));
-	CHECK(f.fake->WaitDisconnected(1));
+	hello.modVersion = OtherVersion(0, 0, 7);
+	REQUIRE(f.Join(1, hello));
+	auto other = Fixture::MakeHello("Bob");
+	other.modVersion = std::format("{}.{}.0", VersionCheck::Parse(VersionCheck::OWN)->major, VersionCheck::Parse(VersionCheck::OWN)->minor);
+	REQUIRE(f.Join(2, other));
+}
+
+TEST("server session: a joiner of another minor or major is refused, naming both full versions and who updates")
+{
+	const auto ours = VersionCheck::Format(*VersionCheck::Parse(VersionCheck::OWN));
+	struct Case
+	{
+		std::string theirs;
+		bool        hostOlder;
+	};
+	const Case cases[] = {
+		{ OtherVersion(0, 1, -1), true },  // a newer joiner: the host updates
+		{ OtherVersion(1, 0, -1), true },
+		{ OtherVersion(0, 1, 3), true },
+	};
+	for (const auto& c : cases) {
+		Fixture f;
+		auto hello = Fixture::MakeHello("Alice");
+		hello.modVersion = c.theirs;
+		const auto reject = JoinRejected(f, 1, Protocol::Encode(hello));
+		REQUIRE(reject);
+		CHECK(reject->reason == VersionCheck::Refusal(c.hostOlder, ours, c.theirs));
+		CHECK(reject->reason.size() <= Protocol::MAX_REASON_LENGTH);
+		CHECK(f.Logged(std::format("they have F4Multiplayer {}; this server has {}", c.theirs, ours)));
+		CHECK(!Contains(reject->reason, std::to_string(Protocol::HELLO_NUMBER)));
+		CHECK(f.fake->WaitDisconnected(1));
+	}
+	// An older joiner (when this build's minor leaves room for one): the joiner updates.
+	if (const auto own = *VersionCheck::Parse(VersionCheck::OWN); own.minor > 0) {
+		Fixture f;
+		auto hello = Fixture::MakeHello("Alice");
+		hello.modVersion = std::format("{}.{}.5", own.major, own.minor - 1);
+		const auto reject = JoinRejected(f, 1, Protocol::Encode(hello));
+		REQUIRE(reject);
+		CHECK(reject->reason == VersionCheck::Refusal(false, ours, hello.modVersion));
+	}
+}
+
+TEST("server session: a copy at 0.23 or older (the old protocol number) is refused, naming versions and no number")
+{
+	const auto ours = VersionCheck::Format(*VersionCheck::Parse(VersionCheck::OWN));
+	// As 0.23's hello: magic, its number, then its own layout (the server reads no further).
+	for (const std::uint16_t number : { std::uint16_t{ 86 }, std::uint16_t{ 62 }, std::uint16_t{ 30 } }) {
+		Fixture f;
+		Protocol::Writer old{ Protocol::MessageType::kHello };
+		old.U32(Protocol::MAGIC);
+		old.U16(number);
+		old.U32(0x1234);
+		old.Str("Alice", Protocol::MAX_NAME_LENGTH);
+		const auto reject = JoinRejected(f, 1, old.Data());
+		REQUIRE(reject);
+		const std::string theirs = number == 86 ? "0.23" : number == 62 ? "0.13.0 to 0.15.1" : "an older version";
+		CHECK(reject->reason == VersionCheck::Refusal(false, ours, theirs));
+		CHECK(Contains(reject->reason, ours));
+		CHECK(!Contains(reject->reason, "protocol"));
+		CHECK(!Contains(reject->reason, std::format(" {} ", number)));
+		CHECK(reject->reason.size() <= Protocol::MAX_REASON_LENGTH);
+		CHECK(f.Logged(std::format("they have F4Multiplayer {}; this server has {}", theirs, ours)));
+		CHECK(!f.Logged("protocol"));
+		CHECK(f.fake->WaitDisconnected(1));
+	}
+}
+
+TEST("server session: a hello whose mod version is not a version is refused, and the text is not shown")
+{
+	for (const std::string bad : { "", "0.24", "0.24.1.2", "a.b.c", "0.24.1-rc1", "1..2", "0.24.1\nSession: connected", "9999999.0.0" }) {
+		Fixture f;
+		auto hello = Fixture::MakeHello("Alice");
+		hello.modVersion = bad;
+		const auto reject = JoinRejected(f, 1, Protocol::Encode(hello));
+		REQUIRE(reject);
+		CHECK(reject->reason == "Not an F4Multiplayer client");
+		CHECK(f.Logged("their hello's mod version is not a version"));
+		CHECK(f.fake->WaitDisconnected(1));
+	}
 }
 
 TEST("server session: the wrong password is rejected, the right one gets in")
@@ -574,7 +657,7 @@ TEST("server session: a connection that leaves before its hello is never announc
 	f.fake->Connect(2);
 	f.fake->Drop(2);
 	auto old = Fixture::MakeHello("Mallory");
-	old.version = Protocol::VERSION - 1;
+	old.number = Protocol::LAST_NUMBER;
 	REQUIRE(JoinRejected(f, 3, Protocol::Encode(old)));
 	const auto packets = Settle(f, 1);
 	CHECK(OfType(packets, MT::kPlayerLeft).empty());
@@ -862,7 +945,7 @@ TEST("server session: a rejected hello with a player's identity doesn't drop tha
 	auto wrongMods = aliceHello;
 	wrongMods.contentHash = 0x9999;
 	auto wrongVersion = aliceHello;
-	wrongVersion.version = Protocol::VERSION + 1;
+	wrongVersion.modVersion = OtherVersion(0, 1, -1);
 	REQUIRE(JoinRejected(f, 3, Protocol::Encode(wrongPassword)));
 	REQUIRE(JoinRejected(f, 4, Protocol::Encode(wrongMods)));
 	REQUIRE(JoinRejected(f, 5, Protocol::Encode(wrongVersion)));
