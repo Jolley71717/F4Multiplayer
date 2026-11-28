@@ -272,6 +272,7 @@ TEST("join challenge: a wrong answer is refused, and so is the password as typed
 	clear.password = "hunter2";
 	f.fake->Deliver(3, Protocol::Encode(clear));
 	CHECK(Challenged(f, 3));
+	REQUIRE(f.fake->Settle());  // the server has handled everything sent: a welcome would be here by now
 	CHECK(Count(f.fake->Take(3), MT::kWelcome) == 0u);
 }
 
@@ -294,6 +295,7 @@ TEST("join challenge: an answer is good for its nonce only")
 	const auto second = Challenged(f, 3);  // a proof with no challenge of its own is just a new challenge
 	REQUIRE(second);
 	CHECK(second->nonce != first->nonce);
+	REQUIRE(f.fake->Settle());  // the server has handled everything sent: a welcome would be here by now
 	CHECK(Count(f.fake->Take(3), MT::kWelcome) == 0u);
 	replay.proof = proof;  // and against the right challenge: it fails
 	f.fake->Deliver(3, Protocol::Encode(replay));
@@ -413,6 +415,7 @@ TEST("join approval: a Steam friend and the host's own game are never asked abou
 	JoinHost(f);
 	f.fake->SetIdentity(2, 0x57EA000000000002ull);
 	CHECK(f.Join(2, RemoteHello("Steamy", 0x5EA)));
+	REQUIRE(f.fake->Settle());  // the server thread has sent all it will for this join
 	CHECK(f.fake->Take(2).size() > 0u);
 	CHECK(!f.Logged("waits for the host"));
 }
@@ -442,6 +445,7 @@ TEST("join approval: a joiner who was let in and comes back is not asked again; 
 	CHECK(f.Join(3, RemoteHello("Bob", 0xB0B)));  // no wait
 	// The host kicks him: coming again means asking again.
 	const auto id = Protocol::DecodeWelcome(*welcome)->playerId;
+	REQUIRE(f.fake->Settle());
 	f.fake->Take(HOST_PEER);
 	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::HostCommand{ Protocol::HostAction::kKick, id }));
 	REQUIRE(f.fake->WaitDisconnected(3));
