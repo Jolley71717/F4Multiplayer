@@ -178,3 +178,29 @@ TEST("saved copies: a new load replaces what an earlier one named, and holds eac
 	book.Load({});
 	CHECK(book.Empty());
 }
+
+TEST("saved copies: in a session, a copy no report claimed goes once the session's building has come in and nothing waits")
+{
+	// A friend loads an older save in the session: the host scrapped a lamp since, and moved a container. The session's reports
+	// find the copies the host still has at their spots; the scrapped lamp's copy and the container's old spot are claimed by none.
+	const std::uint32_t LAMP = 0xFF000A04;
+	Book                book;
+	book.Load({ { LAMP, BED_BASE }, { DESK, DESK_BASE } });
+	FakeGame game;
+	game.found[LAMP] = Found::kOurs;
+	game.found[DESK] = Found::kOurs;
+	game.drawn[LAMP] = game.drawn[DESK] = true;
+	namespace sc = SavedCopies;
+	// While reports come (the load's, the session's), a copy may still be claimed: none goes.
+	CHECK(sc::SessionMayClaim(40, std::chrono::seconds(60)));       // reports wait in line, however long ago the last came
+	CHECK(sc::SessionMayClaim(0, std::chrono::seconds(2)));         // the last came 2 s ago: more may follow
+	CHECK(book.Look(game, sc::SessionMayClaim(0, std::chrono::seconds(2)), T0) == 0);
+	// The report for the desk's copy found it at its spot: the session keeps it, the book lets it go.
+	game.found[DESK] = Found::kKept;
+	// Quiet for CLAIM_QUIET with nothing in line: the lamp's copy is the session's no longer.
+	CHECK(!sc::SessionMayClaim(0, sc::CLAIM_QUIET));
+	CHECK(book.Look(game, sc::SessionMayClaim(0, sc::CLAIM_QUIET), T0 + std::chrono::seconds(12)) == 1);
+	CHECK(game.removed == std::vector<std::uint32_t>{ LAMP });
+	CHECK(book.Empty());
+	CHECK(book.KeptBySession() == 1);
+}

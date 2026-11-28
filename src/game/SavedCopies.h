@@ -54,6 +54,21 @@ namespace SavedCopies
 		kOurs,    // the copy the save held: a reference made at run time, of that base, blocked, linked to nothing
 	};
 
+	// How long a session's building must have been quiet (nothing came from the server, nothing waits in line) before the copies a
+	// save held that no report claimed are known to be the session's no longer: pieces its host scrapped or moved since that save
+	// (a friend who loads an older save in a session, or joins with one while the host's world went on). Before it, a report may
+	// still be on its way to claim one at its spot (FindExisting); after it, a copy still unclaimed stands for a piece that is
+	// gone, the host's scrapped lamp or the old spot of a moved container, floating in the friend's game until their session
+	// ends, and goes as it does out of a session.
+	constexpr auto CLAIM_QUIET = std::chrono::seconds(10);
+
+	// Whether the session may still claim the copies a save held: a_inLine reports wait to be applied, or the building last
+	// came (the session began, the world loaded, a report came in) less than CLAIM_QUIET ago.
+	constexpr bool SessionMayClaim(std::size_t a_inLine, std::chrono::steady_clock::duration a_quiet)
+	{
+		return a_inLine > 0 || a_quiet < CLAIM_QUIET;
+	}
+
 	// The bytes of a record: the version, the count, then each entry's id and base; nothing when there is none.
 	inline std::vector<std::uint8_t> Encode(std::span<const Entry> a_entries)
 	{
