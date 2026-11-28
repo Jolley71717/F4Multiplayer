@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T04:44:22+00:00",
+ "updated": "2026-11-28T05:00:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2486,8 +2486,8 @@
    "title": "Settlements: a player who leaves and rejoins doesn't see buildings the host placed or changed meanwhile; scrapped lamps leave floating items; shared loot not in the same container",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
-   "note": "stale copies after an older save's load fixed and rig-verified (twice); built containers' loot still not shared (needs a protocol change)",
+   "stage": 5,
+   "note": "Merged: a friend's stale-save copies of pieces the host scrapped or moved now go (PR 648)",
    "pr": 648
   },
   {
