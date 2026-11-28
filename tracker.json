@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-27T23:35:51+00:00",
+ "updated": "2026-11-28T01:07:26+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -572,8 +572,8 @@
    "title": "Crash on join in the host's game: behavior graph (hkbStateMachine::getStateIndex) from Actor::PerformAction",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "merged (PR 646), not tested in a game",
+   "stage": 1,
+   "note": "crash bundle: runtime actors' weapons",
    "pr": 646
   },
   {
@@ -1090,8 +1090,8 @@
    "title": "Crash with the WARS mod (rewrites bullet trajectories): host and client crash logs attached",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "Player report: crash when playing with the WARS mod"
+   "stage": 1,
+   "note": "crash bundle: runtime actors' weapons"
   },
   {
    "id": "8bqc",
@@ -3803,7 +3803,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Looked into: no mod code on the crash; cannot tell more without a repeat that has a log"
+   "note": "crash bundle: runtime actors' weapons"
   },
   {
    "id": "sn44",
