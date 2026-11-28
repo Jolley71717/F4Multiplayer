@@ -21,7 +21,8 @@
 #   5. The Castle stays owned: its workbench's owner the player in both games after the siege.
 # REPRO: YES when any of 2-5 fails (named); NO when all hold. VOID when the scene can't be made (no session, the quest not at its
 # 70, the Castle not owned, no attackers shared). It changes both saves (the siege won): throwaway saves only.
-# Not run yet: written with the change; the maintainer's rig runs it.
+# Rig 2026-11-28: steps 2 and 4 held (the friend held its siege at once, the host's 200 set the friend's once); step 3 got no kills;
+# a friend's siege started by console after the host's was booked had its own defenders (its 10) beside the copies of the host's.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 QUEST=000BDB04                       # MinDefendCastle
@@ -37,7 +38,8 @@ done_has() { dc "$1" "stages $QUEST" | grep -oE 'done\([0-9]+\)=[0-9,a-z]+' | cu
 running() { [ $(( 0x$(field "$(dc "$1" "stages $QUEST")" flags) & 1 )) -ne 0 ]; }
 siege_entry() { dc "$1" attacks | tr ';' '\n' | grep -E "^ ?$QUEST .* siege " | head -1; }
 bench_of() { field "$(siege_entry "$1")" workshop; }
-owned() { local o; o=$(field "$(dc "$1" "refinfo $2")" owner); [ "$o" = 00000007 ] || [ "$o" = 0001C21C ]; }
+# refinfo shows no owner for a workbench: its script's OwnedByPlayer does (as workbench-not-owned.sh reads it)
+owned() { [ "$(field "$(dc "$1" "scriptvars $2 WorkshopScript OwnedByPlayer")" OwnedByPlayer)" = true ]; }
 count_since() { rsince "$1" "$2" | grep -cE "$3"; }
 info() { dc "$1" "refinfo $2"; }
 dead() { [ "$(field "$(info "$1" "$2")" dead)" = true ]; }
@@ -50,7 +52,10 @@ for w in host vm; do
 		running $w || { dc $w "console startquest $QUEST" >/dev/null; sleep 3; }
 		dc $w "console setstage $QUEST 70" >/dev/null; sleep 2
 	fi
-	done_has $w 150 && verdict VOID "$w's siege has its 150 done already: start before its fight"
+	# The friend's 150 is marked done at once when the host's run is already booked: that is the hold, not a fight
+	if done_has $w 150 && ! { [ $w = vm ] && field "$(siege_entry vm)" held | grep -qx true; }; then
+		verdict VOID "$w's siege has its 150 done already: start before its fight"
+	fi
 done
 BENCH=$(bench_of host)
 [ -n "$BENCH" ] || verdict VOID "the host's dev 'attacks' lists no siege entry with a workbench: $(dc host attacks | cut -c1-160)"
