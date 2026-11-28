@@ -27,6 +27,7 @@
 #include "game/Hud.h"
 #include "game/InputGate.h"
 #include "game/VirtualPad.h"
+#include "game/FriendBot.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -614,6 +615,7 @@ namespace
 								REX::ERROR("Frame: before the load, {}: an unknown exception", a_what);
 							}
 						};
+						step("the friend bot", [] { FriendBot::BeforeSaveOrLoad(); });  // the player let go of: no load runs with it AI-driven
 						step("the shields", [] { WeaponFire::BeforeLoad(); });  // first: the shields Session ends below would send setghost 0 into the load
 						step("the waived prices", [] { QuestSync::BeforeLoad(); });  // a waived price is put back before the load can run frames that would set it to 0
 						step("the binding", [] { Session::OnBeforeLoad(); });
@@ -656,6 +658,7 @@ namespace
 							}
 						};
 						step("the settlements' numbers", [] { WorkshopSync::BeforeSaveResources(); });  // first, on its own: no friend's piece's worth is saved on our workbenches
+						step("the friend bot", [] { FriendBot::BeforeSaveOrLoad(); });  // no save holds an AI-driven player or a package made at run time
 						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // before the rest: an unworn loan's copy and kit go with it, before Spawns discards copies
 						step("the settlement attacks", [] { SettlementAttacks::BeforeSave(); });  // no save holds a run of the host's attack that rolls damage in ours
 						step("the session", [] { Session::OnBeforeSaveOrLoad(false); });

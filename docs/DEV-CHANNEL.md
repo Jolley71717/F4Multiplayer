@@ -246,6 +246,18 @@ The commands it uses:
   end, `walkto stop` stops it. Progress is logged once a second (`Pad: walkto`). A reference is a form id given as
   `0x...`, eight hex digits, or with a hex letter in it. `tools/rig/walkto.sh <host|vm> <target...>` runs one and
   waits for its end. Speed 1 runs; the stick never sets a position or a velocity, the game's own movement does.
+- `friendbot on [playerId] | off | wait | follow | mode follow|travel | status`: the friend bot, test tooling for the
+  rig and for one person playing a quest as two players (src/game/FriendBotPlan.h, FriendBot.cpp). In a friend's
+  game it drives our player after another player's stand-in (the given player, else the other player with the lowest
+  id: the host in a game of two) the way a companion moves: the player is AI-driven (as Game.SetPlayerAIDriven does)
+  and given a package made at run time, as the engine makes its own for the player (a Follow package on the stand-in,
+  or with `mode travel` a Travel package made again as the host moves). When the host's state names another place, it
+  picks the load door near where the host was last seen that leads there, travels to it and activates it (as E). It
+  fights the nearest live hostile in combat it can see near the two of them, with the AI let go and the virtual pad
+  aiming (right stick) and firing (right trigger); `wait` stands still; a menu, a conversation, a loading screen or
+  being down lets go until it is over, and so does every save and load. Never a teleport. It logs `FriendBot:` lines
+  on each change and a status line every 5 s; `friendbot` (status) gives its state, the package made, the door taken
+  and the aim and fire frames. Not tested in a game yet: `tools/rig/repro/friendbot.sh` is the rig's check.
 - `mousedev [fix]`: the game's mouse as Windows feeds it. The game reads the mouse through Raw Input
   (WM_INPUT to its window), and a game that came up behind another window was seen taking keys and never a
   click. The answer gives the raw input registrations (`raw=1:2 flags=0x0 to=game` is the mouse registered

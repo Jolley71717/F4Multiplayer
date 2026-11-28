@@ -469,6 +469,30 @@ namespace VirtualPad
 		}
 	}
 
+	bool HoldAim(float a_rightX, float a_rightY, float a_rightTrigger)
+	{
+		if (hooked.empty()) {
+			return false;
+		}
+		if (walking) {
+			EndWalk("stopped by the friend bot's aim");
+		}
+		Plug();
+		const auto now = Clock::now();
+		std::scoped_lock l{ lock };
+		pad.SetStick(false, 0.0f, 0.0f, now + STEER_HOLD);
+		pad.SetStick(true, a_rightX, a_rightY, now + STEER_HOLD);
+		pad.SetTrigger(true, a_rightTrigger, now + STEER_HOLD);
+		return true;
+	}
+
+	void LetGoAim()
+	{
+		if (plugged.load()) {
+			LetGo();
+		}
+	}
+
 	void GateFrame(RE::BSInputDeviceManager& a_input, bool a_front)
 	{
 		static std::uint32_t logged = 0;
