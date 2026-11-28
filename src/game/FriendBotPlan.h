@@ -30,8 +30,12 @@ namespace FriendBotPlan
 	inline constexpr std::string_view USAGE =
 		"usage: friendbot on [playerId] | off | wait | follow | mode follow|travel | status";
 
-	// The package the player follows the host on: the engine's Follow procedure (the default), or a Travel package to the
-	// host's stand-in, made again as the host moves (for a rig run, if Follow does not run on the player).
+	// The package the player follows the host on: a Travel package to the host's stand-in, made again as the host moves (the
+	// default), or the engine's Follow procedure. Follow runs on the player, but it leaves the engine holding the stand-in
+	// after the package is gone: when the host went through a load door and their stand-in was disabled, the friend's game
+	// crashed in the player's update reading the stand-in's freed AI process (Actor::UpdateInDialogue ->
+	// AIProcess::GetSoundHandle), even with the bot off by then (the rig, twice). Travel, the procedure the engine's own
+	// door walk gives the player, left nothing behind. So follow is kept only to look into that, never to play on.
 	enum class Mode : std::uint8_t
 	{
 		kFollow,
@@ -188,6 +192,14 @@ namespace FriendBotPlan
 		return best;
 	}
 
+	// Whether a reference about to be disabled or deleted must first take our package with it: the player is AI-driven on a
+	// package that names it (as its target or the place near it). Its AI process goes with the disable, and the engine reads
+	// a package's target's process every frame of the player's update.
+	inline bool LetGoBefore(bool a_aiDriven, std::uint32_t a_target, std::uint32_t a_near, std::uint32_t a_going)
+	{
+		return a_aiDriven && a_going != 0 && (a_going == a_target || a_going == a_near);
+	}
+
 	// ---- enemies ----
 
 	// An actor near us the bot might fight.
@@ -337,6 +349,13 @@ namespace FriendBotPlan
 	inline constexpr auto FIGHT_GRACE = std::chrono::seconds(3);
 	// How close to a door it must come before activating it, and how long a use is given to load before another try.
 	inline constexpr float DOOR_REACH = 160.0f;
+	// A Travel package to a door can end short of DOOR_REACH: the navmesh stops before a door set in a wall (the rig, 2026-11-28:
+	// Valentine's office door, the friend stood still 168 units off it for 90 s). One that has stopped (moved less than
+	// DOOR_STALL_MOVE in DOOR_STALL) within DOOR_STALL_REACH of the door has got as near as it will: it uses the door from there,
+	// as a player can from where E reaches it.
+	inline constexpr float DOOR_STALL_REACH = 400.0f;
+	inline constexpr float DOOR_STALL_MOVE = 24.0f;
+	inline constexpr auto  DOOR_STALL = std::chrono::seconds(3);
 	inline constexpr auto  DOOR_RETRY = std::chrono::seconds(6);
 	inline constexpr int   DOOR_TRIES = 3;
 	// A Travel package made again whenever the host has moved this far from where the last one was aimed, or this long
@@ -382,7 +401,8 @@ namespace FriendBotPlan
 		{
 			mode = a_mode;
 			issued.reset();  // the next frame makes the new kind of package
-			return std::format("mode {}", Name(a_mode));
+			return a_mode == Mode::kFollow ? std::string{ "mode follow (unsafe: it crashed the friend's game once the host's stand-in went; for looking into that only)" } :
+			                                 std::format("mode {}", Name(a_mode));
 		}
 
 		// The package the player had is gone (a save or a load let go of it): the next frame makes another.
@@ -456,6 +476,7 @@ namespace FriendBotPlan
 					arrivedFrom = a_facts.ourPlace;
 					tries = 0;
 					usedAt.reset();
+					stillSince.reset();
 					state = State::kDoor;
 					issued = a_now;
 					return { Action::kTravelToDoor, std::format("door {:08X} to {} (cell {:08X} world {:08X}), {:.0f} away", door->ref,
@@ -463,7 +484,13 @@ namespace FriendBotPlan
 														  door->to.worldspace, Distance(door->at, a_facts.us)) };
 				}
 				state = State::kDoor;
-				if (Distance(door->at, a_facts.us) > DOOR_REACH) {
+				const float toDoor = Distance(door->at, a_facts.us);
+				if (!stillSince || Distance(a_facts.us, stillAt) > DOOR_STALL_MOVE) {
+					stillAt = a_facts.us;
+					stillSince = a_now;
+				}
+				const bool stalled = toDoor <= DOOR_STALL_REACH && a_now - *stillSince >= DOOR_STALL;
+				if (toDoor > DOOR_REACH && !stalled) {
 					if (!issued || a_now - *issued >= FOLLOW_RENEW) {
 						issued = a_now;
 						return { Action::kTravelToDoor, {} };
@@ -556,7 +583,7 @@ namespace FriendBotPlan
 
 		State                            wanted = State::kOff;
 		State                            state = State::kOff;
-		Mode                             mode = Mode::kFollow;
+		Mode                             mode = Mode::kTravel;
 		std::uint32_t                    player = 0;
 		std::string                      pauseWhy;
 		std::string                      pauseLogged;  // the pause last entered (and logged)
@@ -571,6 +598,8 @@ namespace FriendBotPlan
 		std::optional<Place>             arrivedFrom;  // the place the door was picked in
 		std::optional<Clock::time_point> usedAt;
 		int                              tries = 0;
+		Point                            stillAt;     // kDoor: where we stood when we last moved (DOOR_STALL)
+		std::optional<Clock::time_point> stillSince;
 		std::optional<Clock::time_point> askedAt;  // when the glue was last asked to pick the door (Action::kPickDoor)
 
 	public:

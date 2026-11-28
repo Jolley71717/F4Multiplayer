@@ -111,6 +111,8 @@ namespace FriendBot
 		Plan                                bot;
 		bool                                aiDriven = false;        // we set the player AI-driven and have not let go
 		std::uint32_t                       madePackage = 0;         // the form id of the package we gave the player
+		std::uint32_t                       drivenTarget = 0;        // the package's target (the host's stand-in), or 0
+		std::uint32_t                       drivenNear = 0;          // the reference the package's place is near
 		std::optional<FriendBotPlan::Door>  pendingDoor;             // the door PickDoor found, for the next frame's Facts
 		std::optional<std::uint32_t>        target;                  // the enemy picked, looked for every TARGET_EVERY
 		Clock::time_point                   nextTargetLook{};
@@ -217,6 +219,8 @@ namespace FriendBot
 				REX::INFO("FriendBot: let go of the player ({})", a_why);
 			}
 			aiDriven = false;
+			drivenTarget = 0;
+			drivenNear = 0;
 			VirtualPad::LetGoAim();
 		}
 
@@ -238,6 +242,8 @@ namespace FriendBot
 			}
 			player->PutCreatedPackage(package, false, true, false);
 			madePackage = package->GetFormID();
+			drivenTarget = a_target ? a_target->GetFormID() : 0;
+			drivenNear = a_near->GetFormID();
 			++packagesMade;
 			const auto current = player->currentProcess->currentPackage.package;
 			if (packagesMade <= 20 || packagesMade % 50 == 0) {
@@ -396,6 +402,14 @@ namespace FriendBot
 		bot.Renew();
 		pendingDoor.reset();
 		target.reset();
+	}
+
+	void BeforeRefGoes(const RE::TESObjectREFR* a_ref)
+	{
+		if (a_ref && FriendBotPlan::LetGoBefore(aiDriven, drivenTarget, drivenNear, a_ref->GetFormID())) {
+			Release(std::format("{:08X}, which its package names, is going", a_ref->GetFormID()));
+			bot.Renew();
+		}
 	}
 
 	void Frame()

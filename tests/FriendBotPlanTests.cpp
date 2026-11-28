@@ -166,6 +166,7 @@ TEST("friend bot: off until turned on, and on it follows the host's stand-in onc
 	CHECK(bot.Follow().starts_with("off"));
 	CHECK(!bot.On());
 	bot.TurnOn(0);
+	bot.SetMode(FriendBotPlan::Mode::kFollow);
 	const auto first = bot.Step(START, Together());
 	CHECK(first.action == Action::kFollowHost);
 	CHECK(first.log.starts_with("follow FF001234 on a follow package"));
@@ -187,6 +188,16 @@ TEST("friend bot: a new stand-in (the mod respawned it) gets a new package at on
 	auto f = Together();
 	f.hostActor = 0xFF005678;
 	CHECK(bot.Step(START + 1s, f).action == Action::kFollowHost);
+}
+
+TEST("friend bot: travel is the default mode, and follow says it is unsafe")
+{
+	FriendBotPlan::Bot bot;
+	CHECK(bot.Package() == FriendBotPlan::Mode::kTravel);
+	bot.TurnOn(0);
+	CHECK(bot.Step(START, Together()).log.starts_with("follow FF001234 on a travel package"));
+	CHECK(bot.SetMode(FriendBotPlan::Mode::kFollow).find("unsafe") != std::string::npos);
+	CHECK(bot.SetMode(FriendBotPlan::Mode::kTravel) == "mode travel");
 }
 
 TEST("friend bot: travel mode makes a package again as the host moves")
@@ -392,4 +403,54 @@ TEST("friend bot: after a save let go of the package, the next frame makes anoth
 	CHECK(bot.Step(START + 1s, Together()).action == Action::kNone);
 	bot.Renew();
 	CHECK(bot.Step(START + 2s, Together()).action == Action::kFollowHost);
+}
+
+TEST("friend bot: a reference our package names lets go of the player before it goes")
+{
+	constexpr std::uint32_t STAND_IN = 0xFF000F81;
+	constexpr std::uint32_t DOOR = 0x000022CB;
+	CHECK(FriendBotPlan::LetGoBefore(true, STAND_IN, STAND_IN, STAND_IN));    // a follow package's target and place
+	CHECK(FriendBotPlan::LetGoBefore(true, 0, DOOR, DOOR));                   // a travel package's door
+	CHECK(!FriendBotPlan::LetGoBefore(true, STAND_IN, STAND_IN, 0xFF000F99)); // someone else's stand-in
+	CHECK(!FriendBotPlan::LetGoBefore(false, STAND_IN, STAND_IN, STAND_IN));  // not driving: nothing to let go of
+	CHECK(!FriendBotPlan::LetGoBefore(true, 0, 0, 0));
+}
+
+TEST("friend bot: a travel package that ends short of the door uses it from there, once it has stopped near it")
+{
+	auto bot = Following();
+	bot.Step(START, Together());
+	auto gone = Together();
+	gone.hostPlace = OUTSIDE;
+	gone.hostHere = false;
+	gone.us = { 400.0f, 0.0f, 0.0f };
+	gone.door = FriendBotPlan::Door{ 0x00DD0003, { 600.0f, 0.0f, 0.0f }, OUTSIDE };
+	CHECK(bot.Step(START + 1s, gone).action == Action::kTravelToDoor);
+	gone.door.reset();
+	// Still on its way (it moved): no use yet.
+	CHECK(bot.Step(START + 2s, gone).action == Action::kNone);
+	gone.us.x = 432.0f;  // 168 units short of the door, as at Valentine's office
+	CHECK(bot.Step(START + 4s, gone).action == Action::kNone);
+	gone.us.x = 436.0f;  // less than DOOR_STALL_MOVE since the last move
+	CHECK(bot.Step(START + 6s, gone).action == Action::kNone);
+	const auto use = bot.Step(START + 4s + FriendBotPlan::DOOR_STALL, gone);
+	CHECK(use.action == Action::kUseDoor);
+	CHECK(use.log == "activate door 00DD0003 (try 1 of 3)");
+}
+
+TEST("friend bot: stopped far from the door, it keeps travelling instead")
+{
+	auto bot = Following();
+	bot.Step(START, Together());
+	auto gone = Together();
+	gone.hostPlace = OUTSIDE;
+	gone.hostHere = false;
+	gone.us = { -400.0f, 0.0f, 0.0f };
+	gone.door = FriendBotPlan::Door{ 0x00DD0004, { 600.0f, 0.0f, 0.0f }, OUTSIDE };
+	CHECK(bot.Step(START + 1s, gone).action == Action::kTravelToDoor);
+	gone.door.reset();
+	for (auto t = START + 2s; t < START + 1s + FriendBotPlan::FOLLOW_RENEW; t += 1s) {
+		CHECK(bot.Step(t, gone).action == Action::kNone);
+	}
+	CHECK(bot.Step(START + 1s + FriendBotPlan::FOLLOW_RENEW, gone).action == Action::kTravelToDoor);
 }
