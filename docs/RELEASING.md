@@ -159,6 +159,11 @@ The release is the rc that held, not a new build. How long the rc is tested depe
   The 90-minute soak has caught real bugs only in releases with new features or a new protocol (0.8.8, 0.10.0,
   0.14.0); since it became rounds of the gate it found nothing in a release that the gate had not already found.
 - A **minor or major release** (new features, a new protocol or session layout) gets the soak as well.
+- Which number to raise: a change to the wire protocol or to the session file's layout is always a **minor** (or
+  major) version. Players join each other when their major.minor is the same, whatever the patch, so a patch release
+  must never change either: if `main` holds such a change, the next release is X.Y.0 (a fix that can't wait
+  goes out from a short-lived branch off the last tag). The release bumps `set_version` and `F4MP_VERSION` in `xmake.lua` together (a test checks they
+  match); there is no protocol number to raise.
 
 The soak of the rc's zip is a 90-minute run after the gate passes:
 `SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --soak 90`. It runs the whole standing set's loop

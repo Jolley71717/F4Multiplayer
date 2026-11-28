@@ -16,7 +16,7 @@
 ## Protocol
 
 - [ ] This does not change what goes over the wire
-- [ ] This changes the wire protocol (a message layout, a message type, or what a side expects) and bumps `Protocol::VERSION` in `common/Protocol.h`
+- [ ] This changes the wire protocol or the session file's layout (a message layout, a message type, or what a side expects), so it ships in the next minor version, never a patch
 
 ## Personal data
 

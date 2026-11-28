@@ -100,13 +100,19 @@ There is no formatter configuration; match the code around you. The things that 
 
 ## The protocol
 
-`common/Protocol.h` is the wire format shared by the plugin, the server and the tools. Any change
-to what goes over the wire (a message layout, a new or removed message type, a changed meaning of a
-field, a different expectation on either side) **bumps `Protocol::VERSION`** in that file. The
-server refuses a different version, which is what makes everyone update together instead of
-desyncing quietly. Say in the pull request that you bumped it, or that the change does not touch
-the wire. Protocol tests live in `tests/ProtocolTests.cpp`. A bump also adds a line to `ModVersions::TABLE`
-(`src/ModVersions.h`), which lets the refusal name mod versions instead of numbers; a test fails until it is there.
+`common/Protocol.h` is the wire format shared by the plugin, the server and the tools. The mod's
+version names the protocol: a joiner's hello carries its version (`set_version` in `xmake.lua`), and the
+server lets in a joiner of its own major.minor, whatever the patch (`common/VersionCheck.h`). It refuses
+any other, naming both versions ("The host has F4Multiplayer 0.24.1 and you have 0.25.0"), which is what
+makes everyone update together instead of desyncing quietly.
+
+So any change to what goes over the wire (a message layout, a new or removed message type, a changed
+meaning of a field, a different expectation on either side) or to the session file's layout **means a
+new minor version**: it ships in the next X.Y.0, never in a patch. A patch release always plays with the
+other patches of its minor. Say in the pull request that the change touches the wire or the session
+layout, or that it does not. There is no protocol number to bump: the hello's old number slot holds a
+constant that never changes (`Protocol::HELLO_NUMBER`, so copies at 0.23 and older refuse a new one), and
+no number but a version is ever shown to anyone. Protocol tests live in `tests/ProtocolTests.cpp`.
 
 ## Branches and releases
 

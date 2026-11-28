@@ -33,7 +33,7 @@
   to its owner. The host accepts Steam sessions only from lobby members and Steam friends. Callbacks
   are registered with `SteamAPI_RegisterCallback` and dispatched by the game's own
   `SteamAPI_RunCallbacks`.
-- **Server:** `common/Server.cpp`, one thread. Joining is checked for protocol version, max players
+- **Server:** `common/Server.cpp`, one thread. Joining is checked for the mod's version (the same major.minor, any patch: common/VersionCheck.h), max players
   (default 4), an optional password and, for a hello without a plugin list, a load-order hash that must match the
   session's (with lists, any load order gets in: see Form IDs across load orders).
   Connections that don't say Hello within 5 s are dropped. Each player has rate budgets (60 states/s,

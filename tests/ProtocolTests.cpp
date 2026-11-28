@@ -97,7 +97,9 @@ TEST("protocol: values are little-endian after the type byte")
 	REQUIRE(hello.size() > 7);
 	CHECK(hello[0] == 1);
 	CHECK(hello[1] == 'F' && hello[2] == '4' && hello[3] == 'M' && hello[4] == 'P');
-	CHECK(hello[5] == VERSION && hello[6] == 0);
+	CHECK(hello[5] == HELLO_NUMBER && hello[6] == 0);
+	CHECK(hello[7] == VersionCheck::OWN.size());  // the mod version follows the number, for good
+	CHECK(std::string(hello.begin() + 8, hello.begin() + 8 + hello[7]) == VersionCheck::OWN);
 }
 
 TEST("protocol: every strict prefix of a packet is rejected")
@@ -150,7 +152,8 @@ TEST("protocol: Hello round trips, including identity")
 	const auto out = DecodeHello(Encode(in));
 	REQUIRE(out);
 	CHECK(out->magic == MAGIC);
-	CHECK(out->version == VERSION);
+	CHECK(out->number == HELLO_NUMBER);
+	CHECK(out->modVersion == VersionCheck::OWN);
 	CHECK(out->contentHash == in.contentHash);
 	CHECK(out->name == in.name);
 	CHECK(out->password == in.password);
@@ -161,13 +164,43 @@ TEST("protocol: Hello round trips, including identity")
 
 	Hello other;
 	other.magic = 0x12345678;
-	other.version = 7;
+	other.number = 7;
 	const auto old = DecodeHello(Encode(other));
 	REQUIRE(old);
 	CHECK(old->magic == 0x12345678);
-	CHECK(old->version == 7);
+	CHECK(old->number == 7);
+	CHECK(old->modVersion.empty());
 	CHECK(old->name.empty());
 	CHECK(old->identity == 0);
+}
+
+TEST("protocol: a hello of another major.minor is read up to its mod version; one of ours whatever the patch")
+{
+	const auto own = *VersionCheck::Parse(VersionCheck::OWN);
+	auto hello = MakeHello();
+	hello.modVersion = std::format("{}.{}.{}", own.major, own.minor + 1, 0);
+	const auto newer = DecodeHello(Encode(hello));
+	REQUIRE(newer);
+	CHECK(newer->number == HELLO_NUMBER);
+	CHECK(newer->modVersion == hello.modVersion);
+	CHECK(newer->name.empty());  // the rest may be laid out otherwise: not read
+
+	hello.modVersion = std::format("{}.{}.{}", own.major, own.minor, own.patch + 5);
+	const auto patch = DecodeHello(Encode(hello));
+	REQUIRE(patch);
+	CHECK(patch->modVersion == hello.modVersion);
+	CHECK(patch->name == "Alice");
+	CHECK(patch->identity == hello.identity);
+
+	// One too long for the field is not a hello.
+	Writer w{ MT::kHello };
+	w.U32(MAGIC);
+	w.U16(HELLO_NUMBER);
+	w.U8(static_cast<std::uint8_t>(VersionCheck::MAX_LENGTH + 1));
+	for (std::size_t i = 0; i <= VersionCheck::MAX_LENGTH; ++i) {
+		w.U8('1');
+	}
+	CHECK(!DecodeHello(w.Data()));
 }
 
 TEST("protocol: WorldRequest round trips")
@@ -1438,7 +1471,8 @@ TEST("protocol: strings longer than their maximum on the wire are rejected")
 {
 	Writer hello{ MT::kHello };
 	hello.U32(MAGIC);
-	hello.U16(VERSION);
+	hello.U16(HELLO_NUMBER);
+	hello.Str(VersionCheck::OWN, VersionCheck::MAX_LENGTH);
 	hello.U32(0);
 	hello.U8(static_cast<std::uint8_t>(MAX_NAME_LENGTH + 1));
 	for (std::size_t i = 0; i <= MAX_NAME_LENGTH; ++i) {
@@ -2283,15 +2317,18 @@ TEST("protocol: a hello of another version is read up to its version, so an olde
 	old.Str("Mod.esp", 80);
 	const auto h = DecodeHello(old.Data());
 	REQUIRE(h);
-	CHECK(h->version == 34);
+	CHECK(h->number == 34);
+	CHECK(h->modVersion.empty());
 	CHECK(h->magic == MAGIC);
 
-	// Version 35's, as version 34's decoder read a hello: every field up to the list, then a byte's count, which is 0.
+	// This version's: the number every old decoder reads and stops at (not its own), then the mod version, then the
+	// fields as from 35: every field up to the list, then a byte's count, which is 0.
 	const auto packet = Encode(MakeHello());
 	Reader r{ packet };
 	r.U8();
 	CHECK(r.U32() == MAGIC);
-	CHECK(r.U16() == VERSION);
+	CHECK(r.U16() == HELLO_NUMBER);
+	CHECK(r.Str(VersionCheck::MAX_LENGTH) == VersionCheck::OWN);
 	r.U32();
 	CHECK(r.Str(MAX_NAME_LENGTH) == "Alice");
 	r.Str(MAX_PASSWORD_LENGTH);
@@ -2842,7 +2879,7 @@ TEST("protocol: the save on down rule is the welcome's flag bit 128, apart from 
 
 TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule this build doesn't know shares the story's quests only")
 {
-	static_assert(VERSION >= 58);  // sQuests came in 58
+	static_assert(LAST_NUMBER >= 58);  // sQuests came in 58
 	for (const auto quests : { QuestRule::kStory, QuestRule::kSafe }) {
 		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = quests } }));
 		REQUIRE(out);
@@ -2868,7 +2905,7 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 
 TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (protocol 64), each within its limit; a welcome without them is short")
 {
-	static_assert(VERSION >= 64);  // both came in 64
+	static_assert(LAST_NUMBER >= 64);  // both came in 64
 	CHECK(SessionRules{}.catchUpXp == 10);     // on, modestly, unless the host says otherwise
 	CHECK(SessionRules{}.groupDifficulty == 0);  // off unless the host says
 	for (const std::uint8_t percent : std::array<std::uint8_t, 3>{ 0, 10, 100 }) {
@@ -2903,7 +2940,7 @@ TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (
 
 TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's own game's id (protocol 67), last; a welcome without them is short")
 {
-	static_assert(VERSION >= 67);  // both came in 67
+	static_assert(LAST_NUMBER >= 67);  // both came in 67
 	CHECK(SessionRules{}.sharedWorkshop);  // on unless the host says otherwise
 	// The host's own game's id: 0 on a dedicated server.
 	for (const std::uint32_t hostId : { 0u, 1u, 7u, 0xA1B2C3D4u }) {

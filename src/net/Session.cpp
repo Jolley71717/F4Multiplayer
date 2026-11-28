@@ -570,7 +570,7 @@ namespace Session
 						NotifyMods(true);
 					} else if (answer.notify) {
 						Say(Text::Format("session.notice", { { "text", Text::Reject(msg->reason) } }),
-							Text::FormatEnglish("session.notice", { { "text", msg->reason } }));
+							Text::FormatEnglish("session.notice", { { "text", Text::Reject(msg->reason, Text::OwnVersion(), true) } }));
 					}
 					nextConnectAttempt = Clock::now() + answer.retryIn;
 					// Banned: trying again would be refused every time (and fill the host's log); the player joins again
