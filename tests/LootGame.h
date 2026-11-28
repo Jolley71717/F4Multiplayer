@@ -82,6 +82,9 @@ namespace LootTest
 		std::int64_t                          lacked = 0;
 		// Moves the session's numbering can't carry (FormTranslate drops them at Session::SendOut): the items here.
 		std::set<std::uint32_t>               untranslatable;
+		// Containers players built that this game has (WorkshopSync's): a runtime reference -> its piece's key (builder 0:
+		// our own piece).
+		std::map<std::uint32_t, BuiltHolders::Key> built;
 
 		struct Save
 		{
@@ -93,6 +96,8 @@ namespace LootTest
 			std::vector<Protocol::ContainerChange> unanswered;
 			std::vector<std::uint32_t>             lacks;      // and our numbered moves its world lacks
 			std::uint32_t                          lacksFrom = 0;
+			BuiltHolders::Book                     book;  // WorldSync's session record, version 2
+			std::map<std::uint32_t, BuiltHolders::Key> built;
 		};
 
 		Game(PeerId a_peer, std::uint64_t a_identity) :
@@ -600,7 +605,9 @@ namespace LootTest
 		Save SaveGame(Fixture& a_f)
 		{
 			BeforeSaveOrLoad(a_f);
-			return { holders, carried, loot.Point(), loot.Waiting(), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom() };
+			BuiltHolders::Book book;
+			REQUIRE(book.Load(loot.Built().Record()));  // as the co-save writes and reads it
+			return { holders, carried, loot.Point(), loot.Waiting(), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom(), std::move(book), built };
 		}
 
 		// Loads a save while connected: Session::OnBeforeSaveOrLoad, the co-save records (F4SE reverts them
@@ -716,6 +723,44 @@ namespace LootTest
 
 		bool Stocked(std::uint32_t a_holder) override { return !unstocked.contains(a_holder); }
 
+		// ---- containers players built (BuiltHolders) ------------------------------------------------------------
+
+		std::optional<BuiltHolders::Key> BuiltKeyOf(std::uint32_t a_holder) override
+		{
+			const auto it = built.find(a_holder);
+			return it != built.end() ? std::optional{ it->second } : std::nullopt;
+		}
+
+		std::uint32_t CopyOf(const BuiltHolders::Key& a_key) override
+		{
+			for (const auto& [local, key] : built) {
+				if (key == a_key && key.builder != 0 && !away.contains(local)) {
+					return local;
+				}
+			}
+			return 0;
+		}
+
+		// WorkshopSync makes our copy a_local of a_key's piece (empty, as a placed reference is).
+		void MakeCopy(std::uint32_t a_local, const BuiltHolders::Key& a_key)
+		{
+			built[a_local] = a_key;
+			holders.erase(a_local);
+			away.erase(a_local);
+		}
+
+		// WorkshopSync::Delete removes our copy: WorldSync::CopyGoing, then WorkshopApply::Rescues hands what is left to our
+		// player.
+		void RemoveCopy(std::uint32_t a_local)
+		{
+			loot.CopyGoing(a_local, *this);
+			for (const auto& [item, count] : holders[a_local]) {
+				carried[item] += count;
+			}
+			holders.erase(a_local);
+			built.erase(a_local);
+		}
+
 	private:
 		// Adds to or takes from a count (a take takes no more than there is): what was changed.
 		static std::int64_t Change(std::int64_t& a_have, std::int64_t a_count)
@@ -782,7 +827,8 @@ namespace LootTest
 			carried = a_save.carried;
 			dead.clear();  // WorldSync::Reset
 			loot.LoadRecord(0, 0, {});
-			loot.LoadRecord(a_save.point.sessionId, a_save.point.containerFrom, a_save.waiting);
+			built = a_save.built;
+			loot.LoadRecord(a_save.point.sessionId, a_save.point.containerFrom, a_save.waiting, a_save.book);
 			const auto session = connected ? sessionId : a_save.movesSession;
 			const bool same = a_save.movesSession == session;
 			storage.OnLoad(session, same ? a_save.unanswered : std::vector<Protocol::ContainerChange>{}, same ? a_save.lacks : std::vector<std::uint32_t>{}, same ? a_save.lacksFrom : 0);

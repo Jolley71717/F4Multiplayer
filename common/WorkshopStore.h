@@ -230,6 +230,31 @@ public:
 	[[nodiscard]] const Items& Scraps() const { return scraps; }
 	[[nodiscard]] std::size_t  LostCount() const { return lost.size(); }
 	[[nodiscard]] bool         IsLost(const Key& a_key) const { return lost.contains(a_key); }
+	// Whether a piece is kept under the key, built or lost: a container change may name it (a built holder:
+	// Protocol::ContainerChange::builder).
+	[[nodiscard]] bool         Knows(const Key& a_key) const { return built.contains(a_key) || lost.contains(a_key); }
+
+	// The builder a change at the built holder a_key (a piece kept under it, or one that was) is told to a_player's game, which
+	// plays a_character's world (0: not known yet). Anyone else's piece: the key's own builder, as the piece's kWorkshopItem
+	// was relayed and that game's copy is keyed. One of the player's own (their id, or a builder id of theirs): their own
+	// player id when it is of the world they play (kept with that character, or with none known on either side), which their
+	// game takes for its own piece; Protocol::BUILT_ELSEWHERE when it is another character's world's, which their game has
+	// nothing of.
+	[[nodiscard]] std::uint32_t BuilderFor(const Key& a_key, std::uint32_t a_player, std::uint64_t a_character) const
+	{
+		if (a_key.first == 0 || PlayerOf(a_key.first) != a_player) {
+			return a_key.first;
+		}
+		const Protocol::WorkshopItem* kept = nullptr;
+		if (const auto it = built.find(a_key); it != built.end()) {
+			kept = &it->second;
+		} else if (const auto gone = lost.find(a_key); gone != lost.end()) {
+			kept = &gone->second.item;
+		}
+		const bool here = kept ? kept->character == 0 || a_character == 0 || kept->character == a_character :
+		                         a_key.first == a_player || a_key.first == BuilderIdOf(a_player, a_character);
+		return here ? a_player : Protocol::BUILT_ELSEWHERE;
+	}
 	// What is sent to whoever joins and counts against the caps: the lost pieces are neither.
 	[[nodiscard]] std::size_t  Size() const { return built.size() + scraps.size(); }
 

@@ -418,7 +418,7 @@ namespace ContainerLedger
 		std::optional<std::uint32_t> MadeIn(const Protocol::ContainerChange& a_change)
 		{
 			const auto it = std::ranges::find_if(reports, [&](const Report& a_report) {
-				return a_report.change.container == a_change.container && a_report.change.item == a_change.item && a_report.change.count == a_change.count;
+				return a_report.change == a_change;
 			});
 			if (it == reports.end()) {
 				return std::nullopt;

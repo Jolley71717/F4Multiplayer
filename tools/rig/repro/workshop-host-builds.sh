@@ -22,7 +22,8 @@
 #   stale       the friend loads that older save while in the session (a death's reload, an older save): the copies the save holds
 #               are the host's layout from before its changes. Same checks.
 #   containers  the host puts 7 stimpaks into the container it built and into the Toolbox the settlement came with, then the friend
-#               3 into its copy of each (dev count): both games hold the same in each.
+#               3 into its copy of each, then takes 2 out of each (dev count): both games hold the same in each. A built
+#               container is named by its piece's key (BuiltHolders): the friend's copy is another reference than the host's.
 # REPRO: YES when a piece never reached the friend, a standing piece has no copy or one at another spot, a scrapped or moved
 # piece's copy stands alive in the friend's game, or a container holds other loot in the two games; NO when none does; VOID when
 # a step could not be done (a ghost never green, a piece not highlighted, the friend not joining): never a pass.
@@ -334,7 +335,12 @@ for ph in $PHASES; do
 			h1=$(dc host "count $h $IT" | grep -oE '[0-9]+$'); f1=$(dc vm "count $f $IT" | grep -oE '[0-9]+$')
 			say "containers: $what: the friend then put 3 in $f: the host's $h holds ${h1:-?}, the friend's holds ${f1:-?}"
 			[ $(( ${h1:-0} - ${hc:-0} )) = $(( ${f1:-0} - ${fc:-0} )) ] || fail "containers: the friend put 3 in its copy of the $what container (${fc:-?} to ${f1:-?}); the host's went ${hc:-?} to ${h1:-?}"
-		done ;;
+			dc vm "storage take $f $IT 2" >/dev/null; sleep 8
+			h2=$(dc host "count $h $IT" | grep -oE '[0-9]+$'); f2=$(dc vm "count $f $IT" | grep -oE '[0-9]+$')
+			say "containers: $what: the friend then took 2 from $f: the host's $h holds ${h2:-?}, the friend's holds ${f2:-?}"
+			[ $(( ${h2:-0} - ${h1:-0} )) = $(( ${f2:-0} - ${f1:-0} )) ] || fail "containers: the friend took 2 from its copy of the $what container (${f1:-?} to ${f2:-?}); the host's went ${h1:-?} to ${h2:-?}"
+		done
+		dc vm "net status" | grep -oE 'built=[^ ]+|builtBook=[^ ]+' | tr '\n' ' ' | while read -r l; do say "containers: the friend's built-container counts: $l"; done ;;
 	esac
 done
 ws_leave host; ws_leave vm

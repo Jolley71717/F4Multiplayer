@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/BuiltHolders.h"
 #include "game/ContainerLedger.h"
 #include "game/LootScope.h"
 #include "game/StorageView.h"
@@ -93,6 +94,13 @@ namespace LootSync
 		// While our menu shows a friend's storage: an item that stays our own there for the view (a quest alias holds a stack
 		// of it in our copy: StorageView::Side::Open).
 		virtual bool                         Aliased(std::uint32_t, std::uint32_t) { return false; }
+
+		// Containers players built (BuiltHolders.h). The piece a reference our game made at runtime is: our own built
+		// container (its key's builder 0, its ref the reference), or our copy of someone else's (that piece's key); none for
+		// anything else. None, by default.
+		virtual std::optional<BuiltHolders::Key> BuiltKeyOf(std::uint32_t) { return std::nullopt; }
+		// Our copy of someone else's piece, while it is here (in a cell of ours, in memory): its reference ID, 0 when none.
+		virtual std::uint32_t                    CopyOf(const BuiltHolders::Key&) { return 0; }
 	};
 
 	// What a holder holds of what the session shares (LootScope's: ammo, aid, junk, and no stack a quest alias holds), item
@@ -161,6 +169,13 @@ namespace LootSync
 			std::uint32_t openApplied = 0;     // waiting changes that went in as our player opened their holder (Opened)
 			std::uint32_t fromAfar = 0;        // changes that went in at a workbench shared storage keeps, not loaded here (FromAfar)
 			std::uint32_t notReady = 0;        // tries put off because the holder, an actor, was not ready for item work (ReadyForItems)
+			std::uint32_t builtSent = 0;       // the player's moves at a container a player built (BuiltHolders), reported
+			std::uint32_t builtApplied = 0;    // other players' changes at someone else's built container, put in our book of it
+			std::uint32_t builtShown = 0;      // stacks moved in our copies of those to show the book (a change, or a menu opened)
+			std::uint32_t builtOurs = 0;       // other players' changes at a container our player built, put in
+			std::uint32_t builtGone = 0;       // ...left out: no such piece of ours now (scrapped since)
+			std::uint32_t builtElsewhere = 0;  // changes at a piece of another of our characters' worlds (nothing here)
+			std::uint32_t builtRescued = 0;    // stacks taken out of a copy as it went, as its builder's piece has them
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -177,6 +192,15 @@ namespace LootSync
 			Restocked(a_moves, a_world);
 			for (const auto& move : a_moves) {
 				const auto direction = move.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
+				// A reference our game made at runtime is shared only as a container a player built: ours, or our copy of
+				// someone else's (BuiltHolders). Anything else our game made no other game has.
+				std::optional<BuiltHolders::Key> built;
+				if (Protocol::IsBuiltHolderRef(move.holder)) {
+					built = a_world.BuiltKeyOf(move.holder);
+					if (!built || liveId == 0) {
+						continue;
+					}
+				}
 				// Storage another game keeps, with our menu not open on it (StorageView: our copy's own things then), or an item
 				// whose stack there fills a quest alias (our copy's own: it never leaves it as a view ends): the player's own.
 				const auto keeper = a_world.Keeper(move.holder);
@@ -197,6 +221,22 @@ namespace LootSync
 						LootScope::Of(holder, { .kind = LootScope::Item::kMisc }, direction) == LootScope::Scope::kShared && !toldBare.contains(move.holder) &&
 						std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
 						takenFrom.push_back(move.holder);
+					}
+					continue;
+				}
+				if (built) {
+					// Named as the session names the piece (BuiltHolders::ToWire). Our book of a copy's piece has our move
+					// at once, as our copy does: a copy is shown the book, and must not lose what our player just put in.
+					const auto change = BuiltHolders::ToWire(*built, liveId, move.item, move.count);
+					if (!change || !Protocol::IsValid(*change)) {
+						continue;
+					}
+					receiver.Reported(*change);
+					packets.push_back(Protocol::Encode(*change, Protocol::MessageType::kReportContainer));
+					++counts.sent;
+					++counts.builtSent;
+					if (built->builder != 0) {
+						book.Own(BuiltHolders::KeyOf(*change), move.holder, move.item, move.count, CountOf(move.holder, move.item, a_world));
 					}
 					continue;
 				}
@@ -251,6 +291,7 @@ namespace LootSync
 				pending.clear();  // a different session: none of its changes are in our world yet
 				sessionPut.clear();
 				friendTook.clear();
+				book.Clear();
 			}
 		}
 
@@ -262,13 +303,15 @@ namespace LootSync
 		}
 
 		// A save's record was read, before the game says the save has loaded (a_session 0: it has none).
-		void LoadRecord(std::uint64_t a_session, std::uint32_t a_next, std::vector<Pending> a_pending)
+		// a_book: what the save's world had of the containers others built (BuiltHolders::Book), as of a_next.
+		void LoadRecord(std::uint64_t a_session, std::uint32_t a_next, std::vector<Pending> a_pending, BuiltHolders::Book a_book = {})
 		{
 			toldBare.clear();  // the world is the save's: a chest looted bare since may hold its things again
 			sessionPut.clear();
 			friendTook.clear();
 			receiver.Load(a_session, a_next);
 			pending = std::move(a_pending);
+			book = std::move(a_book);
 			// In session order, whatever order the record holds them in: a container's changes go in in that order.
 			std::ranges::stable_sort(pending, {}, &Pending::index);
 		}
@@ -283,6 +326,7 @@ namespace LootSync
 			friendTook.clear();
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
+				book.Clear();
 			}
 			++asked;
 			return receiver.Request(a_now, Protocol::WorldRequest::kLoad);
@@ -407,6 +451,12 @@ namespace LootSync
 		// once: what goes in leaves the queue, so the sweep and a later open find nothing more. Returns how many went in.
 		std::size_t Opened(std::uint32_t a_container, World& a_world)
 		{
+			// Our copy of a piece someone else built shows the book as its menu opens (changes that came while it wasn't here).
+			if (Protocol::IsBuiltHolderRef(a_container)) {
+				if (const auto key = a_world.BuiltKeyOf(a_container); key && key->builder != 0) {
+					Show(*key, a_container, a_world);
+				}
+			}
 			const auto applied = Retry(a_container, a_world, true);
 			counts.openApplied += static_cast<std::uint32_t>(applied);
 			return applied;
@@ -490,6 +540,27 @@ namespace LootSync
 				}
 			};
 		}
+
+		// ---- containers players built (BuiltHolders) -------------------------------------------------
+
+		// Our copy a_local of someone else's piece goes (WorkshopSync removes it): what it shows of the book comes out of it
+		// first, so that only our player's own things in it go to their pockets: the rest is in the piece, in its builder's
+		// game. Returns the stacks taken out.
+		std::size_t CopyGoing(std::uint32_t a_local, World& a_world)
+		{
+			std::size_t taken = 0;
+			for (const auto& [item, count] : book.Going(a_local)) {
+				const auto have = CountOf(a_local, item, a_world);
+				if (const auto take = (std::min)(have, count); take > 0) {
+					a_world.Apply({ a_local, item, -static_cast<std::int32_t>((std::min<std::int64_t>)(take, Protocol::MAX_ITEM_COUNT)) });
+					++taken;
+				}
+			}
+			counts.builtRescued += static_cast<std::uint32_t>(taken);
+			return taken;
+		}
+
+		[[nodiscard]] const BuiltHolders::Book& Built() const { return book; }
 
 		// ---- what is known ---------------------------------------------------------------------------
 
@@ -682,8 +753,11 @@ namespace LootSync
 
 		// a_menuOpen: our player has the holder's menu open, which the engine draws from its inventory as it is: what a friend took
 		// goes in now, ready for item work or not (waiting would show it, and let it be taken twice).
-		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world, bool a_menuOpen = false)
+		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world, bool a_menuOpen = false, bool a_built = false)
 		{
+			if (Protocol::IsBuiltHolder(a_change)) {
+				return TryOwnBuilt(a_index, a_change, a_world, a_menuOpen);
+			}
 			if (SkipStorage(a_index, a_change, a_world)) {
 				return Applied::kDone;
 			}
@@ -703,7 +777,7 @@ namespace LootSync
 				return TryEmpty(a_change, a_world);
 			}
 			const auto direction = a_change.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
-			if (keeper == StorageView::Keeper::kUs && direction == LootScope::Direction::kTake && !a_world.Stocked(a_change.container)) {
+			if (!a_built && keeper == StorageView::Keeper::kUs && direction == LootScope::Direction::kTake && !a_world.Stocked(a_change.container)) {
 				// Our storage's inventory isn't made yet: it would count as empty, and the take as short. It waits.
 				return Applied::kNotLoaded;
 			}
@@ -724,7 +798,7 @@ namespace LootSync
 				}
 				return Applied::kDone;
 			}
-			if (keeper == StorageView::Keeper::kNone && !a_world.Stocked(a_change.container)) {
+			if (!a_built && keeper == StorageView::Keeper::kNone && !a_world.Stocked(a_change.container)) {
 				// Our game holds the holder in a cell but hasn't made its inventory yet (a chest of a place we have not loaded,
 				// kept in memory, or one whose place is still loading): removeitem would find nothing to take now, and the roll
 				// the game makes as the place loads would still hold what the friend took. It waits for that, as the emptying
@@ -756,9 +830,83 @@ namespace LootSync
 
 		// Another player's change, next in session order (the ledger keeps the order). Changes to one
 		// container stay in order; different containers don't wait for each other.
+		// Another player's change at a container our player built: put into the piece itself, as at a plugin's container
+		// (waiting while its cell isn't loaded), once it is still a container of ours we built (none: it was scrapped since,
+		// and its ID may name something else now). A built container has no roll of loot to wait for (Stocked).
+		Applied TryOwnBuilt(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world, bool a_menuOpen)
+		{
+			if (BuiltHolders::WhoseIs(a_change, liveId) != BuiltHolders::Whose::kOurs) {
+				return liveId == 0 ? Applied::kNotLoaded : Applied::kDone;  // (a copy's never waits: ToCopy)
+			}
+			if (!Reachable(a_change.container, a_world)) {
+				return Applied::kNotLoaded;
+			}
+			const auto key = a_world.BuiltKeyOf(a_change.container);
+			if (!key || key->builder != 0) {
+				++counts.builtGone;
+				return Applied::kDone;
+			}
+			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
+				return Applied::kDone;  // the server's word that the piece was scrapped: ours went with our own scrap
+			}
+			auto plain = a_change;
+			plain.builder = 0;
+			const auto applied = TryApply(a_index, plain, a_world, a_menuOpen, true);
+			counts.builtOurs += applied == Applied::kDone ? 1 : 0;
+			return applied;
+		}
+
+		// Our copy of a_key's piece (a_local) brought to show the book.
+		void Show(const BuiltHolders::Key& a_key, std::uint32_t a_local, World& a_world)
+		{
+			bool moved = false;
+			for (const auto& [item, delta] : book.Show(a_key, a_local, SharedIn(a_world, a_local))) {
+				const auto count = static_cast<std::int32_t>(std::clamp<std::int64_t>(delta, -Protocol::MAX_ITEM_COUNT, Protocol::MAX_ITEM_COUNT));
+				a_world.Apply({ a_local, item, count });
+				++counts.builtShown;
+				moved = true;
+			}
+			if (moved) {
+				a_world.ItemWorked(a_local);
+			}
+		}
+
+		// Another player's change at a container someone else built (or at one of another world of ours): it goes into our
+		// book of the piece, never waiting, and into our copy if one is here. True when it was such a change.
+		bool ToCopy(const Protocol::ContainerChange& a_change, World& a_world)
+		{
+			switch (BuiltHolders::WhoseIs(a_change, liveId)) {
+			case BuiltHolders::Whose::kElsewhere:
+				++counts.builtElsewhere;
+				return true;
+			case BuiltHolders::Whose::kCopy:
+				break;
+			default:
+				return false;
+			}
+			const auto key = BuiltHolders::KeyOf(a_change);
+			const auto local = a_world.CopyOf(key);
+			if (local != 0) {
+				Show(key, local, a_world);  // first what it lacks from before (it came while the copy wasn't here)
+			}
+			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
+				book.Forget(key);
+			} else {
+				book.Apply(key, a_change.item, a_change.count);
+			}
+			if (local != 0) {
+				Show(key, local, a_world);
+			}
+			++counts.builtApplied;
+			return true;
+		}
+
 		void ApplyInOrder(const Protocol::IndexedContainerChange& a_change, World& a_world)
 		{
 			const auto& change = a_change.change;
+			if (ToCopy(change, a_world)) {
+				return;
+			}
 			if (SkipStorage(a_change.index, change, a_world)) {
 				return;  // never held: it goes into our copy only while we view it
 			}
@@ -809,6 +957,8 @@ namespace LootSync
 		// The items other players took from each holder since it was last emptied here (see TryEmpty): an emptying takes
 		// the rest of these from our copy, and leaves the rest of its roll.
 		std::unordered_map<std::uint32_t, std::unordered_set<std::uint32_t>> friendTook;
+		// What the session put into each container someone else built, and what our copy of each shows (BuiltHolders).
+		BuiltHolders::Book        book;
 		Counts                    counts;
 	};
 }

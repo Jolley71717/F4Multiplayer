@@ -580,6 +580,11 @@ void Server::Run()
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
+	// The built holders (Protocol::ContainerChange::builder) containerChanges names, by the key their pieces are kept under:
+	// a scrap of one numbers its emptying (handleWorkshopItem), so a game's book of it (BuiltHolders::Book) starts again
+	// should its builder's game give the same ID to a new piece. Made again from the table when a session is read.
+	std::set<WorkshopStore::Key>                          builtHolders;
+	std::uint32_t                                         builtHoldersRefused = 0;  // changes at a built piece the session doesn't know
 	// Plugin items picked up from the world, each with the player who picked it up (0: not known, a file before layout 43).
 	// A player's own are never sent to them in a world state (sendWorldState): a persistent item they picked up and dropped
 	// again lies in their world as that same reference, and their game would take it away as a friend's pickup.
@@ -771,8 +776,12 @@ void Server::Run()
 			}
 			containerChanges = saved->containerChanges;
 			containersAuthored.clear();
+			builtHolders.clear();
 			for (const auto& change : containerChanges) {
 				++containersAuthored[change.playerId];
+				if (Protocol::IsBuiltHolder(change.change)) {
+					builtHolders.insert({ change.change.builder, change.change.container });
+				}
 			}
 			for (std::size_t i = 0; i < saved->pickedUp.size(); ++i) {
 				pickedUp.emplace(saved->pickedUp[i], i < saved->pickers.size() ? saved->pickers[i] : 0);
@@ -928,6 +937,7 @@ void Server::Run()
 		hostDeaths.clear();
 		containerChanges.clear();
 		containersAuthored.clear();
+		builtHolders.clear();
 		deathPositions.clear();
 		restFrom.clear();
 		diedAt.clear();
@@ -1233,6 +1243,29 @@ void Server::Run()
 
 	// Sends the session's world state in chunks. Container changes before a_containerFrom are
 	// already in the receiver's world.
+	// Built holders (Protocol::ContainerChange::builder). The key a player's change names a piece by, as the session keeps it:
+	// their own piece (named by their own player id) under the key the piece is kept under (WorkshopStore::BuilderOf: a
+	// builder id when it is kept apart), a copy's under the key the session keeps the piece under, which their game's copy
+	// was keyed by. 0: nothing they may change (a piece of another world of theirs, or one the session doesn't keep).
+	const auto builtHolderKey = [&](const Player& a_player, const Protocol::ContainerChange& a_change) -> std::uint32_t {
+		if (a_change.builder == a_player.id) {
+			return workshop.BuilderOf(a_player.id, a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0, a_change.container);
+		}
+		if (a_change.builder == Protocol::BUILT_ELSEWHERE || WorkshopStore::PlayerOf(a_change.builder) == a_player.id) {
+			return 0;
+		}
+		return workshop.Knows({ a_change.builder, a_change.container }) ? a_change.builder : 0;
+	};
+	// A numbered change as a_to's game is told it: a built holder's key as WorkshopStore::BuilderFor names it to them (their
+	// own piece in the world they play as their own player id). Anything else as it is.
+	const auto containerChangeFor = [&](const Protocol::IndexedContainerChange& a_change, const Player& a_to) {
+		auto out = a_change;
+		if (Protocol::IsBuiltHolder(out.change)) {
+			out.change.builder = workshop.BuilderFor({ out.change.builder, out.change.container }, a_to.id, a_to.characterKnown ? drops.CharacterOf(a_to.id) : 0);
+		}
+		return out;
+	};
+
 	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
 		sendMarkers(a_to);
 		// The spent traps before the world state that ends the catching up, so a game holds the whole list by then.
@@ -1309,6 +1342,11 @@ void Server::Run()
 			world.deadActors = slice(dead, offset);
 			world.containerFirstIndex = static_cast<std::uint32_t>((std::min)(containerChanges.size(), containerFrom + offset));
 			world.containerChanges = slice(containerChanges, offset, containerFrom);
+			if (receiver != players.end()) {
+				for (auto& change : world.containerChanges) {
+					change = containerChangeFor(change, receiver->second);  // a built holder as this game knows it
+				}
+			}
 			world.pickedUp = slice(picked, offset);
 			world.refStates = slice(states, offset);
 			world.questStages = slice(questStages, offset);
@@ -2748,9 +2786,20 @@ void Server::Run()
 	// A player's container change, numbered (and sent to every game) if it may be. a_late: a move at storage another game
 	// keeps that their game made before its connection went and the session never numbered, sent again with a settle
 	// (StorageBook::Book::Check's a_late).
-	const auto takeContainerChange = [&](Player& a_player, const std::optional<Protocol::ContainerChange>& change, bool a_late) {
-		// With the rule off the book is only kept for a later run: no container has a keeper.
-		const auto keeper = options.rules.sharedStorage && change && Protocol::IsValid(*change) ? storage.KeeperOf(change->container) : std::nullopt;
+	const auto takeContainerChange = [&](Player& a_player, std::optional<Protocol::ContainerChange> change, bool a_late) {
+		// A container a player built (a built holder: Protocol::ContainerChange::builder) is kept under the key its piece is
+		// (builtHolderKey), or the change goes nowhere: their game's change at a piece the session doesn't know.
+		if (change && Protocol::IsValid(*change) && Protocol::IsBuiltHolder(*change)) {
+			change->builder = builtHolderKey(a_player, *change);
+			if (change->builder == 0) {
+				++builtHoldersRefused;
+				change.reset();
+			}
+		}
+		// With the rule off the book is only kept for a later run: no container has a keeper. Nor ever a built one: storage
+		// is kept by a plugin's reference (StorageBook).
+		const bool built = change && Protocol::IsBuiltHolder(*change);
+		const auto keeper = options.rules.sharedStorage && change && Protocol::IsValid(*change) && !built ? storage.KeeperOf(change->container) : std::nullopt;
 		const bool atFriends = keeper && *keeper != a_player.id;
 		// The budget first, before the book is asked or anything answered: a friend's moves at storage another game keeps
 		// have their own (STORAGE_MOVE_BURST), everything else the event budget.
@@ -2784,7 +2833,7 @@ void Server::Run()
 		// A move at a container the host's game gave back a moment ago, by a player who was viewing it then: made at the true
 		// copy as their menu showed it, and on its way as the view closed. Numbered now it would be a move at a container
 		// nobody keeps, which no game applies, and the item would be gone: refused, so their game puts it back.
-		if (!keeper && options.rules.sharedStorage) {
+		if (!keeper && options.rules.sharedStorage && !built) {
 			if (const auto given = storageGivenBack.find(change->container); given != storageGivenBack.end()) {
 				if (now - given->second.at >= STORAGE_GIVEN_BACK_FOR) {
 					storageGivenBack.erase(given);
@@ -2867,14 +2916,18 @@ void Server::Run()
 		}
 		noteFill(kContainers, containerChanges.size());
 		touched();
+		if (built) {
+			builtHolders.insert({ change->builder, change->container });  // a scrap of the piece empties it (handleWorkshopItem)
+		}
 		// Not to a player owed the world state: it carries this change, in order after the ones before it.
 		// Nor to one whose hello waits for their budget: their game restarted, and the hello's world state
 		// carries it. Their new game takes what comes before its Welcome too, and an echo would move its
-		// count of what it has past changes its save lacks.
+		// count of what it has past changes its save lacks. A built holder is told each game as its key is to it
+		// (containerChangeFor): the builder's own game hears its own piece named as its own.
 		const auto packet = Protocol::Encode(containerChanges.back());
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
-				send(key, packet, true);
+				send(key, built ? Protocol::Encode(containerChangeFor(containerChanges.back(), other)) : packet, true);
 			}
 		}
 	};
@@ -3478,6 +3531,21 @@ void Server::Run()
 		if (outcome.relay) {
 			touched();  // relayed: what is kept changed
 			broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
+		}
+		// A container they built that the session's loot named is scrapped: its emptying is numbered, by nobody, in order with
+		// the changes at it. Every game's book of what the piece holds (BuiltHolders::Book) starts again from it, so a new
+		// piece their game gives the same ID later holds nothing of the old one's, in a joiner's game too. (What the piece
+		// held is in its builder's world: the engine's scrap puts it in their workbench.)
+		if (outcome.relay && item->op == Protocol::WorkshopOp::kScrapped && !Protocol::IsShareableRef(item->refId) &&
+			builtHolders.erase({ item->playerId, item->refId }) != 0 && containerChanges.size() < maxWorldEntries) {
+			const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
+			containerChanges.push_back({ numbered, 0, { item->refId, Protocol::CONTAINER_EMPTIED, -1, item->playerId } });
+			noteFill(kContainers, containerChanges.size());
+			for (const auto& [key, other] : players) {
+				if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+					send(key, Protocol::Encode(containerChangeFor(containerChanges.back(), other)), true);
+				}
+			}
 		}
 	};
 

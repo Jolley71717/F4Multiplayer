@@ -1939,6 +1939,43 @@ Storage skips only the marker: puts and takes there go between the games as anyw
 from their copy takes as many of the item from ours, whether ours got them from the session or not. That is still so with
 the host's `bSharedStorage` off (the default); on, storage has one true copy (below).
 
+**Containers players built (0.24.0; src/game/BuiltHolders.h, game-free).** A container built in workshop mode is a
+reference its builder's game made at runtime (0xFF......), and every other game has a copy of its own under another id
+(WorkshopSync), so until 0.24.0 no move at one was ever reported: the host's crate and the friend's copy held different
+things (GitHub #591). Now a change names a built container by its piece's key, the one the workshop copy book keeps
+copies under: the builder (a player id, or a builder id: WorkshopStore) and the builder's own reference id
+(`ContainerChange::builder`, written after the container only when its top byte is 0xFF, so a plugin reference's change
+is the same bytes as before). The sender names its own piece with its own player id and a copy with the copy's key
+(`ToWire`; a runtime reference that is neither, `LootSync::World::BuiltKeyOf`, stays unreported). The server puts its own
+piece under the key the piece is kept under (`WorkshopStore::BuilderOf`), takes a copy's change only for a piece it knows
+(`WorkshopStore::Knows`), and tells each game the key as it is to them (`WorkshopStore::BuilderFor`): its own piece in
+the world it plays as its own player id, a piece of another of its characters' worlds as `BUILT_ELSEWHERE`, which that
+game leaves alone; a joiner's world state carries the same, rewritten for them. A scrap of a built piece the loot named
+numbers its emptying (`CONTAINER_EMPTIED` by player 0 at that key), so a new piece given the same id starts empty in every
+game's book. Shared storage keeps plugin references only: a built container is never anybody's true copy, and container
+gifts (`bContainerGifts`) still go through plugin containers only. Weapons, armor and personal items stay per player as
+anywhere else.
+
+- *The builder's game* puts a friend's change into the piece itself, as at a plugin's chest: it waits while the piece's
+  cell isn't loaded, and is dropped (`builtGone=`) when the id names no piece of its own any more. A built container has no
+  roll of loot to wait for.
+- *Every other game* keeps a book of each piece (`BuiltHolders::Book`): what the session put in and took out, in session
+  order, clamped at nothing as `removeitem` is. A change goes into the book at once, never waiting, and into the copy if
+  one stands here (`WorkshopSync::LiveCopyOf`); a copy not here is brought to the book as its menu opens or with the next
+  change. A copy is brought on from what it was last shown, so what it holds that the book can't explain (things put in
+  before this, a stack a mod of ours alone makes) stays; one newly found is taken to show what it holds of the book
+  already, so a copy a save kept is given nothing twice and one just made is given all of it. The player's own moves at a
+  copy go into the book as they are reported. The book goes into the co-save's session record (version 2, which also
+  keeps each waiting change's builder; version 1 still reads) and is cleared when the session changes.
+- *A copy going* (moved, scrapped, the session's end, a save's leftover: every path goes through WorkshopSync's
+  `Delete`) first takes out what it shows of the book (`WorldSync::CopyGoing`, `builtRescued=`): those are in the piece,
+  in its builder's world. Only what the player kept there beyond that goes to their pockets (`WorkshopApply::Rescues`), so
+  nothing is had twice.
+- The session file holds built holders in its container changes as layout 47, written only when there is one; a file
+  of an older layout that holds one is damaged. `net status` counts `built=sent/applied/shown/ours/gone/elsewhere/rescued` and `builtBook=pieces/copies`.
+  Tested without the game (`tests/BuiltHoldersTests.cpp`, two games through the real server); the rig repro is
+  `tools/rig/repro/workshop-host-builds.sh` (phase `containers`). Not yet tested in a game.
+
 **Shared storage (0.10.0, the host's `bSharedStorage`, off by default; welcome flag bit 32).** A home's or a settlement's
 container has one true copy: the host's game's. The server keeps what each such container holds (`common/StorageBook.h`)
 and checks every friend's move there against it; the games' side is `src/game/StorageView.h` (game-free) and
@@ -5207,7 +5244,7 @@ lamp's copy, a moved container's old spot. It floated in the friend's game until
 it would out of a session, once its 3D is in. A save from before this has no record: its copies stay strays until a session adopts them.
 `savedCopies=`, `savedRemoved=`, `savedNotOurs=` and the rest in `wspower`. The repro `tools/rig/repro/friend-save-host-leftovers.sh`.
 
-A container is emptied into the player's pockets only when it is a copy of ours: it carries the keyword our copies carry and is no workshop object of the player's own (`WorkshopApply::Rescues`). A thing of the same base that stands at a friend's spot with no such keyword and no link to a workbench (a mod's or the console's own container) is the player's: it is never taken over as a leftover copy, a copy is made beside it, and no session's end deletes it or empties it (rig: `tools/rig/repro/containers-on-leave.sh`; 0.21.2 took it for a copy at the host's next piece on its spot and put its contents into the friend's pockets).
+A container is emptied into the player's pockets only when it is a copy of ours: it carries the keyword our copies carry and is no workshop object of the player's own (`WorkshopApply::Rescues`). A thing of the same base that stands at a friend's spot with no such keyword and no link to a workbench (a mod's or the console's own container) is the player's: it is never taken over as a leftover copy, a copy is made beside it, and no session's end deletes it or empties it (rig: `tools/rig/repro/containers-on-leave.sh`; 0.21.2 took it for a copy at the host's next piece on its spot and put its contents into the friend's pockets). A copy of a container someone built first gives up what it shows of the session's loot of that piece (Shared world: Containers players built): that is in the piece, in its builder's world, so only what the player kept in it beyond that comes to their pockets.
 
 Trade-offs:
 
@@ -6511,7 +6548,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kReportTrap` | a game that has the trap loaded | its position must be known and the trap (where the session has it, once it has it) within 16000 units of it, in the same space, for a spring, 1024 for a disarm or a take; the event budget; a plugin's reference, a state of 1 to 3 and a place in the world; first kept, then only a take (after a spring or a disarm); past the session's table size or the player's share, dropped | done only to a trap of ours that is armed and settled; set off as it went only within 3 s and 512 units of where theirs was, else spent quietly | yes |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kNpcIdentity` | the player running the NPC | owner only; the first runner's report stands (a later runner's is ignored) until the NPC dies, nobody runs it or that player leaves; an actor id, a level of at most 1000, slots only with the NPC it was placed as, at most 32 factions, none 0 or twice | only for our copy of an NPC another game runs, while we mirror it: a roll only when ours is leveled, was placed as the same NPC and every one of the roll's NPCs is one our lists can give; factions only on our copy of a friend's spawn, never PlayerFaction or our companion's; 3 tries | no (a plugin NPC made their roll goes into our save as it) |
-| `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
+| `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends, a container a player built by its piece's key (BuiltHolders) | yes |
 | `kReportStorage`, `kViewStorage`, `kReportStorageShort`, `kStorageSettle`, `kReleaseStorage` | the hosting game (a listing, a shortfall, a container given back); any game (a view, a settle) | the rule on and the event budget; a container is given back only by the server's local player and only one it keeps (anything else does nothing), and a viewer's move there in the 10 s after is refused, never numbered; a listing only from the server's local player, at most 1024 stacks, its changes added from its number on (clamped to the log); a view only of a kept container that isn't stale, at most 8 viewers each, and only from a player whose last world state is settled (else answered closed); a shortfall only for a numbered take of that container by a player (never one by nobody), answered once (and the take corrected in the log to what was there); a settle only one per world request, for the last one, once that world state has gone: it undoes in the true copy only the sender's own numbered moves at a container another game keeps, up to the log's length, each once until a later settle says their world has it (none from before the claim), a put undone no more than the book holds while fresh, numbered as a change by nobody and counted against the settler's share of the container log, all of a settle or none of it (past it the player stays unsettled); a first claim takes back out of the true copy what friends put in it before, net (no more than everyone's moves added or the listing holds); its late moves at most 2304, budgeted as moves, only at the container the player viewed last; a friend's container change at a kept container is budgeted first (2304, 500/s; refusals the same; views 16, 8/s), is refused while their settle is pending, then needs their view and must be held (and the item mappable to the host's plugins), else it is refused and never numbered | the owners only from the server; contents only for the container we view; a refusal only undoes a move of ours still on its way, or one this world reported as ordinary loot as the container was claimed (once: the report is forgotten); a `kStorageCaughtUp` only settles when it names our last request and the ledger waits for nothing; nothing is ever done on our player after a load or a rejoin | the owners and the moves undone, whatever the rule (layout 38 when there are any; owners come back stale) |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |

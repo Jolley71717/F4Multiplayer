@@ -1132,9 +1132,12 @@ namespace WorldSync
 				if (count <= 0 || count > Protocol::MAX_ITEM_COUNT) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				if (a_event.newContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.oldContainerFormID)) {
+				// A plugin's reference, or one our game made at runtime that may be a container a player built (BuiltHolders:
+				// LootSync::Report keeps only those of the runtime ones, on the main thread).
+				const auto holder = [](std::uint32_t a_id) { return IsShareableRef(a_id) || Protocol::IsBuiltHolderRef(a_id); };
+				if (a_event.newContainerFormID == PLAYER_REF_ID && holder(a_event.oldContainerFormID)) {
 					move = Move{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count };
-				} else if (a_event.oldContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.newContainerFormID)) {
+				} else if (a_event.oldContainerFormID == PLAYER_REF_ID && holder(a_event.newContainerFormID)) {
 					move = Move{ a_event.newContainerFormID, a_event.baseObjectFormID, count };
 				}
 				if (!move) {
@@ -1394,6 +1397,15 @@ namespace WorldSync
 			using Holder = LootScope::Holder;
 			LootScope::HolderFacts facts;
 			if (!IsShareableRef(a_id)) {
+				// A container a player built, ours or our copy of a friend's (BuiltHolders): a container that keeps what is put
+				// in it (storage: never a roll of loot), shared as a plugin's chest is.
+				if (Protocol::IsBuiltHolderRef(a_id)) {
+					if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id); ref && WorkshopSync::BuiltContainerKey(*ref)) {
+						facts.kind = Holder::kContainer;
+						facts.storage = true;
+						return facts;
+					}
+				}
 				facts.kind = a_id == Protocol::PLAYER_REF_ID ? Holder::kPlayer : Holder::kRuntime;
 				return facts;
 			}
@@ -1533,6 +1545,16 @@ namespace WorldSync
 			}
 
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
+
+			// Containers players built (BuiltHolders): the piece one of ours is, and our copy of a friend's piece.
+			std::optional<BuiltHolders::Key> BuiltKeyOf(std::uint32_t a_holder) override
+			{
+				const auto ref = Protocol::IsBuiltHolderRef(a_holder) ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder) : nullptr;
+				const auto key = ref ? WorkshopSync::BuiltContainerKey(*ref) : std::nullopt;
+				return key ? std::optional{ BuiltHolders::Key{ key->first, key->second } } : std::nullopt;
+			}
+
+			std::uint32_t CopyOf(const BuiltHolders::Key& a_key) override { return WorkshopSync::LiveCopyOf(a_key.builder, a_key.ref); }
 
 			std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
 			{
@@ -2858,7 +2880,7 @@ namespace WorldSync
 		}
 
 		constexpr std::uint32_t RESYNC_RECORD = 'CONT';
-		constexpr std::uint32_t RESYNC_VERSION = 1;
+		constexpr std::uint32_t RESYNC_VERSION = 2;  // 2: built holders (each waiting change's builder, and BuiltHolders::Book)
 	}
 
 	bool InWorld()
@@ -3564,6 +3586,14 @@ namespace WorldSync
 		lootInbox.push_back(Move{ a_bench, a_item, a_count });
 	}
 
+	void CopyGoing(std::uint32_t a_local)
+	{
+		MainThread::Assert("WorldSync::CopyGoing");
+		if (const auto taken = loot.CopyGoing(a_local, engine); taken != 0) {
+			REX::INFO("WorldSync: copy {:08X} goes: {} stacks of the session's loot in it stay its builder's", a_local, taken);
+		}
+	}
+
 	void FlushLoot()
 	{
 		MainThread::Assert("WorldSync::FlushLoot");
@@ -3677,6 +3707,13 @@ namespace WorldSync
 			a_intfc->WriteRecordData(entry.change.container);
 			a_intfc->WriteRecordData(entry.change.item);
 			a_intfc->WriteRecordData(entry.change.count);
+			a_intfc->WriteRecordData(entry.change.builder);  // version 2: a built holder's builder (0: a plugin's reference)
+		}
+		// Version 2: the book of the containers others built (BuiltHolders::Book), its length first.
+		const auto book = loot.Built().Record();
+		a_intfc->WriteRecordData(static_cast<std::uint32_t>(book.size()));
+		for (const auto value : book) {
+			a_intfc->WriteRecordData(value);
 		}
 	}
 
@@ -3687,8 +3724,10 @@ namespace WorldSync
 		std::uint32_t savedNext = 0;
 		std::uint32_t count = 0;
 		constexpr std::uint32_t HEADER = sizeof(savedSession) + sizeof(savedNext) + sizeof(count);
-		constexpr std::uint32_t ENTRY = 4 * sizeof(std::uint32_t);
-		if (a_version != RESYNC_VERSION || a_length < HEADER ||
+		// Version 1 (before built holders): each waiting change's index, container, item and count, and no book.
+		const bool built = a_version >= RESYNC_VERSION;
+		const std::uint32_t ENTRY = (built ? 5u : 4u) * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+		if ((a_version != RESYNC_VERSION && a_version != 1) || a_length < HEADER ||
 			a_intfc->ReadRecordData(savedSession) != sizeof(savedSession) ||
 			a_intfc->ReadRecordData(savedNext) != sizeof(savedNext) ||
 			a_intfc->ReadRecordData(count) != sizeof(count) || count > (a_length - HEADER) / ENTRY) {
@@ -3702,11 +3741,30 @@ namespace WorldSync
 			a_intfc->ReadRecordData(entry.change.container);
 			a_intfc->ReadRecordData(entry.change.item);
 			a_intfc->ReadRecordData(entry.change.count);
+			if (built) {
+				a_intfc->ReadRecordData(entry.change.builder);
+			}
 			saved.push_back(entry);
 		}
+		BuiltHolders::Book book;
+		if (built) {
+			std::uint32_t length = 0;
+			const auto    left = a_length - HEADER - count * ENTRY;
+			std::vector<std::uint32_t> record;
+			if (left >= sizeof(length) && a_intfc->ReadRecordData(length) == sizeof(length) && length <= (left - sizeof(length)) / sizeof(std::uint32_t)) {
+				record.resize(length);
+				for (auto& value : record) {
+					a_intfc->ReadRecordData(value);
+				}
+			}
+			if (!book.Load(record)) {
+				REX::WARN("WorldSync: the session record's book of built containers doesn't read; copies of them show what the session puts in from now on");
+			}
+		}
 		const auto waiting = saved.size();
-		loot.LoadRecord(savedSession, savedNext, std::move(saved));
-		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", savedSession, savedNext, waiting);
+		const auto pieces = book.Pieces();
+		loot.LoadRecord(savedSession, savedNext, std::move(saved), std::move(book));
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting, {} built containers in the book)", savedSession, savedNext, waiting, pieces);
 	}
 
 	void RevertResyncPoint()
@@ -3738,6 +3796,8 @@ namespace WorldSync
 		       std::format(" friendsKills={}", friendsKills) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
-		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft);
+		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft) +
+		       std::format(" built={}/{}/{}/{}/{}/{}/{} builtBook={}/{}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
+			   stats.builtRescued, loot.Built().Pieces(), loot.Built().Copies());
 	}
 }

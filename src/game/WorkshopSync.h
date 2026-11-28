@@ -343,6 +343,18 @@ namespace WorkshopSync
 	[[nodiscard]] std::string PutAwayByHand(RE::TESObjectREFR* a_ref, std::string_view a_mode);
 	// Dev: each copy here, and whose piece it is: "copy=builder:theirRef".
 	[[nodiscard]] std::string DescribeCopies();
+
+	// ---- Built containers' loot (game/BuiltHolders.h) ------------------------------------------------
+	//
+	// A container a player built is named in the session's loot by its piece's key: (builder, their reference ID), the key
+	// of our copy book. Main thread.
+
+	// The piece a container our game made at runtime is: our own built container ({0, its ID}: one of a workbench's pieces,
+	// no copy), or our copy of another player's ({builder, their ID}); none for anything else (no container, a workbench, a
+	// copy on its way out).
+	[[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> BuiltContainerKey(RE::TESObjectREFR& a_ref);
+	// Our copy of that player's piece while it is here (in memory, in a cell) and a container: its reference ID, 0 when none.
+	[[nodiscard]] std::uint32_t LiveCopyOf(std::uint32_t a_builder, std::uint32_t a_ref);
 	// Dev: the power grids of this workbench (or of every one seen), with any copy or deleted reference they name.
 	[[nodiscard]] std::string DescribeGrids(RE::TESObjectREFR* a_bench = nullptr);
 }

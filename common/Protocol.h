@@ -349,7 +349,7 @@ namespace Protocol
 		kPlayerState = 2,
 		kReportDeath = 3,  // an actor died in the sender's world
 		kReportHealth = 4,  // the sender damaged an actor; this is its health now
-		kReportContainer = 5,  // the sender took items from / put items into a container
+		kReportContainer = 5,  // the sender took items from / put items into a container (one a player built: by its piece's key, ContainerChange::builder)
 		kReportPickup = 6,     // the sender picked up an item lying in the world
 		kReportRefState = 7,   // a door/container the sender used is now open/closed, locked/unlocked
 		kEquipment = 8,        // what the sender is wearing and holding
@@ -430,7 +430,7 @@ namespace Protocol
 		kActorDied = 106,     // an actor died in another player's world
 		kWorldState = 107,    // sent on join: everything that already happened this session
 		kActorHealth = 108,   // an actor's health changed in another player's world
-		kContainerChanged = 109,  // a player changed a container's contents (also echoed to that player)
+		kContainerChanged = 109,  // a player changed a container's contents (also echoed to that player; a built one's key as it is to the receiver)
 		kRefPickedUp = 110,       // another player picked up this world item
 		kRefStateChanged = 111,   // a door/container's open or lock state changed in another player's world
 		kPlayerEquipment = 112,   // what another player is wearing and holding
@@ -1044,14 +1044,43 @@ namespace Protocol
 	}
 
 	// Items added to (count > 0) or removed from (count < 0) a container or corpse.
+	//
+	// The container is a plugin's reference (IsShareableRef: every game has it under that ID), or a container a player built
+	// in workshop mode (a built holder: builder not 0). A built piece's reference is one its builder's game made at runtime
+	// (FF......), which no other game has, so the change names the piece as the workshop's copies are keyed (WorkshopSync's
+	// copy book, WorkshopStore::Key): the builder (the player id, or the builder id of pieces kept apart, that the server
+	// relays the piece's kWorkshopItem under) and the builder's own reference ID. The receiving game maps that key to its copy
+	// of the piece, or, when the piece is its own, to the piece itself. On the wire the builder follows the container only
+	// when the container is in the runtime range (WriteHolder), so a change at a plugin's reference is the bytes it always was.
+	// A sender names its own piece with its own player id; the server keeps and relays the key the piece is kept under, and
+	// tells each game a key of one of its own pieces as its own player id when the piece is of the world it plays now, as
+	// BUILT_ELSEWHERE when it is of another of its characters' worlds (WorkshopStore::BuilderFor).
 	struct ContainerChange
 	{
 		std::uint32_t container = 0;
 		std::uint32_t item = 0;  // base object form ID
 		std::int32_t  count = 0;
+		std::uint32_t builder = 0;  // 0: the container is a plugin's reference; else whose game built it (see above)
 
 		bool operator==(const ContainerChange&) const = default;
 	};
+
+	// The builder of a built holder that is of another world of the receiver's own (see ContainerChange): it names nothing
+	// in the receiving game, which counts the change and puts it nowhere. No player has this id, and no builder id is it in
+	// practice (it would be the 32768th character's of player 0xFFFF: WorkshopStore::BUILDER_BASE).
+	inline constexpr std::uint32_t BUILT_ELSEWHERE = 0xFFFF'FFFF;
+
+	// A reference a game made at runtime: what a built holder's container is (its builder's own ID for the piece).
+	[[nodiscard]] constexpr bool IsBuiltHolderRef(std::uint32_t a_id)
+	{
+		return (a_id >> 24) == 0xFF && a_id != 0xFF000000;
+	}
+
+	// Whether the change names a container a player built (ContainerChange::builder).
+	[[nodiscard]] constexpr bool IsBuiltHolder(const ContainerChange& a_change)
+	{
+		return a_change.builder != 0;
+	}
 
 	// A container change as the server relays it: numbered in session order, with who made it.
 	struct IndexedContainerChange
@@ -4009,12 +4038,33 @@ namespace Protocol
 		return msg;
 	}
 
+	// A container change's holder, item and count on the wire (kReportContainer, kContainerChanged, a WorldState's changes):
+	// the container, then its builder only when the container is in the runtime range (a built holder: ContainerChange),
+	// then the item and the count. A change at a plugin's reference is the bytes it always was.
+	inline void WriteHolder(Writer& a_w, const ContainerChange& a_change)
+	{
+		a_w.U32(a_change.container);
+		if ((a_change.container >> 24) == 0xFF) {
+			a_w.U32(a_change.builder);
+		}
+		a_w.U32(a_change.item);
+		a_w.U32(static_cast<std::uint32_t>(a_change.count));
+	}
+
+	inline void ReadHolder(Reader& a_r, ContainerChange& a_change)
+	{
+		a_change.container = a_r.U32();
+		if ((a_change.container >> 24) == 0xFF) {
+			a_change.builder = a_r.U32();
+		}
+		a_change.item = a_r.U32();
+		a_change.count = static_cast<std::int32_t>(a_r.U32());
+	}
+
 	inline std::vector<std::uint8_t> Encode(const ContainerChange& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
-		w.U32(a_msg.container);
-		w.U32(a_msg.item);
-		w.U32(static_cast<std::uint32_t>(a_msg.count));
+		WriteHolder(w, a_msg);
 		return w.Data();
 	}
 
@@ -4023,19 +4073,18 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		ContainerChange msg;
-		msg.container = r.U32();
-		msg.item = r.U32();
-		msg.count = static_cast<std::int32_t>(r.U32());
+		ReadHolder(r, msg);
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
 	}
 
+	// A plugin's reference with no builder, or a reference made at runtime with one (a built holder).
 	[[nodiscard]] inline bool IsValid(const ContainerChange& a_change)
 	{
-		return IsShareableRef(a_change.container) && a_change.item != 0 && a_change.count != 0 &&
-		       a_change.count >= -MAX_ITEM_COUNT && a_change.count <= MAX_ITEM_COUNT;
+		const bool holder = a_change.builder == 0 ? IsShareableRef(a_change.container) : IsBuiltHolderRef(a_change.container);
+		return holder && a_change.item != 0 && a_change.count != 0 && a_change.count >= -MAX_ITEM_COUNT && a_change.count <= MAX_ITEM_COUNT;
 	}
 
 	// A numbered change our game can't hold (protocol 36): its container or its item is of a plugin we don't have, so
@@ -4043,7 +4092,7 @@ namespace Protocol
 	// numbers it and applies nothing: it isn't IsValid). Never on the wire from the server.
 	[[nodiscard]] inline bool IsEmpty(const ContainerChange& a_change)
 	{
-		return a_change.container == 0 && a_change.item == 0 && a_change.count == 0;
+		return a_change.container == 0 && a_change.item == 0 && a_change.count == 0 && a_change.builder == 0;
 	}
 
 	// kContainerChanged
@@ -4052,9 +4101,7 @@ namespace Protocol
 		Writer w{ MessageType::kContainerChanged };
 		w.U32(a_msg.index);
 		w.U32(a_msg.playerId);
-		w.U32(a_msg.change.container);
-		w.U32(a_msg.change.item);
-		w.U32(static_cast<std::uint32_t>(a_msg.change.count));
+		WriteHolder(w, a_msg.change);
 		return w.Data();
 	}
 
@@ -4065,9 +4112,7 @@ namespace Protocol
 		IndexedContainerChange msg;
 		msg.index = r.U32();
 		msg.playerId = r.U32();
-		msg.change.container = r.U32();
-		msg.change.item = r.U32();
-		msg.change.count = static_cast<std::int32_t>(r.U32());
+		ReadHolder(r, msg.change);
 		if (!r.Ok() || !r.AtEnd() || (!IsValid(msg.change) && !IsEmpty(msg.change))) {
 			return std::nullopt;
 		}
@@ -7270,9 +7315,7 @@ namespace Protocol
 		w.U32(static_cast<std::uint32_t>(changes));
 		for (std::size_t i = 0; i < changes; ++i) {
 			const auto& change = a_msg.containerChanges[i];
-			w.U32(change.change.container);
-			w.U32(change.change.item);
-			w.U32(static_cast<std::uint32_t>(change.change.count));
+			WriteHolder(w, change.change);  // a built holder's builder too
 			w.U32(change.playerId);
 		}
 		writeIds(a_msg.pickedUp);
@@ -7340,9 +7383,7 @@ namespace Protocol
 		for (std::uint32_t i = 0; i < changes && r.Ok(); ++i) {
 			IndexedContainerChange change;
 			change.index = msg.containerFirstIndex + i;
-			change.change.container = r.U32();
-			change.change.item = r.U32();
-			change.change.count = static_cast<std::int32_t>(r.U32());
+			ReadHolder(r, change.change);  // a built holder's builder too (WriteHolder)
 			change.playerId = r.U32();
 			msg.containerChanges.push_back(change);
 		}

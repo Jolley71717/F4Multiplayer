@@ -76,7 +76,11 @@ namespace SessionFile
 	// ownerId 0, since the first change numbered after; StorageBook::Release), so a restarted server's session counts
 	// only the moves made since when the container is claimed again. A session with none is written as before (45 or
 	// older); a file before 46 never holds one (an entry with no owner there is a damaged file's).
-	inline constexpr std::uint16_t FORMAT = 46;
+	// 47 adds to 46 container changes at the containers players built (a built holder: Protocol::ContainerChange::builder,
+	// written after the container, inside the world state packets, as on the wire), and the emptying numbered when such a
+	// piece is scrapped. A session with none is written as before (46 or older); a file before 47 never holds one.
+	inline constexpr std::uint16_t FORMAT = 47;
+	inline constexpr std::uint16_t BUILT_HOLDERS = 47;
 	inline constexpr std::uint16_t STORAGE_RELEASED = 46;
 	inline constexpr std::uint16_t STAGE_GLOBALS = 45;
 	inline constexpr std::uint16_t HOST_DEATHS = 44;
@@ -99,7 +103,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 47 (35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 48 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -120,15 +124,17 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasHostDeaths(std::uint16_t a_format) { return a_format >= HOST_DEATHS; }
 	[[nodiscard]] constexpr bool HasStageGlobals(std::uint16_t a_format) { return a_format >= STAGE_GLOBALS; }
 	[[nodiscard]] constexpr bool HasStorageReleased(std::uint16_t a_format) { return a_format >= STORAGE_RELEASED; }
+	[[nodiscard]] constexpr bool HasBuiltHolders(std::uint16_t a_format) { return a_format >= BUILT_HOLDERS; }
 
 	// The layout a snapshot is written in: the oldest that holds it, so a session without a storage container given back
 	// (a_storageReleased), a stage that carries globals (a_stageGlobals), deaths the host's game reported (a_hostDeaths),
 	// known pickers (a_pickers), workshop characters or lost pieces (a_workshop), NPC rolls (a_rolls), gifts or drops with
 	// known characters (a_characters) or shared storage is still one an older build reads.
 	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false, bool a_pickers = false, bool a_hostDeaths = false,
-		bool a_stageGlobals = false, bool a_storageReleased = false)
+		bool a_stageGlobals = false, bool a_storageReleased = false, bool a_builtHolders = false)
 	{
-		return a_storageReleased ? STORAGE_RELEASED :
+		return a_builtHolders     ? BUILT_HOLDERS :
+		       a_storageReleased ? STORAGE_RELEASED :
 		       a_stageGlobals ? STAGE_GLOBALS :
 		       a_hostDeaths   ? HOST_DEATHS :
 		       a_pickers      ? PICKERS :
@@ -230,7 +236,8 @@ namespace SessionFile
 		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
 			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop, pickers,
 			!a_snapshot.hostDeaths.empty(), stageGlobals,
-			std::ranges::any_of(a_snapshot.storageOwners, [](const Protocol::StorageOwner& a_owner) { return a_owner.ownerId == 0; }));
+			std::ranges::any_of(a_snapshot.storageOwners, [](const Protocol::StorageOwner& a_owner) { return a_owner.ownerId == 0; }),
+			std::ranges::any_of(a_snapshot.containerChanges, [](const Protocol::IndexedContainerChange& a_change) { return Protocol::IsBuiltHolder(a_change.change); }));
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -393,8 +400,8 @@ namespace SessionFile
 			}
 			case Protocol::MessageType::kWorldState: {
 				const auto world = Protocol::DecodeKeptWorldState(packet, HasStageGlobals(version), HasPickers(version));
-				if (!world) {
-					return std::nullopt;
+				if (!world || (!HasBuiltHolders(version) && std::ranges::any_of(world->containerChanges, [](const auto& a_change) { return Protocol::IsBuiltHolder(a_change.change); }))) {
+					return std::nullopt;  // (a built holder in a file before 47 is a damaged file's)
 				}
 				snapshot.deadActors.insert(snapshot.deadActors.end(), world->deadActors.begin(), world->deadActors.end());
 				snapshot.containerChanges.insert(snapshot.containerChanges.end(), world->containerChanges.begin(), world->containerChanges.end());
