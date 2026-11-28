@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T10:09:41+00:00",
+ "updated": "2026-11-28T10:18:32+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -4891,8 +4891,8 @@
    "title": "Quests batch A: host-owned settlement events shared (Castle siege, its attackers and vertibird drops, synth infiltrators, refugees job)",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
-   "note": "Castle siege, synth infiltrators and refugees job shared as the host's; draft PR built and tested on GitHub; rig repro written, not run",
+   "stage": 3,
+   "note": "Reviewed; rig next",
    "pr": 654
   },
   {
