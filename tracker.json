@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T09:01:48+00:00",
+ "updated": "2026-11-28T09:31:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -864,6 +864,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 462
+  },
+  {
+   "id": "6khx",
+   "title": "Share Far Harbor's Preston trapper attack (DLC03WorkshopRadiantOwned03) as the host's",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found while sharing the Castle siege; queued"
   },
   {
    "id": "6l4y",
@@ -4477,6 +4485,14 @@
    "note": "Fixed and shipped."
   },
   {
+   "id": "xpmu",
+   "title": "Friend stuck in Vault 81's intercom conversation after arriving by coc",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found on the rig: the friend's game stuck in Vault 81's intercom conversation after a coc"
+  },
+  {
    "id": "xr9k",
    "title": "Game-side stability batch: workshop graveyard growth, EnableParents loader-thread flag, auditLock across engine looks, uncapped MainThread::Post",
    "kind": "bug",
@@ -4859,8 +4875,9 @@
    "title": "Quests batch A: host-owned settlement events shared (Castle siege, its attackers and vertibird drops, synth infiltrators, refugees job)",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Being built: the Castle siege and other settlement events shared"
+   "stage": 2,
+   "note": "Castle siege, synth infiltrators and refugees job shared as the host's; draft PR built and tested on GitHub; rig repro written, not run",
+   "pr": 654
   },
   {
    "id": "ztoq",
