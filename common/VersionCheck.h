@@ -108,7 +108,7 @@ namespace VersionCheck
 	inline constexpr std::string_view REFUSAL_HOST_OLDER = ". Both players need the same version: the host should update.";
 	inline constexpr std::string_view REFUSAL_HOST_NEWER = ". Both players need the same version: update to the latest from the Nexus Files tab.";
 	// The longest a version named in a refusal may be ("0.13.0 to 0.15.1" for an old copy's, src/ModVersions.h).
-	inline constexpr std::size_t MAX_NAMED_LENGTH = 40;
+	inline constexpr std::size_t MAX_NAMED_LENGTH = 32;
 
 	// a_hostOlder: the host is the one to update (Verdict::kHostOlder). a_host and a_you as a person reads them.
 	[[nodiscard]] inline std::string Refusal(bool a_hostOlder, std::string_view a_host, std::string_view a_you)
