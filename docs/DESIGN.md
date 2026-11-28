@@ -1302,10 +1302,15 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   settlement attacks the host books for
   everyone* (`SettlementAttacks`, its `AttackBook`): that book is the random attacks (the `Workshop*Attack` quests),
   which it keeps out of these jobs, and these rows keep out of its quests; both make the host's attack the only one.
-  Left alone, each player's own: the refugees job (MinRecruit09: two to five refugees made and enabled at random,
-  added to the settlement's settlers at its 400 from its own alias collection, which can't be forced) and the Castle's
-  siege (MinDefendCastle, its starter and its waves' helper: scripted waves from a holding cell, belonging with the
-  attacks the host books, not with a job shared by its run).
+  The refugees job (MinRecruit09: two to five refugees made and enabled at random, and their spokesman, who settle
+  the hostile settlement the player clears and become its settlers at its 400) is shared by its run with its actors
+  the owner's (Entry::spawned), as the synth boss job: the spokesman's alias is forced onto a friend's copy, and the
+  friend's own refugees are removed as the owner's come, so the friend's 400 (its reward, once) adds none of its own
+  (their collection can't be forced: the owner's refugees are the owner's settlers, copies in a friend's game). Started
+  by Preston's story event, it is never started again here (NOT_RESTARTED). Not seen in a game: whether a friend's 400
+  adds its removed refugees as settlers all the same is for the rig. The Castle's siege (MinDefendCastle) is no run
+  shared here: the session's host decides it as its settlement attacks (below, "Settlement attacks"); its starter and
+  its waves' helper run in each game for its own run.
   *What the jobs' story event sets.* A settlement job's script (`MinRecruitQuestScript` and those extending it)
   keeps in its `OnStoryScript` whether the settlement was the player's as the job began (`startsOwned`: the
   workbench in its `Workshop` alias is owned by the player's NPC). The handler does nothing else with it and no
@@ -1358,7 +1363,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   introsWatched= introsResent= introsSet= introsKept= introsCleared= introsReleased=`; the log says who gave the
   job, what this game held, and each clear with its reason. Not seen in a game.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
-  the Minutemen's refugees and the Castle's siege; High Ground's vertibird; To the Mattresses shows each game its own objective text (its
+  High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
   actor of a run shared before this rule (Lost Soul's captive) is shared from the moment it stands now too, as the
   Institute's synth is.
@@ -1489,7 +1494,11 @@ with the claims); the rig's opt-in `companions` step drives both games.
 How the game runs one (read off the scripts): WorkshopScript.DailyUpdate rolls an attack on a settlement its player
 owns; WorkshopParentScript.TriggerAttack sends the WorkshopEventAttack story event with the workbench, and the story
 manager starts one of the Workshop*Attack quests: thirteen in Fallout4.esm (raiders, gunners, super mutants, ferals,
-mirelurks, and the creature ones), Far Harbor's trappers, Automatron's four robot and rust-devil attacks and
+mirelurks, and the creature ones) and its two synth infiltrator attacks (WorkshopSynthInfiltrator01 and 02:
+WorkshopSynthAttackScript, which extends WorkshopAttackScript with the same stages and aliases; their 10 moves the
+settlement's infiltrator settlers, an alias filled by conditions, into their Synths collection and their 20 turns them
+hostile, so a mirror, defused before its 20, leaves them settlers and never removes them: they weren't made by its
+aliases), Far Harbor's trappers, Automatron's four robot and rust-devil attacks and
 Nuka-World's six on the raider outposts (the Minutemen's and the Brotherhood's), all WorkshopAttackScript and REScript
 with the same aliases and stages (read off their files, none overriding the script's start and done stages;
 AttackBook::ATTACKS names each by its file and ID there). Stage 10 starts a 24 game-hour timer; its end begins the attack
@@ -1552,19 +1561,51 @@ lacks the add-on: a roll (kRolled) whose quest the reader can't name goes with q
 later phase is dropped), since the answer needs only the workbench; a friend's game ignores a host's roll that names
 none. Not in this book: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
 branch, affinity), shared as radiants instead, the host's run alone (RadiantRules' Entry::attack, "The Minutemen's"
-under Spawns); the Castle's defence; and VRWorkshopShared_AttackQuest (a Creation Club VR workshop's wave: no
+under Spawns); the Castle's siege (below: the host's too, by its own steps); and VRWorkshopShared_AttackQuest (a Creation Club VR workshop's wave: no
 settlement, no WorkshopAttackScript, no story-manager event). The mirror's
 Attackers collection holds its own disabled actors, not the copies of the host's (CommonLibF4 doesn't expose a
 collection alias's contents), so its objective follows the host's game and copies near the workbench, not its own count. A friend alone
 at the settlement while the host is elsewhere sees no attackers: the host's game has them unloaded, so none are
 shared, and its run resolves as the game's off-screen attack does. `net status` has `attacks: hosting= live= mirrors=
 reported= answered= ownerChanges= asked= mirrorStarts= mirrorsEnded= ownDefused= ownStopped= timerPushes= closing= closedDown=
-leftovers= savedDefused=`, and the dev channel's
-`attacks` lists the attack quests running and what the host's game said. Tested in tests/AttackBookTests.cpp (the
+leftovers= savedDefused= siegesHeld= siegesEnded= siegesReleased= siegeTimers=`, and the dev channel's
+`attacks` lists the attack quests and sieges running and what the host's game said. Tested in tests/AttackBookTests.cpp (the
 rules), ServerAttackTests.cpp (against the server) and ProtocolTests.cpp; the rig's opt-in `attacks` step forces one on
 the host at Sanctuary by console (with the friend there, then away, its own Sanctuary's resources and caps unchanged), a
 friend's own roll there, and a friend's save made mid-mirror and loaded solo after leaving, and checks both games' logs,
 lists and stages. These messages came in protocol 66.
+
+The Castle's siege (AttackBook::SIEGES, MinDefendCastle: MinDefendCastleAttackScript and MinDefendCastleScript, read off
+the game's scripts) is the host's the same way, on a quest of another shape. The story or its starter
+(MinDefendCastleRadiantStarter) starts it long before its fight: its 10 makes its Defenders (created at runtime, made
+the Castle's settlers) and picks its attackers; its 70 is the player arriving, which starts a 2 game-hour timer (timer
+99, `startTimeOutAttack`) whose end sets 150 if 150 isn't done, and its 120 (defences built) sets 150 too. 150 is the
+fight: it completes objective 20, hides 10, shows 30 ("Defend the Castle") and begins the waves (squads from a holding
+cell that MinDefendCastle_Attackers fills, and the vertibird drops of its VertibirdAirDrop quests), which only run while
+the Castle is loaded. 200 is the waves dead (DoBattleEnd, 98% of them): it completes 30 and starts MinDefendCastlePost,
+whose scenes set 300 and 400 (the reward, MinRecruitQuestScript.FinishQuest), and 500 stops it. It never rolls damage.
+The host's game reports it as an attack (kReportSettlementAttack, no new message or field): rolled while the quest runs,
+underway at its 150, defended at its 200, over as it stops. A friend's game never starts the quest for the host's and
+never stops its own (its Defenders are the Castle's settlers): its own run, if it has one (the same point of the
+story), is held while the host's run is on or the host's game has said the Castle is the host's (that holds for the
+session, as a siege waits for its fight far longer than a word or a live run is kept, until the host's game says otherwise
+or leaves). Held: its 150 is marked
+done without its fragment (QuestStageLayout::MarkDone), so neither its timer nor its 120 begins its fight, and the
+host's waves, copies of the host's runtime actors, are the only ones. Objective 30 is shown while the host's fight is
+on with the friend's player and the host's attackers' copies at the Castle, hidden when either leaves. When the host's
+200 comes (defended, live or told over since), the friend's game completes 20 and hides 10 as 150 would have, and sets
+its own 200 with its fragment: its end stage, once, and from it its own Post scenes and its own 400 reward, once. A
+siege of its own that began before the host's word is left to run (never stopped mid-fight). A hold is let go (150
+cleared, and with its player arrived its timer started again, so its fight comes as the game's own) when the host's run
+ended undefended and the Castle isn't the host's, and at the session's end (at once, or once the world is back); before
+every save the mark is cleared (held again after), so no save holds it; and every load starts again the timer of a
+siege waiting at 70 (150 and 200 not done), since a hold may have let it go by (at most 2 game hours later than the
+game's own). So no player is left with a half-run siege. The VertibirdAirDrop quests are only ever started by the
+fight's phases: only the host's game flies them. Tested in tests/AttackBookTests.cpp (which quests count, the host's
+reports, the hold, the end once, the release); the rig's repro is tools/rig/repro/castle-siege.sh. Not seen in a game.
+Not in it yet, of the same shape: Far Harbor's trapper attack on a settlement Preston hands out
+(DLC03WorkshopRadiantOwned03: WorkshopAttackScript, start 130, done 200), each player's own (QuestFilter's PER_GAME)
+until its stages are read for RadiantRules' Entry::attack.
 
 ## Quest terminals (src/game/TerminalRules.h, TerminalSync.cpp)
 

@@ -44,8 +44,10 @@ TEST("attack book: the attacks are the game's and the add-ons' random settlement
 	for (const auto& attack : ATTACKS) {
 		CHECK(attack.quest != 0 && (attack.quest >> 24) == 0);
 		CHECK(attack.file == FALLOUT4 || attack.file == FAR_HARBOR || attack.file == AUTOMATRON || attack.file == NUKA_WORLD);
-		// Fallout4.esm's are Workshop*Attack*; an add-on's carry its prefix (DLC01, DLC03, DLC04) before the same.
-		CHECK(attack.editorId.find("Workshop") != std::string_view::npos && attack.editorId.find("Attack") != std::string_view::npos);
+		// Fallout4.esm's are Workshop*Attack* (or the synth infiltrators, WorkshopSynthAttackScript); an add-on's carry its
+		// prefix (DLC01, DLC03, DLC04) before the same.
+		CHECK(attack.editorId.find("Workshop") != std::string_view::npos &&
+		      (attack.editorId.find("Attack") != std::string_view::npos || attack.editorId.starts_with("WorkshopSynthInfiltrator")));
 		CHECK((attack.file == FALLOUT4) == attack.editorId.starts_with("Workshop"));
 		ids.insert({ attack.file, attack.quest });
 		++perFile[attack.file];
@@ -62,7 +64,7 @@ TEST("attack book: the attacks are the game's and the add-ons' random settlement
 		CHECK(Find(upper, attack.quest) == found);
 	}
 	CHECK(ids.size() == ATTACKS.size());
-	CHECK(perFile[FALLOUT4] == 13);
+	CHECK(perFile[FALLOUT4] == 15);
 	CHECK(perFile[FAR_HARBOR] == 1);
 	CHECK(perFile[AUTOMATRON] == 4);
 	CHECK(perFile[NUKA_WORLD] == 6);
@@ -81,6 +83,124 @@ TEST("attack book: the attacks are the game's and the add-ons' random settlement
 	CHECK(!Find(FALLOUT4, 0x000A1412));  // MinRadiantOwned01
 	CHECK(!Find(FALLOUT4, 0x000289E4));  // Followers
 	CHECK(!Find(FALLOUT4, 0x0024A38D));  // VRWorkshopShared_AttackQuest
+	// The synth infiltrators are attacks of the same shape (WorkshopSynthAttackScript extends WorkshopAttackScript).
+	CHECK(Find(FALLOUT4, 0x001357DA)->editorId == "WorkshopSynthInfiltrator01");
+	CHECK(Find(FALLOUT4, 0x001357DB)->editorId == "WorkshopSynthInfiltrator02");
+	// The Castle's siege is the host's too, but a siege: not one of the attacks (its stages and aliases are its own).
+	CHECK(!Find(FALLOUT4, 0x000BDB04));
+	CHECK(!Find(FALLOUT4, 0x00176328));  // MinDefendCastleRadiantStarter: starts the siege, decides nothing
+	CHECK(!Find(FALLOUT4, 0x0022FD6E));  // MinDefendCastle_Attackers: fills the host's waves in the host's game
+}
+
+TEST("attack book: the sieges are the Castle's, found by file and ID there, with its own stages and aliases")
+{
+	REQUIRE(SIEGES.size() == 1);
+	const auto castle = FindSiege(FALLOUT4, 0x000BDB04);
+	REQUIRE(castle);
+	CHECK(castle->editorId == "MinDefendCastle");
+	CHECK(FindSiege("FALLOUT4.ESM", 0x010BDB04) == castle);
+	CHECK(!FindSiege(FAR_HARBOR, 0x000BDB04));
+	CHECK(!FindSiege(FALLOUT4, RAIDERS));
+	// Its fight begins at 150 (the timer from its 70, or its 120), is won at 200; "Defend the Castle" is 30, its aliases
+	// the Castle's location (3) and its workbench (6).
+	CHECK(castle->arrivedStage == 70);
+	CHECK(castle->startStage == 150);
+	CHECK(castle->doneStage == 200);
+	CHECK(castle->arrivedStage < castle->startStage && castle->startStage < castle->doneStage);
+	CHECK(castle->objective == 30);
+	CHECK(castle->beforeObjective == 20);
+	CHECK(castle->goObjective == 10);
+	CHECK(castle->locationAlias == 3);
+	CHECK(castle->workshopAlias == 6);
+	CHECK(castle->script == "MinDefendCastleAttackScript");
+	CHECK(castle->timerFunction == "startTimeOutAttack");
+	// A siege is never one of the attacks too (one path decides each quest).
+	for (const auto& siege : SIEGES) {
+		CHECK(!Find(siege.file, siege.quest));
+	}
+}
+
+TEST("attack book: the host's game reports its siege as its attacks: rolled, underway at its fight, defended at its end, over as it stops")
+{
+	constexpr std::uint32_t CASTLE_QUEST = 0x000BDB04;
+	constexpr std::uint32_t CASTLE = 0x0009B1A6;
+	HostRuns host;
+	auto     reports = host.Look({ Running(CASTLE_QUEST, CASTLE) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kRolled);
+	CHECK(host.Look({ Running(CASTLE_QUEST, CASTLE) }).empty());
+	reports = host.Look({ Running(CASTLE_QUEST, CASTLE, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kUnderway);
+	reports = host.Look({ Running(CASTLE_QUEST, CASTLE, true, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kDefended);
+	// Its end stage told once: the host's runs on through its scenes and reward, and no word comes again.
+	CHECK(host.Look({ Running(CASTLE_QUEST, CASTLE, true, true) }).empty());
+	reports = host.Look({ Stopped(CASTLE_QUEST, true, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kOver);
+	CHECK(reports[0].outcome == Outcome::kDefended);
+}
+
+TEST("attack book: a friend's siege is held while the host decides it, and only the host's win sets its end, once")
+{
+	SiegeFacts facts{ .running = true, .hostRun = true, .hostPhase = Phase::kRolled, .hostOwns = true };
+	// The host's run is on: ours is held back before its fight can begin (the host's waves are the only ones).
+	CHECK(NextSiege(facts) == SiegeStep::kHold);
+	facts.held = facts.begun = true;
+	CHECK(NextSiege(facts) == SiegeStep::kNone);
+	// The host's fight is on: the objective shows only with our player and the host's attackers at the Castle.
+	facts.hostPhase = Phase::kUnderway;
+	CHECK(NextSiege(facts) == SiegeStep::kNone);
+	facts.loadedHere = true;
+	CHECK(NextSiege(facts) == SiegeStep::kNone);
+	facts.hostAttackersHere = true;
+	CHECK(NextSiege(facts) == SiegeStep::kShowObjective);
+	facts.objectiveShown = true;
+	CHECK(NextSiege(facts) == SiegeStep::kNone);
+	facts.loadedHere = false;
+	facts.hostAttackersHere = false;
+	CHECK(NextSiege(facts) == SiegeStep::kHideObjective);
+	facts.objectiveShown = false;
+	// The host's won: our end stage, then nothing more from here (our own scenes, our own reward).
+	facts.hostPhase = Phase::kDefended;
+	facts.hostDefended = true;
+	CHECK(NextSiege(facts) == SiegeStep::kEnd);
+	facts.done = true;
+	CHECK(NextSiege(facts) == SiegeStep::kNone);
+	facts.hostRun = false;
+	facts.hostPhase = Phase::kOver;
+	CHECK(NextSiege(facts) == SiegeStep::kNone);
+	// Won while ours wasn't held yet (our quest started late): held first, then ended.
+	SiegeFacts late{ .running = true, .hostRun = true, .hostPhase = Phase::kDefended, .hostDefended = true, .hostOwns = true };
+	CHECK(NextSiege(late) == SiegeStep::kHold);
+	late.held = late.begun = true;
+	CHECK(NextSiege(late) == SiegeStep::kEnd);
+	// Won and over by the time we look: the win still counts here.
+	SiegeFacts over{ .running = true, .begun = true, .held = true, .hostRun = false, .hostPhase = Phase::kOver, .hostDefended = true };
+	CHECK(NextSiege(over) == SiegeStep::kEnd);
+}
+
+TEST("attack book: a friend's own siege that began first, or one not the host's, is its own; a hold is let go when the host's word is gone")
+{
+	// Our fight began before the host's word: never stopped mid-fight, never ended from the host's.
+	SiegeFacts own{ .running = true, .begun = true, .hostRun = true, .hostPhase = Phase::kUnderway, .hostDefended = true, .hostOwns = true };
+	CHECK(NextSiege(own) == SiegeStep::kNone);
+	// Not the host's settlement and no host run: ours, untouched.
+	SiegeFacts mine{ .running = true };
+	CHECK(NextSiege(mine) == SiegeStep::kNone);
+	// The host owns the Castle with no run of theirs: ours waits for theirs (held), never fought twice.
+	mine.hostOwns = true;
+	CHECK(NextSiege(mine) == SiegeStep::kHold);
+	// Held, and the host's run ended unwon with the settlement no longer theirs (or the host gone): ours again, the
+	// objective hidden first.
+	SiegeFacts gone{ .running = true, .begun = true, .held = true, .hostRun = false, .hostPhase = Phase::kOver, .objectiveShown = true };
+	CHECK(NextSiege(gone) == SiegeStep::kHideObjective);
+	gone.objectiveShown = false;
+	CHECK(NextSiege(gone) == SiegeStep::kRelease);
+	// Not running: nothing.
+	CHECK(NextSiege(SiegeFacts{ .hostRun = true, .hostPhase = Phase::kDefended, .hostDefended = true }) == SiegeStep::kNone);
 }
 
 TEST("attack book: the host's game reports a run as it is rolled, begins, is defended and ends, each once")
