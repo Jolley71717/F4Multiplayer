@@ -40,4 +40,12 @@ namespace VirtualPad
 
 	// Whether the pad is plugged in (main.cpp asks the window's state only when it matters).
 	bool Plugged();
+
+	// The friend bot's aim (FriendBot.cpp): plugs the pad in and holds the right stick (x turns right, y looks up, -1..1)
+	// and the right trigger (0..1) for half a second, so the pad falls back to the middle if the bot's frames stop. A
+	// walkto in progress is stopped first. Main thread.
+	bool HoldAim(float a_rightX, float a_rightY, float a_rightTrigger);
+
+	// The friend bot lets go: everything back to the middle (the pad stays plugged in). Main thread.
+	void LetGoAim();
 }

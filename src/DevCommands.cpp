@@ -79,6 +79,7 @@
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
 #include "game/VirtualPad.h"
+#include "game/FriendBot.h"
 #include "game/WindowFocus.h"
 #include "game/WorkshopResources.h"
 #include "game/WorkshopSync.h"
@@ -5447,6 +5448,7 @@ namespace DevCommands
 			Entry{ "focus", Focus },
 			Entry{ "pad", VirtualPad::Command },
 			Entry{ "walkto", VirtualPad::WalkTo },
+			Entry{ "friendbot", FriendBot::Command },
 			Entry{ "mouse", Mouse },
 			Entry{ "click", Click },
 			Entry{ "mousedev", MouseDev },
@@ -5616,6 +5618,7 @@ namespace DevCommands
 		MenuClock::Frame();
 		MouseFrame();
 		VirtualPad::Frame();
+		FriendBot::Frame();
 		if (!turn.active) {
 			return;
 		}

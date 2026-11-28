@@ -39,6 +39,7 @@
 #include "MainThread.h"
 #include "Text.h"
 #include "game/EffectTasks.h"
+#include "game/FriendBot.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
@@ -260,6 +261,7 @@ namespace RemotePlayers
 		void Disable(Grave& a_grave, RE::TESObjectREFR* a_ref, Clock::time_point a_now)
 		{
 			Release(a_grave, a_ref);
+			FriendBot::BeforeRefGoes(a_ref);  // first: the disable frees its AI process, which the player's package may still name
 			EffectTasks::Retire(a_ref);  // the disable frees its effects with its AI process: a refresh queued for one is skipped (EffectTask.h)
 			a_ref->Disable();
 			a_grave.disabledAt = a_now;
