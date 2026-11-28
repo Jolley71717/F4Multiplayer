@@ -24,6 +24,9 @@
 #   containers  the host puts 7 stimpaks into the container it built and into the Toolbox the settlement came with, then the friend
 #               3 into its copy of each, then takes 2 out of each (dev count): both games hold the same in each. A built
 #               container is named by its piece's key (BuiltHolders): the friend's copy is another reference than the host's.
+#               Then the friend leaves the session and joins again, twice: their pockets gain none of the host's stimpaks as they
+#               leave, and the copy their game makes again holds the host's count within COPY_SETTLE s (15), nobody touching it.
+#               Run alone (no build phase, no ADOPT), the host first builds the container through the menu.
 # REPRO: YES when a piece never reached the friend, a standing piece has no copy or one at another spot, a scrapped or moved
 # piece's copy stands alive in the friend's game, or a container holds other loot in the two games; NO when none does; VOID when
 # a step could not be done (a ghost never green, a piece not highlighted, the friend not joining): never a pass.
@@ -318,6 +321,15 @@ for ph in $PHASES; do
 	containers)
 		IT=00023736   # a stimpak: aid is shared loot
 		_pick_pieces; PRE=000AE12F   # the Toolbox the settlement came with, in a Sanctuary house (not a piece anyone built)
+		if [ -z "$CONTAINER" ]; then
+			# run alone (no build phase before it, no ADOPT): the host builds one through the menu, as the build phase does
+			say "containers: no built container stands: the host builds one (real menu input, as the build phase)"
+			_in_ws host || { RESULTS="$RESULTS containers:void"; continue; }
+			dc host "pad unplug" >/dev/null; rwalk host $HOST_SPOT 60
+			_build containers container FURNITURE,CONTAINERS && { CONTAINER=$LAST; _remember "$CONTAINER"; }
+			ws_leave host
+			[ -n "$CONTAINER" ] || { RESULTS="$RESULTS containers:void"; continue; }
+		fi
 		CC=""; [ -n "$CONTAINER" ] && CC=$(ws_copy_of vm "$CONTAINER")
 		if [ -z "$CC" ]; then say "containers: the host's built container has no copy in the friend's game"; RESULTS="$RESULTS containers:void"; continue; fi
 		say "containers: console additem and the dev transfer (storage put) stand for the loot a player puts in (the menu's own transfer)"
@@ -340,7 +352,26 @@ for ph in $PHASES; do
 			say "containers: $what: the friend then took 2 from $f: the host's $h holds ${h2:-?}, the friend's holds ${f2:-?}"
 			[ $(( ${h2:-0} - ${h1:-0} )) = $(( ${f2:-0} - ${f1:-0} )) ] || fail "containers: the friend took 2 from its copy of the $what container (${f1:-?} to ${f2:-?}); the host's went ${h1:-?} to ${h2:-?}"
 		done
-		dc vm "net status" | grep -oE 'built=[^ ]+|builtBook=[^ ]+' | tr '\n' ' ' | while read -r l; do say "containers: the friend's built-container counts: $l"; done ;;
+		dc vm "net status" | grep -oE 'built=[^ ]+|builtBook=[^ ]+|builtCaughtUp=[^ ]+' | tr '\n' ' ' | while read -r l; do say "containers: the friend's built-container counts: $l"; done
+		# The friend leaves and joins again, twice: each join makes the copy again, which must show the host's count within
+		# COPY_SETTLE s with nobody touching the container (the session's changes at it are in the friend's book already: no
+		# replay brings them). Their pockets gain nothing as they leave: what the copy held was all the session's loot.
+		COPY_SETTLE=${COPY_SETTLE:-15}
+		_copy_shows() { CN=$(dc vm "count $CC $IT" | grep -oE '[0-9]+$'); [ "${CN:-x}" = "$HN" ]; }
+		for cycle in 1 2; do
+			HN=$(dc host "count $CONTAINER $IT" | grep -oE '[0-9]+$'); P0=$(dc vm "count 00000014 $IT" | grep -oE '[0-9]+$')
+			say "containers: rejoin $cycle: the host's $CONTAINER holds ${HN:-?}; the friend (pockets ${P0:-?}) leaves the session (the menu's Leave: net leave)"
+			ws_leave vm; dc vm "net leave" >/dev/null; sleep 6
+			P1=$(dc vm "count 00000014 $IT" | grep -oE '[0-9]+$')
+			say "containers: rejoin $cycle: the friend is $(field "$(dc vm 'net status')" status), pockets ${P1:-?}"
+			[ "${P1:-x}" = "${P0:-y}" ] || fail "containers: rejoin $cycle: the friend's pockets went ${P0:-?} to ${P1:-?} stimpaks as they left (the copy held only the session's loot)"
+			_rejoin_friend || { say "containers: rejoin $cycle: the friend did not join ($(dc vm 'net status' | grep -oE 'status=[a-z]+' | head -1))"; RESULTS="$RESULTS containers:void(join)"; break; }
+			if ! wait_for 30 _has_copy "$CONTAINER"; then fail "containers: rejoin $cycle: the host's $CONTAINER has no copy in the friend's game 30 s after the join"; break; fi
+			CC=$(ws_copy_of vm "$CONTAINER")
+			if wait_for "$COPY_SETTLE" _copy_shows; then say "containers: rejoin $cycle: the friend's new copy $CC holds ${CN:-?}, as the host's"
+			else fail "containers: rejoin $cycle: the friend's new copy $CC holds ${CN:-?} against the host's ${HN:-?}, $COPY_SETTLE s after it was made"; fi
+			dc vm "net status" | grep -oE 'builtBook=[^ ]+|builtCaughtUp=[^ ]+' | tr '\n' ' ' | while read -r l; do say "containers: rejoin $cycle: the friend's counts: $l"; done
+		done ;;
 	esac
 done
 ws_leave host; ws_leave vm

@@ -1974,8 +1974,11 @@ anywhere else.
   roll of loot to wait for.
 - *Every other game* keeps a book of each piece (`BuiltHolders::Book`): what the session put in and took out, in session
   order, clamped at nothing as `removeitem` is. A change goes into the book at once, never waiting, and into the copy if
-  one stands here (`WorkshopSync::LiveCopyOf`); a copy not here is brought to the book as its menu opens or with the next
-  change. A copy is brought on from what it was last shown, kept by the copy's own id, so what it holds that the book
+  one stands here (`WorkshopSync::LiveCopyOf`). Every half second in the world (`Loot::ShowCopies`, `builtCaughtUp=`)
+  each copy that stands here and shows other than the book is brought to it: one made again (a rejoin, the host's game
+  started again, a save loaded then a join, its cell loaded again: the session's changes at the piece are in the book
+  already, and no join replays them) or one that was away as a change came. Its menu opening and the next change bring
+  it on too. A copy is brought on from what it was last shown, kept by the copy's own id, so what it holds that the book
   can't explain (things put in before this, a stack a mod of ours alone makes) stays. One never shown holds none of
   the book (one just made, or one a save from before this kept, which held only the player's own) and is given all of
   it; only when the book is unsure (below) is what it holds of the book taken to be the book's. The player's own moves

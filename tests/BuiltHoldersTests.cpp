@@ -798,3 +798,143 @@ TEST("built holders: a save from before built containers were shared still gives
 	CHECK(p.friendGame.Carried(AMMO) == 3);
 	CHECK(p.friendGame.loot.Stats().builtUnknown == 0);
 }
+
+// ---- a copy made again: shown the book with nobody touching the piece ----------------------------------------------------
+// (The rig, 2026-11-28: the friend left and joined again, and their game's new copy of the host's crate held nothing against
+// the host's 7 until the host put another in. The session's changes at the piece were in the friend's book already, so the
+// join replayed none of them, and nothing showed the book to the new copy.)
+
+TEST("built holders: a copy made again on a rejoin shows what the piece holds, though nobody changes it after")
+{
+	for (const bool madeBeforeTheJoin : { false, true }) {
+		Pair p;
+		p.host.Put(p.f, PIECE, STIM, 7);
+		p.Settle();
+		REQUIRE(p.friendGame.In(COPY, STIM) == 7);
+
+		// The friend leaves: the session's end takes the copy, and only the friend's own things come to them.
+		p.friendGame.Disconnect(p.f);
+		p.friendGame.RemoveCopy(COPY);
+		CHECK(p.friendGame.Carried(STIM) == 10);
+
+		// The friend joins again (the same session: its changes are in the book already, none come again). Their game makes
+		// its copy again, before the join's world state or after it.
+		if (madeBeforeTheJoin) {
+			p.friendGame.MakeCopy(COPY_AGAIN, { p.hostId, PIECE });
+		}
+		p.friendGame.Join(p.f, "Friend");
+		p.Settle();
+		if (!madeBeforeTheJoin) {
+			p.friendGame.MakeCopy(COPY_AGAIN, { p.hostId, PIECE });
+			p.Settle();
+		}
+		CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 7);
+		CHECK(p.friendGame.loot.Stats().builtCaughtUp == 1);
+
+		// Brought on once: the next change moves it by that change alone, and its going hands the friend none of the host's.
+		p.host.Put(p.f, PIECE, STIM, 1);
+		p.Settle();
+		CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 8);
+		CHECK(p.host.In(PIECE, STIM) == 8);
+		p.friendGame.Disconnect(p.f);
+		p.friendGame.RemoveCopy(COPY_AGAIN);
+		CHECK(p.friendGame.Carried(STIM) == 10);
+	}
+}
+
+TEST("built holders: a joiner's copy shows the host's count whether it is made before the replay comes or after")
+{
+	for (const bool madeBeforeTheReplay : { false, true }) {
+		Pair p;
+		p.host.Put(p.f, PIECE, STIM, 7);
+		p.friendGame.Put(p.f, COPY, STIM, 3);
+		p.Settle();
+		REQUIRE(p.host.In(PIECE, STIM) == 10);
+
+		Game joiner{ 3, 0xCA201 };
+		joiner.holderFacts[COPY] = { .kind = LootScope::Holder::kContainer, .storage = true };
+		if (madeBeforeTheReplay) {
+			joiner.MakeCopy(COPY, { p.hostId, PIECE });
+		}
+		joiner.Join(p.f, "Joiner");
+		joiner.Receive(p.f);
+		REQUIRE((joiner.loot.Built().Of({ p.hostId, PIECE }) == BuiltHolders::Book::Items{ { STIM, 10 } }));
+		if (!madeBeforeTheReplay) {
+			joiner.MakeCopy(COPY, { p.hostId, PIECE });
+			joiner.Receive(p.f);
+		}
+		CHECK(joiner.In(COPY, STIM) == 10);
+		joiner.Receive(p.f);
+		CHECK(joiner.In(COPY, STIM) == 10);  // shown once, not again
+	}
+}
+
+TEST("built holders: a friend who loads a save out of the session and joins again sees the host's count in the copy made again")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 5);
+	p.Settle();
+	const auto save = p.friendGame.SaveGame(p.f);
+	p.friendGame.Disconnect(p.f);
+	p.friendGame.RemoveCopy(COPY);
+	p.host.Put(p.f, PIECE, STIM, 2);  // while the friend is away
+	p.host.Receive(p.f);
+
+	// The game started again on that save; its cell loads out of the session and the copy the save kept goes.
+	p.friendGame.Restart(save);
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 10);
+	p.friendGame.Join(p.f, "Friend");
+	p.Settle();
+	p.friendGame.MakeCopy(COPY_AGAIN, { p.hostId, PIECE });
+	p.Settle();
+	CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 7);
+	CHECK(p.host.In(PIECE, STIM) == 7);
+}
+
+TEST("built holders: a copy away as the piece changes shows the change once it is back, its menu never opened")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	REQUIRE(p.friendGame.In(COPY, STIM) == 6);
+
+	// Its cell unloads, the host takes some; it loads again.
+	p.friendGame.away.insert(COPY);
+	p.host.Take(p.f, PIECE, STIM, 2);
+	p.Settle();
+	CHECK(p.friendGame.In(COPY, STIM) == 6);  // not here: it can't be changed
+	p.friendGame.away.erase(COPY);
+	p.Settle();
+	CHECK(p.friendGame.In(COPY, STIM) == 4);
+
+	// Away again while the host takes the rest (the book has nothing of the piece then): back, it holds none of it.
+	p.friendGame.away.insert(COPY);
+	p.host.Take(p.f, PIECE, STIM, 4);
+	p.Settle();
+	REQUIRE(p.friendGame.loot.Built().Of({ p.hostId, PIECE }).empty());
+	p.friendGame.away.erase(COPY);
+	p.Settle();
+	CHECK(p.friendGame.In(COPY, STIM) == 0);
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 10);
+}
+
+TEST("built holders: the book says which copies are behind it, a copy found anew only while the book holds anything of its piece")
+{
+	BuiltHolders::Book book;
+	const BuiltHolders::Key key{ 1, PIECE };
+	CHECK(!book.Behind(key, COPY));  // nothing to show
+	book.Apply(key, STIM, 4);
+	CHECK(book.Behind(key, COPY));  // found anew: none of the book in it
+	CHECK((book.Keys() == std::vector<BuiltHolders::Key>{ key }));
+	CHECK((book.Show(key, COPY, {}) == BuiltHolders::Book::Deltas{ { STIM, 4 } }));
+	CHECK(!book.Behind(key, COPY));
+	book.Apply(key, STIM, -4);  // the piece emptied while the copy shows 4
+	CHECK(book.Pieces() == 0);
+	CHECK(book.Behind(key, COPY));
+	CHECK((book.Keys() == std::vector<BuiltHolders::Key>{ key }));  // known by the copy that still shows it
+	CHECK((book.Show(key, COPY, { { STIM, 4 } }) == BuiltHolders::Book::Deltas{ { STIM, -4 } }));
+	CHECK(!book.Behind(key, COPY));
+	CHECK(book.Keys().empty());
+}

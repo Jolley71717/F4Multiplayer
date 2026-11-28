@@ -227,6 +227,39 @@ namespace BuiltHolders
 			return it != book.end() ? it->second : none;
 		}
 
+		// Whether our copy a_local of a_key's piece shows other than the book (Show would move something): one found anew
+		// (made again: a join, a load, a cell loaded, a move to another cell) while the book holds anything of the piece, or
+		// one that wasn't here as a change came (CopyOf none) and was never shown it since.
+		[[nodiscard]] bool Behind(const Key& a_key, std::uint32_t a_local) const
+		{
+			const auto& want = Of(a_key);
+			const auto  it = shown.find(a_local);
+			if (it == shown.end() || it->second.key != a_key) {
+				return !want.empty();
+			}
+			return it->second.items != want;
+		}
+
+		// Every piece the book holds anything of, or that a copy of ours shows anything of (the book's count gone to none
+		// while that copy wasn't here): each one whose copy may be behind.
+		[[nodiscard]] std::vector<Key> Keys() const
+		{
+			std::vector<Key> out;
+			out.reserve(book.size() + shown.size());
+			for (const auto& [key, items] : book) {
+				out.push_back(key);
+			}
+			for (const auto& [local, copy] : shown) {
+				if (!copy.items.empty() && !book.contains(copy.key)) {
+					out.push_back(copy.key);
+				}
+			}
+			std::ranges::sort(out);
+			const auto [first, last] = std::ranges::unique(out);
+			out.erase(first, last);
+			return out;
+		}
+
 		[[nodiscard]] std::size_t Pieces() const { return book.size(); }
 		[[nodiscard]] std::size_t Copies() const { return shown.size(); }
 		[[nodiscard]] bool        Unsure() const { return unsure; }

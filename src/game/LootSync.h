@@ -187,6 +187,7 @@ namespace LootSync
 			std::uint32_t builtRefused = 0;    // the player's moves at those the session didn't number (refused, or unsent): undone
 			std::uint32_t builtRefusedOld = 0; // ...answered for a move not made in the world we have now (a load since): left
 			std::uint32_t builtStale = 0;      // other players' changes at a piece of ours numbered before its emptying: left out
+			std::uint32_t builtCaughtUp = 0;   // copies brought to the book as they were found behind it (ShowCopies: made again)
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -580,6 +581,29 @@ namespace LootSync
 		}
 
 		// ---- containers players built (BuiltHolders) -------------------------------------------------
+
+		// Our copies of the pieces others built, each brought to the book where it shows other than it. A copy WorkshopSync
+		// made again holds none of the book until shown it: after a rejoin or the host's game started again (the session's
+		// changes at its piece are in our book already, and come no more), a save loaded and then a join, its cell loaded
+		// again. One that wasn't here as a change came lacks that change. Both are shown at the piece's next change (ToCopy)
+		// or as the copy's menu opens (Opened), but may see neither for as long as nobody touches the piece. Run every little
+		// while in the world (WorldSync), and only in a session: out of one our copies keep what they show, to come out as
+		// they go (CopyGoing). Returns how many copies were brought on.
+		std::size_t ShowCopies(World& a_world)
+		{
+			if (live == 0 || liveId == 0) {
+				return 0;
+			}
+			std::size_t brought = 0;
+			for (const auto& key : book.Keys()) {
+				if (const auto local = a_world.CopyOf(key); local != 0 && book.Behind(key, local)) {
+					Show(key, local, a_world);
+					++brought;
+				}
+			}
+			counts.builtCaughtUp += static_cast<std::uint32_t>(brought);
+			return brought;
+		}
 
 		struct Going
 		{

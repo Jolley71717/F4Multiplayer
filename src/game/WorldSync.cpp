@@ -274,6 +274,9 @@ namespace WorldSync
 		LootSync::Loot    loot;
 		bool              lootFullWarned = false;
 		Clock::time_point lootAgedAt{};  // when the wait for living NPCs was last counted (see AgeLoot)
+		// When our copies of containers others built were last brought to the book (LootSync's ShowCopies), every COPIES_SHOWN.
+		Clock::time_point copiesShownAt{};
+		constexpr auto    COPIES_SHOWN = std::chrono::milliseconds(500);
 
 		// Vendors' chests (each faction's merchant container): trading stays in each player's game.
 		std::unordered_set<std::uint32_t> vendorChests;
@@ -3580,6 +3583,14 @@ namespace WorldSync
 			retryUsMax = (std::max)(retryUsMax, retryUs);
 		}
 		AgeLoot(now, inWorld);
+		// A copy of a container another player built that our game made again (a rejoin, a load, its cell loaded again) holds
+		// none of the session's loot in its piece until shown it, nor one that was away as a change came (LootSync's ShowCopies).
+		if (inWorld && now - copiesShownAt >= COPIES_SHOWN) {
+			copiesShownAt = now;
+			if (const auto brought = loot.ShowCopies(engine)) {
+				REX::INFO("WorldSync: {} copies of containers other players built shown what the session put in them (made again, or away as it changed)", brought);
+			}
+		}
 	}
 
 	void ReportBenchMove(std::uint32_t a_bench, std::uint32_t a_item, std::int32_t a_count)
@@ -3798,7 +3809,7 @@ namespace WorldSync
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
 		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft) +
-		       std::format(" built={}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{} builtBook={}/{}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
-			   stats.builtRescued, stats.builtUnknown, stats.builtRefused, stats.builtRefusedOld, stats.builtStale, loot.Built().Pieces(), loot.Built().Copies());
+		       std::format(" built={}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{} builtBook={}/{} builtCaughtUp={}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
+			   stats.builtRescued, stats.builtUnknown, stats.builtRefused, stats.builtRefusedOld, stats.builtStale, loot.Built().Pieces(), loot.Built().Copies(), stats.builtCaughtUp);
 	}
 }

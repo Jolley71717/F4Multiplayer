@@ -277,6 +277,7 @@ namespace LootTest
 				++requests;
 			}
 			loot.Retry(*this, APPLY_INTERVAL);
+			loot.ShowCopies(*this);  // our copies of built containers, made again or back, shown the book (every COPIES_SHOWN)
 			if (connected) {
 				storage.Frame();
 				storage.RetryCaughtUp(loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0);
@@ -749,9 +750,9 @@ namespace LootTest
 
 		std::uint32_t CopyOf(const BuiltHolders::Key& a_key) override
 		{
-			for (const auto& [local, key] : built) {
-				if (key == a_key && key.builder != 0 && !away.contains(local)) {
-					return local;
+			for (const auto& [ref, key] : built) {
+				if (key == a_key && key.builder != 0 && !away.contains(ref)) {
+					return ref;
 				}
 			}
 			return 0;
