@@ -444,6 +444,7 @@ namespace Session
 				NoteSkips(result, FormTranslate::Way::kToSession, a_packet);
 				if (result.kind == FormTranslate::Result::Kind::kDropped) {
 					Storage::Unsent(a_packet);  // a move of ours at a friend's storage that can't go is undone
+					WorldSync::Unsent(a_packet);  // ...and one at a container a player built
 					return;
 				}
 				if (result.kind == FormTranslate::Result::Kind::kChanged) {
@@ -693,7 +694,11 @@ namespace Session
 				break;
 			case MessageType::kStorageRefused:
 				if (const auto msg = Protocol::DecodeStorageRefusal(a_data)) {
-					Storage::OnRefused(*msg);
+					if (Protocol::IsBuiltHolderRef(msg->container) && msg->builder != 0) {
+						WorldSync::OnBuiltRefused(*msg);  // a move at a container a player built: undone in its book or its piece
+					} else {
+						Storage::OnRefused(*msg);
+					}
 				}
 				break;
 			case MessageType::kStorageCaughtUp:

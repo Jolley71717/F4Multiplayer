@@ -39,6 +39,7 @@
 #include "game/RackDisplays.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/ResyncRecord.h"
 #include "game/Papyrus.h"
 #include "game/Party.h"
 #include "game/ScriptDoors.h"
@@ -1556,6 +1557,9 @@ namespace WorldSync
 
 			std::uint32_t CopyOf(const BuiltHolders::Key& a_key) override { return WorkshopSync::LiveCopyOf(a_key.builder, a_key.ref); }
 
+			// A refused move of ours at one of those undone (LootSync's BuiltRefused): Storage changes our player, unreported.
+			std::int64_t ChangePlayer(const StorageView::PlayerChange& a_change) override { return Storage::UndoOnPlayer(a_change); }
+
 			std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
 			{
 				std::vector<LootSync::Stack> stacks;
@@ -2880,7 +2884,8 @@ namespace WorldSync
 		}
 
 		constexpr std::uint32_t RESYNC_RECORD = 'CONT';
-		constexpr std::uint32_t RESYNC_VERSION = 2;  // 2: built holders (each waiting change's builder, and BuiltHolders::Book)
+		// The most a session record is read from: far above any real one (each waiting change is 20 bytes).
+		constexpr std::uint32_t RESYNC_MAX_LENGTH = 64u << 20;
 	}
 
 	bool InWorld()
@@ -3599,6 +3604,34 @@ namespace WorldSync
 		return going.known;
 	}
 
+	namespace
+	{
+		// A move of ours at a container a player built that the session never numbered, undone (LootSync's BuiltRefused).
+		void BuiltUndo(const Protocol::ContainerChange& a_move, std::string_view a_why)
+		{
+			if (loot.BuiltRefused(a_move, engine)) {
+				REX::INFO("WorldSync: our move at built container {:08X} ({} of {:08X}, builder {:08X}) {}: undone", a_move.container, a_move.count, a_move.item, a_move.builder, a_why);
+			}
+		}
+	}
+
+	void OnBuiltRefused(const Protocol::StorageRefusal& a_refusal)
+	{
+		MainThread::Assert("WorldSync::OnBuiltRefused");
+		BuiltUndo({ a_refusal.container, a_refusal.item, a_refusal.count, a_refusal.builder }, "was refused");
+	}
+
+	void Unsent(std::span<const std::uint8_t> a_packet)
+	{
+		if (a_packet.empty() || a_packet[0] != static_cast<std::uint8_t>(Protocol::MessageType::kReportContainer)) {
+			return;
+		}
+		if (const auto change = Protocol::DecodeContainerChange(a_packet); change && Protocol::IsBuiltHolder(*change)) {
+			MainThread::Assert("WorldSync::Unsent");
+			BuiltUndo(*change, "couldn't be sent (the session can't name its item)");
+		}
+	}
+
 	void FlushLoot()
 	{
 		MainThread::Assert("WorldSync::FlushLoot");
@@ -3702,77 +3735,37 @@ namespace WorldSync
 		if (point.sessionId == 0 && loot.Built().Empty()) {
 			return;
 		}
-		const auto& waiting = loot.Waiting();
-		const auto  count = static_cast<std::uint32_t>(waiting.size());
-		if (!a_intfc->OpenRecord(RESYNC_RECORD, RESYNC_VERSION) ||
-			!a_intfc->WriteRecordData(point.sessionId) || !a_intfc->WriteRecordData(point.containerFrom) || !a_intfc->WriteRecordData(count)) {
+		// Version 1 while nothing in it needs 2 (ResyncRecord.h): a save from this build still loads in one from before.
+		const auto version = ResyncRecord::VersionFor(loot.Waiting(), loot.Built());
+		const auto bytes = ResyncRecord::Encode(point, loot.Waiting(), loot.Built(), version);
+		if (!a_intfc->OpenRecord(RESYNC_RECORD, version) || !a_intfc->WriteRecordData(bytes.data(), static_cast<std::uint32_t>(bytes.size()))) {
 			REX::ERROR("WorldSync: failed to save the session record");
-			return;
-		}
-		for (const auto& entry : waiting) {
-			a_intfc->WriteRecordData(entry.index);
-			a_intfc->WriteRecordData(entry.change.container);
-			a_intfc->WriteRecordData(entry.change.item);
-			a_intfc->WriteRecordData(entry.change.count);
-			a_intfc->WriteRecordData(entry.change.builder);  // version 2: a built holder's builder (0: a plugin's reference)
-		}
-		// Version 2: the book of the containers others built (BuiltHolders::Book), its length first.
-		const auto book = loot.Built().Record();
-		a_intfc->WriteRecordData(static_cast<std::uint32_t>(book.size()));
-		for (const auto value : book) {
-			a_intfc->WriteRecordData(value);
 		}
 	}
 
 	void LoadResyncPoint(const F4SE::SerializationInterface* a_intfc, std::uint32_t a_version, std::uint32_t a_length)
 	{
 		RevertResyncPoint();
-		std::uint64_t savedSession = 0;
-		std::uint32_t savedNext = 0;
-		std::uint32_t count = 0;
-		constexpr std::uint32_t HEADER = sizeof(savedSession) + sizeof(savedNext) + sizeof(count);
-		// Version 1 (before built holders): each waiting change's index, container, item and count, and no book.
-		const bool built = a_version >= RESYNC_VERSION;
-		const std::uint32_t ENTRY = (built ? 5u : 4u) * static_cast<std::uint32_t>(sizeof(std::uint32_t));
-		if ((a_version != RESYNC_VERSION && a_version != 1) || a_length < HEADER ||
-			a_intfc->ReadRecordData(savedSession) != sizeof(savedSession) ||
-			a_intfc->ReadRecordData(savedNext) != sizeof(savedNext) ||
-			a_intfc->ReadRecordData(count) != sizeof(count) || count > (a_length - HEADER) / ENTRY) {
-			REX::WARN("WorldSync: ignoring an unreadable session record");
+		std::optional<ResyncRecord::Record> record;
+		if (a_length <= RESYNC_MAX_LENGTH) {
+			std::vector<std::uint8_t> bytes(a_length);
+			if (a_intfc->ReadRecordData(bytes.data(), a_length) == a_length) {
+				record = ResyncRecord::Decode(a_version, bytes);
+			}
+		}
+		if (!record) {
+			REX::WARN("WorldSync: ignoring an unreadable session record (version {}, {} bytes)", a_version, a_length);
 			loot.BuiltUnsure();  // our copies of built containers may hold the session's loot: none of it is our player's
 			return;
 		}
-		std::vector<LootSync::Pending> saved;
-		for (std::uint32_t i = 0; i < count; ++i) {
-			LootSync::Pending entry{};
-			a_intfc->ReadRecordData(entry.index);
-			a_intfc->ReadRecordData(entry.change.container);
-			a_intfc->ReadRecordData(entry.change.item);
-			a_intfc->ReadRecordData(entry.change.count);
-			if (built) {
-				a_intfc->ReadRecordData(entry.change.builder);
-			}
-			saved.push_back(entry);
+		if (!record->bookRead) {
+			REX::WARN("WorldSync: the session record's book of built containers doesn't read; copies of them show what the session puts in from now on, and give nothing to our player as they go");
 		}
-		BuiltHolders::Book book;
-		if (built) {
-			std::uint32_t length = 0;
-			const auto    left = a_length - HEADER - count * ENTRY;
-			std::vector<std::uint32_t> record;
-			if (left >= sizeof(length) && a_intfc->ReadRecordData(length) == sizeof(length) && length <= (left - sizeof(length)) / sizeof(std::uint32_t)) {
-				record.resize(length);
-				for (auto& value : record) {
-					a_intfc->ReadRecordData(value);
-				}
-			}
-			if (!book.Load(record)) {
-				REX::WARN("WorldSync: the session record's book of built containers doesn't read; copies of them show what the session puts in from now on, and give nothing to our player as they go");
-			}
-		}
-		const auto waiting = saved.size();
-		const auto pieces = book.Pieces();
-		loot.LoadRecord(savedSession, savedNext, std::move(saved), std::move(book));
-		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting, {} built containers in the book)", savedSession, savedNext, waiting, pieces);
+		const auto waiting = record->waiting.size();
+		const auto pieces = record->book.Pieces();
+		loot.LoadRecord(record->session, record->next, std::move(record->waiting), std::move(record->book));
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting, {} built containers in the book, version {})", record->session, record->next, waiting,
+			pieces, a_version);
 	}
 
 	void RevertResyncPoint()
@@ -3805,7 +3798,7 @@ namespace WorldSync
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
 		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft) +
-		       std::format(" built={}/{}/{}/{}/{}/{}/{}/{} builtBook={}/{}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
-			   stats.builtRescued, stats.builtUnknown, loot.Built().Pieces(), loot.Built().Copies());
+		       std::format(" built={}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{} builtBook={}/{}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
+			   stats.builtRescued, stats.builtUnknown, stats.builtRefused, stats.builtRefusedOld, stats.builtStale, loot.Built().Pieces(), loot.Built().Copies());
 	}
 }

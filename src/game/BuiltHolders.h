@@ -76,8 +76,9 @@ namespace BuiltHolders
 	// it would hold it had it stood all along: a take of more than is there takes what is (as removeitem does). And what
 	// each copy of ours was last brought to (shown), by the copy's own reference ID: it is brought on from that, so what our
 	// copy holds that the book can't explain (an item put in before the session shared these, a stack only a mod of ours
-	// makes) stays. A copy newly found is taken to show what it holds of the book already (as much as both have): one just
-	// made holds nothing and is given it all.
+	// makes) stays. A copy newly found holds nothing of the book, and is given it all: one just made holds nothing, and one
+	// a save from before built containers were shared kept (a version 1 record: no book) holds only our player's own
+	// things. Only while the book is unsure is one taken to show what it holds of the book already (as much as both have).
 	//
 	// What a copy shows is the share of the piece's loot that is in the piece itself, in its builder's world: when the copy
 	// goes, that comes out of it first (Going), and only the rest is our player's. So it is kept per copy, not per piece (a
@@ -102,52 +103,66 @@ namespace BuiltHolders
 			bool  known = true;  // false: the book can't say (unsure, and nothing kept of this copy): none of it is ours
 		};
 
-		// A change the session numbered at the piece (another player's, or ours as we made it: Own).
-		void Apply(const Key& a_key, std::uint32_t a_item, std::int64_t a_count)
+		// A change the session numbered at the piece (another player's, or ours as we made it: Own). Returns what the book's
+		// count of the item moved by (a take of more than it has moves it by what it had).
+		std::int64_t Apply(const Key& a_key, std::uint32_t a_item, std::int64_t a_count)
 		{
 			auto it = book.find(a_key);
 			if (it == book.end()) {
 				if (a_count <= 0 || book.size() >= MAX_PIECES) {
-					return;
+					return 0;
 				}
 				it = book.emplace(a_key, Items{}).first;
 			}
 			auto&      items = it->second;
 			const auto have = items.find(a_item);
 			if (have == items.end() && (a_count <= 0 || items.size() >= MAX_ITEMS)) {
-				return;
+				return 0;
 			}
-			auto& count = items[a_item];
+			auto&      count = items[a_item];
+			const auto before = count;
 			count = (std::max)(std::int64_t{ 0 }, count + a_count);
+			const auto moved = count - before;
 			if (count == 0) {
 				items.erase(a_item);
 			}
 			if (items.empty()) {
 				book.erase(it);
 			}
+			return moved;
 		}
+
+		// What our player's own move did (Own), for its undoing should the session not number it (LootSync's BuiltRefused).
+		struct Moved
+		{
+			std::int64_t book = 0;   // the piece's count of the item in the book
+			std::int64_t shown = 0;  // what our copy shows of it: the session's share of the move
+		};
 
 		// The piece was emptied (scrapped: the server's CONTAINER_EMPTIED): a new piece under its key holds nothing of it. What
 		// our copies show stays theirs: brought to the book (Show) they give it up, and one that goes first gives it up then.
 		void Forget(const Key& a_key) { book.erase(a_key); }
 
 		// Our player's own move at our copy a_local (already made there, so a_have is what it holds of the item now).
-		void Own(const Key& a_key, std::uint32_t a_local, std::uint32_t a_item, std::int64_t a_count, std::int64_t a_have)
+		Moved Own(const Key& a_key, std::uint32_t a_local, std::uint32_t a_item, std::int64_t a_count, std::int64_t a_have)
 		{
-			Apply(a_key, a_item, a_count);
-			auto it = shown.find(a_local);
+			Moved out{ Apply(a_key, a_item, a_count), 0 };
+			auto  it = shown.find(a_local);
 			if (it == shown.end() || it->second.key != a_key) {
 				// Never shown: it holds nothing of the book but this move. Its next Show gives it the rest.
 				if (!Track(a_local, a_key)) {
-					return;
+					return out;
 				}
 				it = shown.find(a_local);
 			}
-			auto& count = it->second.items[a_item];
+			auto&      count = it->second.items[a_item];
+			const auto before = count;
 			count = (std::max)(std::int64_t{ 0 }, (std::min)(count + a_count, a_have));
+			out.shown = count - before;
 			if (count == 0) {
 				it->second.items.erase(a_item);
 			}
+			return out;
 		}
 
 		// What to put into (> 0) or take out of (< 0) our copy a_local of the piece for it to show the book, a_have being what
@@ -158,11 +173,12 @@ namespace BuiltHolders
 			const auto& want = Of(a_key);
 			auto        it = shown.find(a_local);
 			if (it == shown.end() || it->second.key != a_key) {
-				// Found anew: it shows what it holds of the book already.
+				// Found anew: none of the book is in it (Book), unless the book is unsure, which can't tell a copy that holds
+				// some of it already from one that doesn't: it is taken to show what it holds of the book then.
 				Items fresh;
 				for (const auto& [item, count] : a_have) {
 					const auto wanted = want.find(item);
-					if (const auto both = wanted != want.end() ? (std::min)(count, wanted->second) : 0; both > 0) {
+					if (const auto both = unsure && wanted != want.end() ? (std::min)(count, wanted->second) : 0; both > 0) {
 						fresh[item] = both;
 					}
 				}

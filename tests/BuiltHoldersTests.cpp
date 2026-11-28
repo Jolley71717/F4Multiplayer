@@ -50,6 +50,31 @@ namespace
 		return Decoded(a_packets, MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
 	}
 
+	std::vector<Protocol::StorageRefusal> Refusals(const std::vector<std::vector<std::uint8_t>>& a_packets)
+	{
+		return Decoded(a_packets, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	}
+
+	// A save whose session record holds a_bytes, read as WorldSync's LoadResyncPoint reads it (ResyncRecord::Decode): one
+	// that doesn't read is no record at all, and our copies of built containers are unsure.
+	Game::Save Reread(Game::Save a_save, std::uint32_t a_version, std::span<const std::uint8_t> a_bytes)
+	{
+		auto record = ResyncRecord::Decode(a_version, a_bytes);
+		if (!record) {
+			a_save.point = {};
+			a_save.waiting.clear();
+			a_save.book = {};
+			a_save.book.MarkUnsure();
+			return a_save;
+		}
+		a_save.point.sessionId = record->session;
+		a_save.point.containerFrom = record->next;
+		a_save.waiting = std::move(record->waiting);
+		a_save.book = std::move(record->book);
+		a_save.version = a_version;
+		return a_save;
+	}
+
 	// The host has built a crate, both games are in the session, and the friend's game has its copy.
 	struct Pair
 	{
@@ -57,7 +82,8 @@ namespace
 		Game          host{ 1, 0xA11CE }, friendGame{ 2, 0xB0B };
 		std::uint32_t hostId = 0;
 
-		Pair()
+		explicit Pair(Server::Options a_options = {}) :
+			f{ a_options }
 		{
 			for (auto* game : { &host, &friendGame }) {
 				game->holderFacts[PIECE] = game->holderFacts[COPY] = game->holderFacts[COPY_AGAIN] = { .kind = LootScope::Holder::kContainer, .storage = true };
@@ -163,12 +189,21 @@ TEST("built holders: the book takes no more than a piece holds, and a new copy i
 	CHECK(saved.Of(key) == book.Of(key));
 	CHECK((saved.Show(key, COPY, { { STIM, 4 }, { AMMO, 30 }, { 0x1234, 1 } }).empty()));  // the save's copy holds it already
 
-	// A copy never shown (another ID) holding less than the book is given the rest; what the book can't explain stays.
+	// A copy never shown (another ID: one a save from before built containers were shared kept) holds only our player's
+	// own: it is given all of the book, and what it held stays theirs.
 	BuiltHolders::Book other;
 	REQUIRE(other.Load(book.Record()));
 	const auto deltas = other.Show(key, COPY_AGAIN, { { STIM, 1 } });
 	using Delta = std::pair<std::uint32_t, std::int64_t>;
-	CHECK((deltas == BuiltHolders::Book::Deltas{ Delta{ AMMO, 30 }, Delta{ STIM, 3 } }));
+	CHECK((deltas == BuiltHolders::Book::Deltas{ Delta{ AMMO, 30 }, Delta{ STIM, 4 } }));
+	CHECK((other.Going(COPY_AGAIN).items == BuiltHolders::Book::Items{ { AMMO, 30 }, { STIM, 4 } }));  // the one of its own stays
+
+	// Unsure (a record that didn't read), the book can't tell a copy holding some of it already: what it holds of the book
+	// is taken to be the book's, so nothing is given twice.
+	BuiltHolders::Book unsure;
+	REQUIRE(unsure.Load(book.Record()));
+	unsure.MarkUnsure();
+	CHECK((unsure.Show(key, COPY_AGAIN, { { STIM, 1 } }) == BuiltHolders::Book::Deltas{ Delta{ AMMO, 30 }, Delta{ STIM, 3 } }));
 
 	CHECK((!saved.Load({ 1, 2 })));  // cut short
 	CHECK(saved.Pieces() == 0);
@@ -212,9 +247,13 @@ TEST("built holders: the server numbers a move at a built crate, names it to eac
 	CHECK(back[0].playerId == friendId);
 	CHECK((back[0].change == Protocol::ContainerChange{ PIECE, STIM, -2, host }));
 
-	// A piece the session doesn't know is nobody's to change.
+	// A piece the session doesn't know is nobody's to change: refused, as the friend named it, so their game undoes it.
+	Clear(f, { 2 });
 	f.fake->Deliver(2, Protocol::Encode(Protocol::ContainerChange{ 0xFF000777, STIM, 1, host }, MT::kReportContainer));
 	CHECK(Changes(Received(f, 1)).empty());
+	const auto refused = Refusals(Received(f, 2));
+	REQUIRE(refused.size() == 1);
+	CHECK((refused[0] == Protocol::StorageRefusal{ 0xFF000777, STIM, 1, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed, host }));
 
 	JoinAs(f, 3, "Joiner");
 	std::vector<Protocol::IndexedContainerChange> replayed;
@@ -233,6 +272,28 @@ TEST("built holders: the server numbers a move at a built crate, names it to eac
 	CHECK(emptied[0].change.item == Protocol::CONTAINER_EMPTIED);
 	CHECK(emptied[0].change.builder == host);
 	CHECK(emptied[0].playerId == 0);
+}
+
+TEST("built holders: a move at a built crate past the player's event budget is refused, each one, not dropped")
+{
+	Fixture    f;
+	const auto host = JoinAs(f, 1, "Host");
+	JoinAs(f, 2, "Friend");
+	Build(f, 1, PIECE);
+	Clear(f, { 1, 2 });
+	constexpr std::size_t MOVES = 560;  // past the 500 a second
+	for (std::size_t i = 0; i < MOVES; ++i) {
+		f.fake->Deliver(2, Protocol::Encode(Protocol::ContainerChange{ PIECE, STIM, 1, host }, MT::kReportContainer));
+	}
+	const auto got = Received(f, 2);
+	const auto numbered = Changes(got).size();
+	const auto refused = Refusals(got);
+	CHECK(numbered + refused.size() == MOVES);  // every move numbered (and echoed) or refused
+	CHECK(numbered <= 500);
+	CHECK(!refused.empty());
+	for (const auto& refusal : refused) {
+		CHECK((refusal == Protocol::StorageRefusal{ PIECE, STIM, 1, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kCantHold, host }));
+	}
 }
 
 TEST("built holders: the session file reaches the layout for built holders only when it holds one, and an older one with one is damaged")
@@ -442,18 +503,172 @@ TEST("built holders: a save's leftover copy of a piece the host scrapped since g
 
 TEST("built holders: the host's scrap empties the friend's copy, here or not, and a new piece under the same ID starts empty")
 {
-	Pair p;
-	p.host.Put(p.f, PIECE, STIM, 6);
-	p.Settle();
-	p.friendGame.holders[COPY][AMMO] = 1;  // the friend's own
+	for (const bool here : { true, false }) {
+		Pair p;
+		p.host.Put(p.f, PIECE, STIM, 6);
+		p.Settle();
+		p.friendGame.holders[COPY][AMMO] = 1;  // the friend's own
+		if (!here) {
+			p.friendGame.away.insert(COPY);
+		}
 
+		p.host.built.erase(PIECE);
+		Scrap(p.f, 1, PIECE);
+		p.Settle();
+		CHECK(p.friendGame.loot.Built().Of({ p.hostId, PIECE }).empty());  // the book starts again
+		if (here) {
+			CHECK(p.friendGame.In(COPY, STIM) == 0);  // the scrap's emptying took the host's things out of the live copy
+			p.friendGame.RemoveCopy(COPY);              // then the relayed scrap removes it
+			CHECK(p.friendGame.Carried(STIM) == 10);
+			CHECK(p.friendGame.Carried(AMMO) == 1);
+		} else {
+			CHECK(p.friendGame.In(COPY, STIM) == 6);  // not loaded: what it shows stays until it goes
+		}
+
+		// The host's game gives a new crate the same ID; the friend's game makes its copy. Nothing of the old one's is in either.
+		p.host.holders.erase(PIECE);
+		p.host.built[PIECE] = { 0, PIECE };
+		Build(p.f, 1, PIECE);
+		p.friendGame.MakeCopy(COPY_AGAIN, { p.hostId, PIECE });
+		p.friendGame.OpenMenu(p.f, COPY_AGAIN);
+		p.Settle();
+		CHECK(p.host.In(PIECE, STIM) == 0);
+		CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 0);
+		p.host.Put(p.f, PIECE, STIM, 2);
+		p.Settle();
+		CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 2);
+
+		// A joiner's game is told the old piece's loot and its emptying, then the new one's: its book holds the new one's alone.
+		Game joiner{ 3, 0xCA201 };
+		joiner.Join(p.f, "Joiner");
+		joiner.Receive(p.f);
+		CHECK((joiner.loot.Built().Of({ p.hostId, PIECE }) == BuiltHolders::Book::Items{ { STIM, 2 } }));
+
+		if (!here) {
+			// The old copy's cell loads and it goes: the host's six come out of it, the friend's own ammo comes to them.
+			p.friendGame.away.erase(COPY);
+			p.friendGame.RemoveCopy(COPY);
+			CHECK(p.friendGame.Carried(STIM) == 10);
+			CHECK(p.friendGame.Carried(AMMO) == 1);
+			CHECK(p.friendGame.In(COPY_AGAIN, STIM) == 2);
+		}
+	}
+}
+
+TEST("built holders: the builder's game lets go of a change that waited for its piece once the piece's emptying comes")
+{
+	Pair p;
+	p.host.away.insert(PIECE);  // the host's crate isn't loaded in the host's game
+	p.friendGame.Put(p.f, COPY, STIM, 3);
+	p.Settle();
+	REQUIRE(p.host.In(PIECE, STIM) == 0);  // waits for the crate to load
+
+	// The crate goes (scrapped, or the host's world lacks it), and the host's game gives a new one the same ID.
 	p.host.built.erase(PIECE);
 	Scrap(p.f, 1, PIECE);
 	p.Settle();
-	CHECK(p.friendGame.In(COPY, STIM) == 0);  // the scrap's emptying took the host's things out of the live copy
-	p.friendGame.RemoveCopy(COPY);              // then the relayed scrap removes it
+	p.host.holders.erase(PIECE);
+	p.host.built[PIECE] = { 0, PIECE };
+	p.host.away.erase(PIECE);
+	Build(p.f, 1, PIECE);
+	p.host.Frame(p.f);
+	p.Settle();
+	CHECK(p.host.In(PIECE, STIM) == 0);  // the friend's put was into the old crate, not this one
+	CHECK(p.host.loot.Stats().builtStale == 1);
+	CHECK(p.host.loot.Waiting().empty());
+}
+
+TEST("built holders: a move at a crate the host scrapped a moment before is refused, and the friend's game undoes it")
+{
+	Pair p;
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	REQUIRE(p.friendGame.In(COPY, STIM) == 6);
+
+	// The host scraps the crate; before the friend's game hears of it, the friend takes 5 from the copy.
+	p.host.built.erase(PIECE);
+	Scrap(p.f, 1, PIECE);
+	Sync(p.f, 1);
+	p.friendGame.Take(p.f, COPY, STIM, 5);
+	REQUIRE(p.friendGame.Carried(STIM) == 15);
+	p.Settle();
+	CHECK(p.friendGame.builtRefusals == 1);
+	CHECK(p.friendGame.loot.Stats().builtRefused == 1);
+	CHECK(p.friendGame.Carried(STIM) == 10);  // the five went with the crate, to the host's workbench: not to the friend too
+	CHECK(p.friendGame.In(COPY, STIM) == 0);
+	p.friendGame.RemoveCopy(COPY);
 	CHECK(p.friendGame.Carried(STIM) == 10);
-	CHECK(p.friendGame.Carried(AMMO) == 1);
+}
+
+TEST("built holders: a friend's put past their share is refused and comes back to them, and the copy shows the crate again")
+{
+	Server::Options options;
+	options.maxContainerChangesPerPlayer = 1;
+	Pair p{ options };
+	p.host.Put(p.f, PIECE, STIM, 6);  // the host's one
+	p.Settle();
+	p.friendGame.Take(p.f, COPY, STIM, 1);  // the friend's one
+	p.Settle();
+	REQUIRE(p.host.In(PIECE, STIM) == 5);
+	REQUIRE(p.friendGame.Carried(STIM) == 11);
+
+	p.friendGame.Put(p.f, COPY, STIM, 4);
+	p.Settle();
+	CHECK(p.friendGame.builtRefusals == 1);
+	CHECK(p.friendGame.Carried(STIM) == 11);
+	CHECK(p.friendGame.In(COPY, STIM) == 5);
+	CHECK(p.host.In(PIECE, STIM) == 5);
+	CHECK((p.friendGame.loot.Built().Of({ p.hostId, PIECE }) == BuiltHolders::Book::Items{ { STIM, 5 } }));
+	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 11);  // the copy shows only the host's five: nothing of theirs is left in it
+}
+
+TEST("built holders: the builder's own move the session can't keep (its table full) is refused and undone in the crate")
+{
+	Server::Options options;
+	options.maxWorldEntries = 1;
+	Pair p{ options };
+	p.host.Put(p.f, PIECE, STIM, 6);
+	p.Settle();
+	p.host.Put(p.f, PIECE, STIM, 2);
+	p.Settle();
+	CHECK(p.host.builtRefusals == 1);
+	CHECK(p.host.In(PIECE, STIM) == 6);
+	CHECK(p.host.Carried(STIM) == 4);
+	CHECK(p.friendGame.In(COPY, STIM) == 6);
+
+	// A take refused the same way: the items go back into the crate.
+	p.host.Take(p.f, PIECE, STIM, 3);
+	p.Settle();
+	CHECK(p.host.builtRefusals == 2);
+	CHECK(p.host.In(PIECE, STIM) == 6);
+	CHECK(p.host.Carried(STIM) == 4);
+}
+
+TEST("built holders: a move at a copy the session can't name (an item of a plugin it lacks) is undone as it never went")
+{
+	Pair p;
+	p.friendGame.untranslatable.insert(AMMO);
+	p.friendGame.carried[AMMO] = 5;
+	p.friendGame.Put(p.f, COPY, AMMO, 5);
+	p.Settle();
+	CHECK(p.friendGame.Carried(AMMO) == 5);
+	CHECK(p.friendGame.In(COPY, AMMO) == 0);
+	CHECK(p.friendGame.loot.Built().Of({ p.hostId, PIECE }).empty());
+	CHECK(p.friendGame.loot.Stats().builtRefused == 1);
+}
+
+TEST("built holders: a change at a piece of another of our characters' worlds goes nowhere and is counted")
+{
+	Game game{ 2, 0xB0B };
+	game.holderFacts[PIECE] = { .kind = LootScope::Holder::kContainer, .storage = true };
+	game.built[PIECE] = { 0, PIECE };  // this world's own piece under the same ID
+	game.loot.OnWelcome(0x5E55, 2);
+	game.loot.Live({ 0, 1, { PIECE, STIM, 5, Protocol::BUILT_ELSEWHERE } }, game.now, game);
+	CHECK(game.loot.Stats().builtElsewhere == 1);
+	CHECK(game.In(PIECE, STIM) == 0);
+	CHECK(game.loot.Built().Pieces() == 0);
+	CHECK(game.loot.Waiting().empty());
 }
 
 TEST("built holders: a copy away at the host's scrap gives up the old piece's things when it goes, though a new piece took the ID")
@@ -484,30 +699,102 @@ TEST("built holders: a copy away at the host's scrap gives up the old piece's th
 
 TEST("built holders: when the save's record of built containers doesn't read, a copy that goes gives the friend nothing, and says so")
 {
+	for (const bool cutInBook : { true, false }) {
+		Pair p;
+		p.host.Put(p.f, PIECE, STIM, 5);
+		p.Settle();
+		p.friendGame.holders[COPY][AMMO] = 2;
+		auto       save = p.friendGame.SaveGame(p.f);
+		const auto& loot = p.friendGame.loot;
+		REQUIRE(save.version == ResyncRecord::VERSION_2);
+		// The co-save's bytes, cut short: in the book (the rest reads), or in the header (none of it does).
+		auto bytes = ResyncRecord::Encode(loot.Point(), loot.Waiting(), loot.Built(), ResyncRecord::VERSION_2);
+		bytes.resize(cutInBook ? bytes.size() - 4 : 10);
+		const auto read = Reread(save, ResyncRecord::VERSION_2, bytes);
+		CHECK(read.book.Unsure());
+		CHECK((read.point.sessionId == p.friendGame.sessionId) == cutInBook);
+		p.friendGame.Disconnect(p.f);
+		p.friendGame.Restart(read);
+		p.friendGame.RemoveCopy(COPY);
+		CHECK(p.friendGame.Carried(STIM) == 10);
+		CHECK(p.friendGame.Carried(AMMO) == 0);
+		CHECK(p.friendGame.loot.Stats().builtUnknown == 1);
+	}
+}
+
+TEST("built holders: the session record is written as version 1, the old layout, while nothing in it needs version 2")
+{
 	Pair p;
-	p.host.Put(p.f, PIECE, STIM, 5);
+	p.host.holders[CHEST][AMMO] = 10;
+	p.friendGame.holders[CHEST][AMMO] = 10;
+	p.friendGame.away.insert(CHEST);
+	p.host.Take(p.f, CHEST, AMMO, 4);  // waits in the friend's game for the chest to load
 	p.Settle();
-	p.friendGame.holders[COPY][AMMO] = 2;
-	auto save = p.friendGame.SaveGame(p.f);
-	save.book = {};
-	save.book.MarkUnsure();  // WorldSync's LoadResyncPoint, on a record that doesn't read
-	p.friendGame.Disconnect(p.f);
-	p.friendGame.Restart(save);
-	p.friendGame.RemoveCopy(COPY);
-	CHECK(p.friendGame.Carried(STIM) == 10);
-	CHECK(p.friendGame.Carried(AMMO) == 0);
-	CHECK(p.friendGame.loot.Stats().builtUnknown == 1);
+	REQUIRE(p.friendGame.loot.Waiting().size() == 1);
+	const auto& loot = p.friendGame.loot;
+	CHECK(ResyncRecord::VersionFor(loot.Waiting(), loot.Built()) == ResyncRecord::VERSION_1);
+	const auto save = p.friendGame.SaveGame(p.f);
+	CHECK(save.version == ResyncRecord::VERSION_1);
+
+	// Byte for byte what every build before wrote (and reads): the session, the first change lacked, and each waiting
+	// change's index, container, item and count.
+	std::vector<std::uint8_t> old;
+	const auto put = [&](auto a_value) {
+		const auto at = old.size();
+		old.resize(at + sizeof(a_value));
+		std::memcpy(old.data() + at, &a_value, sizeof(a_value));
+	};
+	const auto& waiting = loot.Waiting()[0];
+	put(loot.Point().sessionId);
+	put(loot.Point().containerFrom);
+	put(std::uint32_t{ 1 });
+	put(waiting.index);
+	put(CHEST);
+	put(AMMO);
+	put(std::int32_t{ -4 });
+	CHECK(ResyncRecord::Encode(loot.Point(), loot.Waiting(), loot.Built(), ResyncRecord::VERSION_1) == old);
+	const auto read = ResyncRecord::Decode(ResyncRecord::VERSION_1, old);
+	REQUIRE(read);
+	CHECK(read->session == p.friendGame.sessionId);
+	REQUIRE(read->waiting.size() == 1);
+	CHECK((read->waiting[0].change == Protocol::ContainerChange{ CHEST, AMMO, -4 }));
+	CHECK(read->bookRead);
+	CHECK(read->book.Pieces() == 0);
+	CHECK(!read->book.Unsure());
+	CHECK(!ResyncRecord::Decode(3, old));  // a version from after this build: not read
+
+	// The crate's loot, booked: now it needs version 2.
+	p.host.Put(p.f, PIECE, STIM, 1);
+	p.Settle();
+	CHECK(p.friendGame.SaveGame(p.f).version == ResyncRecord::VERSION_2);
 }
 
 TEST("built holders: a save from before built containers were shared still gives the friend what they kept in a copy")
 {
 	Pair p;
+	p.friendGame.holders[COPY][STIM] = 2;  // the friend's own, put in before the session shared built containers
 	p.friendGame.holders[COPY][AMMO] = 3;
 	auto save = p.friendGame.SaveGame(p.f);
-	save.book = {};  // no book: such a save's copies held only what the friend put in
-	p.friendGame.Disconnect(p.f);
-	p.friendGame.Restart(save);
+	REQUIRE(save.version == ResyncRecord::VERSION_1);
+
+	// The record such a build wrote: the session, the first change lacked, nothing waiting, and no book.
+	std::vector<std::uint8_t> old(16);
+	const auto                session = save.point.sessionId;
+	const auto                next = save.point.containerFrom;
+	std::memcpy(old.data(), &session, 8);
+	std::memcpy(old.data() + 8, &next, 4);
+	const auto read = Reread(save, ResyncRecord::VERSION_1, old);
+	CHECK(!read.book.Unsure());
+	CHECK(read.point.sessionId == session);
+	p.friendGame.LoadGame(p.f, read);
+	p.Settle();
+
+	// The host puts into the crate: the copy, new to the book, shows all of it besides the friend's own.
+	p.host.Put(p.f, PIECE, STIM, 5);
+	p.Settle();
+	CHECK(p.friendGame.In(COPY, STIM) == 7);
 	p.friendGame.RemoveCopy(COPY);
+	CHECK(p.friendGame.Carried(STIM) == 12);  // their own two, none of the host's five
 	CHECK(p.friendGame.Carried(AMMO) == 3);
 	CHECK(p.friendGame.loot.Stats().builtUnknown == 0);
 }

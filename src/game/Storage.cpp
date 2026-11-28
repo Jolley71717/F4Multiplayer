@@ -1180,7 +1180,7 @@ namespace Storage
 		if (a_packet.empty() || a_packet[0] != static_cast<std::uint8_t>(Protocol::MessageType::kReportContainer)) {
 			return;
 		}
-		if (const auto change = Protocol::DecodeContainerChange(a_packet)) {
+		if (const auto change = Protocol::DecodeContainerChange(a_packet); change && !Protocol::IsBuiltHolder(*change)) {  // (a built one's: WorldSync::Unsent)
 			++counts.unsentSeen;
 			client.Unsent(*change);
 		}
@@ -1370,6 +1370,12 @@ namespace Storage
 	{
 		MainThread::Assert("Storage::OwnScrap");
 		client.OwnScrap();
+	}
+
+	std::int64_t UndoOnPlayer(const StorageView::PlayerChange& a_change)
+	{
+		MainThread::Assert("Storage::UndoOnPlayer");
+		return ChangePlayer(a_change);
 	}
 
 	bool ApplyAtBench(const Protocol::ContainerChange& a_change)

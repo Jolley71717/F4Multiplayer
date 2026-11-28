@@ -52,6 +52,11 @@
 //
 // Kept free of the game so it can be tested; Storage.cpp is the Engine, and WorldSync's loot asks it who keeps a
 // container (LootSync::World).
+namespace LootSync
+{
+	class Loot;  // makes a PlayerChange too (PlayerChange)
+}
+
 namespace StorageView
 {
 	// An open container menu draws its lists as it opens, and again only after a transfer it makes itself: the true copy's
@@ -775,7 +780,8 @@ namespace StorageView
 	};
 
 	// A change to our player's inventory: made only by Client, for one of our own moves put right (OwnGear's
-	// kStorageUndo, the one change any of the session's code makes to the local player).
+	// kStorageUndo, the one change any of the session's code makes to the local player), and by LootSync::Loot for one of
+	// our moves at a container a player built that the session never numbered (its BuiltRefused).
 	class PlayerChange
 	{
 	public:
@@ -784,6 +790,7 @@ namespace StorageView
 
 	private:
 		friend class Client;
+		friend class LootSync::Loot;
 
 		PlayerChange(std::uint32_t a_item, std::int64_t a_count) :
 			item(a_item), count(a_count)

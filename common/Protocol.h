@@ -1251,6 +1251,12 @@ namespace Protocol
 	// `count` of a numbered take (index). item 0: the sender's view of the container closed (reason kClosed). Container 0
 	// with item 0: storage others keep is closed to the sender altogether, as their settle after a load could not be made
 	// (past their share of the log, or a full one), until a later load's settle can.
+	//
+	// A move of the sender's at a container a player built (a built holder: ContainerChange::builder) that the session
+	// didn't number is answered the same way (kClosed: no such piece kept now; kCantHold: past a budget, a share or the
+	// session's table), with the builder as the sender named it, so their game undoes it (LootSync::Loot::BuiltRefused). On
+	// the wire the builder follows the container only when the container is in the runtime range, as in a ContainerChange:
+	// a storage refusal is the bytes it always was.
 	struct StorageRefusal
 	{
 		std::uint32_t container = 0;
@@ -1258,6 +1264,7 @@ namespace Protocol
 		std::int32_t  count = 0;
 		std::uint32_t index = STORAGE_NOT_NUMBERED;
 		StorageReason reason = StorageReason::kClosed;
+		std::uint32_t builder = 0;  // a built holder's (ContainerChange::builder); 0 for storage
 
 		bool operator==(const StorageRefusal&) const = default;
 	};
@@ -4419,6 +4426,9 @@ namespace Protocol
 	{
 		Writer w{ MessageType::kStorageRefused };
 		w.U32(a_msg.container);
+		if ((a_msg.container >> 24) == 0xFF) {
+			w.U32(a_msg.builder);  // a built holder's (see StorageRefusal)
+		}
 		w.U32(a_msg.item);
 		w.U32(static_cast<std::uint32_t>(a_msg.count));
 		w.U32(a_msg.index);
@@ -4432,12 +4442,18 @@ namespace Protocol
 		r.U8();
 		StorageRefusal msg;
 		msg.container = r.U32();
+		if ((msg.container >> 24) == 0xFF) {
+			msg.builder = r.U32();
+		}
 		msg.item = r.U32();
 		msg.count = static_cast<std::int32_t>(r.U32());
 		msg.index = r.U32();
 		const auto reason = r.U8();
 		const bool closedToAll = msg.container == 0 && msg.item == 0 && msg.index == STORAGE_NOT_NUMBERED && reason == static_cast<std::uint8_t>(StorageReason::kClosed);
-		if (!r.Ok() || !r.AtEnd() || !(IsShareableRef(msg.container) || closedToAll) || reason < 1 || reason > static_cast<std::uint8_t>(StorageReason::kNotViewing) ||
+		// A built holder's: one move of the sender's that was never numbered (never a view's end, nor an emptying).
+		const bool built = msg.builder != 0 && IsValid(ContainerChange{ msg.container, msg.item, msg.count, msg.builder }) && msg.item != CONTAINER_EMPTIED &&
+		                   msg.index == STORAGE_NOT_NUMBERED;
+		if (!r.Ok() || !r.AtEnd() || !(IsShareableRef(msg.container) || closedToAll || built) || reason < 1 || reason > static_cast<std::uint8_t>(StorageReason::kNotViewing) ||
 			msg.count < -MAX_ITEM_COUNT || msg.count > MAX_ITEM_COUNT || ((msg.item == 0) != (msg.count == 0))) {
 			return std::nullopt;
 		}

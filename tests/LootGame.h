@@ -12,6 +12,7 @@
 #include "ServerFixture.h"
 
 #include "game/LootSync.h"
+#include "game/ResyncRecord.h"
 #include "game/StorageView.h"
 #include "game/SupplyLines.h"
 
@@ -80,6 +81,8 @@ namespace LootTest
 		std::array<std::uint32_t, static_cast<std::size_t>(StorageView::Notice::kCount)> notices{};
 		// Items of ours that weren't moved where an engine call said (our player lacked them): see ChangePlayer.
 		std::int64_t                          lacked = 0;
+		// Refusals of our moves at containers players built (kStorageRefused naming a builder) heard.
+		int builtRefusals = 0;
 		// Moves the session's numbering can't carry (FormTranslate drops them at Session::SendOut): the items here.
 		std::set<std::uint32_t>               untranslatable;
 		// Containers players built that this game has (WorkshopSync's): a runtime reference -> its piece's key (builder 0:
@@ -98,6 +101,7 @@ namespace LootTest
 			std::uint32_t                          lacksFrom = 0;
 			BuiltHolders::Book                     book;  // WorldSync's session record, version 2
 			std::map<std::uint32_t, BuiltHolders::Key> built;
+			std::uint32_t                          version = 0;  // the session record's (ResyncRecord::VersionFor)
 		};
 
 		Game(PeerId a_peer, std::uint64_t a_identity) :
@@ -220,7 +224,12 @@ namespace LootTest
 					}
 				} else if (IsType(packet, MT::kStorageRefused)) {
 					if (const auto msg = Protocol::DecodeStorageRefusal(packet)) {
-						storage.OnRefused(*msg);
+						if (Protocol::IsBuiltHolderRef(msg->container) && msg->builder != 0) {
+							++builtRefusals;
+							loot.BuiltRefused({ msg->container, msg->item, msg->count, msg->builder }, *this);  // WorldSync::OnBuiltRefused
+						} else {
+							storage.OnRefused(*msg);
+						}
 					}
 				} else if (IsType(packet, MT::kStorageCaughtUp)) {
 					// Storage::OnCaughtUp: our moves at a friend's storage settle once the world state answers our latest request.
@@ -605,9 +614,16 @@ namespace LootTest
 		Save SaveGame(Fixture& a_f)
 		{
 			BeforeSaveOrLoad(a_f);
-			BuiltHolders::Book book;
-			REQUIRE(book.Load(loot.Built().Record()));  // as the co-save writes and reads it
-			return { holders, carried, loot.Point(), loot.Waiting(), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom(), std::move(book), built };
+			// WorldSync's session record, as the co-save writes and reads it (SaveResyncPoint, LoadResyncPoint).
+			const auto version = ResyncRecord::VersionFor(loot.Waiting(), loot.Built());
+			auto       record = ResyncRecord::Decode(version, ResyncRecord::Encode(loot.Point(), loot.Waiting(), loot.Built(), version));
+			REQUIRE(record);
+			REQUIRE(record->bookRead);
+			auto point = loot.Point();
+			point.sessionId = record->session;
+			point.containerFrom = record->next;
+			return { holders, carried, point, std::move(record->waiting), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom(),
+				std::move(record->book), built, version };
 		}
 
 		// Loads a save while connected: Session::OnBeforeSaveOrLoad, the co-save records (F4SE reverts them
@@ -801,7 +817,11 @@ namespace LootTest
 				}
 				if (IsType(packet, MT::kReportContainer)) {
 					if (const auto change = Protocol::DecodeContainerChange(packet); change && untranslatable.contains(change->item)) {
-						storage.Unsent(*change);
+						if (Protocol::IsBuiltHolder(*change)) {
+							loot.BuiltRefused(*change, *this);  // WorldSync::Unsent
+						} else {
+							storage.Unsent(*change);
+						}
 						continue;
 					}
 				}

@@ -461,6 +461,7 @@ namespace ProtocolSamples
 		s.push_back({ "StorageRefusal", Encode(StorageRefusal{ REF_A, 0x0001F276, -5, STORAGE_NOT_NUMBERED, StorageReason::kNotHeld }), D(DecodeStorageRefusal) });
 		s.push_back({ "StorageRefusal(short)", Encode(StorageRefusal{ REF_A, 0x0001F276, -2, 17, StorageReason::kShort }), D(DecodeStorageRefusal) });
 		s.push_back({ "StorageRefusal(closed)", Encode(StorageRefusal{ REF_A, 0, 0, STORAGE_NOT_NUMBERED, StorageReason::kClosed }), D(DecodeStorageRefusal) });
+		s.push_back({ "StorageRefusal(built)", Encode(StorageRefusal{ RUNTIME_REF, 0x0001F276, -5, STORAGE_NOT_NUMBERED, StorageReason::kClosed, 3 }), D(DecodeStorageRefusal) });
 		for (const auto type : { MT::kBorrowFrame, MT::kLoanAsked }) {
 			s.push_back({ "FrameBorrow", Encode(FrameBorrow{ 2, RUNTIME_REF }, type), D(DecodeFrameBorrow) });
 		}

@@ -580,11 +580,14 @@ void Server::Run()
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
-	// The built holders (Protocol::ContainerChange::builder) containerChanges names, by the key their pieces are kept under:
-	// a scrap of one numbers its emptying (handleWorkshopItem), so a game's book of it (BuiltHolders::Book) starts again
-	// should its builder's game give the same ID to a new piece. Made again from the table when a session is read.
+	// The built holders (Protocol::ContainerChange::builder) containerChanges names since their last emptying, by the key their
+	// pieces are kept under: one that leaves the session's building, scrapped or lost, numbers its emptying (builtGone), so a
+	// game's book of it (BuiltHolders::Book) starts again should its builder's game give the same ID to a new piece. Made
+	// again from the table when a session is read.
 	std::set<WorkshopStore::Key>                          builtHolders;
-	std::uint32_t                                         builtHoldersRefused = 0;  // changes at a built piece the session doesn't know
+	std::uint32_t                                         builtHoldersRefused = 0;     // moves at a built piece not numbered, refused (takeContainerChange)
+	std::uint32_t                                         builtHoldersUnanswered = 0;  // ...past the refusals' budget: not answered
+	bool                                                  builtRefusedLogged = false;
 	// Plugin items picked up from the world, each with the player who picked it up (0: not known, a file before layout 43).
 	// A player's own are never sent to them in a world state (sendWorldState): a persistent item they picked up and dropped
 	// again lies in their world as that same reference, and their game would take it away as a friend's pickup.
@@ -779,7 +782,13 @@ void Server::Run()
 			builtHolders.clear();
 			for (const auto& change : containerChanges) {
 				++containersAuthored[change.playerId];
-				if (Protocol::IsBuiltHolder(change.change)) {
+				if (!Protocol::IsBuiltHolder(change.change)) {
+					continue;
+				}
+				// Named since its last emptying (builtGone): its next one is still to number.
+				if (change.change.item == Protocol::CONTAINER_EMPTIED) {
+					builtHolders.erase({ change.change.builder, change.change.container });
+				} else {
 					builtHolders.insert({ change.change.builder, change.change.container });
 				}
 			}
@@ -1246,7 +1255,8 @@ void Server::Run()
 	// Built holders (Protocol::ContainerChange::builder). The key a player's change names a piece by, as the session keeps it:
 	// their own piece (named by their own player id) under the key the piece is kept under (WorkshopStore::BuilderOf: a
 	// builder id when it is kept apart), a copy's under the key the session keeps the piece under, which their game's copy
-	// was keyed by. 0: nothing they may change (a piece of another world of theirs, or one the session doesn't keep).
+	// was keyed by. 0: nothing they may change (a piece of another world of theirs, or one the session doesn't keep as built:
+	// scrapped, or lost, its builder's world lacking it, which took every copy of it out too: WorkshopStore::Gone).
 	const auto builtHolderKey = [&](const Player& a_player, const Protocol::ContainerChange& a_change) -> std::uint32_t {
 		if (a_change.builder == a_player.id) {
 			return workshop.BuilderOf(a_player.id, a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0, a_change.container);
@@ -1254,7 +1264,7 @@ void Server::Run()
 		if (a_change.builder == Protocol::BUILT_ELSEWHERE || WorkshopStore::PlayerOf(a_change.builder) == a_player.id) {
 			return 0;
 		}
-		return workshop.Knows({ a_change.builder, a_change.container }) ? a_change.builder : 0;
+		return workshop.Built().contains({ a_change.builder, a_change.container }) ? a_change.builder : 0;
 	};
 	// A numbered change as a_to's game is told it: a built holder's key as WorkshopStore::BuilderFor names it to them (their
 	// own piece in the world they play as their own player id). Anything else as it is.
@@ -2788,42 +2798,55 @@ void Server::Run()
 	// (StorageBook::Book::Check's a_late).
 	const auto takeContainerChange = [&](Player& a_player, std::optional<Protocol::ContainerChange> change, bool a_late) {
 		// A container a player built (a built holder: Protocol::ContainerChange::builder) is kept under the key its piece is
-		// (builtHolderKey), or the change goes nowhere: their game's change at a piece the session doesn't know.
-		if (change && Protocol::IsValid(*change) && Protocol::IsBuiltHolder(*change)) {
+		// (builtHolderKey). Their game made the move already, and booked it (BuiltHolders::Book): one the session doesn't
+		// number is refused, as their game named it (sent), whatever the reason, and their game undoes it. A piece the session
+		// doesn't keep as built (scrapped, lost) is refused too: no game has it to put the move into.
+		const bool built = change && Protocol::IsValid(*change) && Protocol::IsBuiltHolder(*change);
+		const auto sent = change;
+		if (built) {
 			change->builder = builtHolderKey(a_player, *change);
-			if (change->builder == 0) {
-				++builtHoldersRefused;
-				change.reset();
-			}
 		}
 		// With the rule off the book is only kept for a later run: no container has a keeper. Nor ever a built one: storage
 		// is kept by a plugin's reference (StorageBook).
-		const bool built = change && Protocol::IsBuiltHolder(*change);
 		const auto keeper = options.rules.sharedStorage && change && Protocol::IsValid(*change) && !built ? storage.KeeperOf(change->container) : std::nullopt;
 		const bool atFriends = keeper && *keeper != a_player.id;
 		// The budget first, before the book is asked or anything answered: a friend's moves at storage another game keeps
 		// have their own (STORAGE_MOVE_BURST), everything else the event budget.
 		const auto now = Clock::now();
 		const bool allowed = atFriends || a_late ? budgetOf(a_player).storageMoves.Take(now) : allowEvent(a_player);
-		if (!change || !Protocol::IsValid(*change)) {
+		if (!change || (!built && !Protocol::IsValid(*change))) {
 			return;
 		}
 		// A friend's move at storage another game keeps (common/StorageBook.h) goes through only if the book can check it.
 		// Whatever doesn't go through is refused to their game, which undoes it: their item left their inventory (or came
 		// into it) already, and a move dropped without a word would lose it, or dupe it. Past the refusals' own budget a
-		// move gets no answer at all: their game keeps it on its way and sends it again late at its next settle.
+		// move gets no answer at all: their game keeps it on its way and sends it again late at its next settle. So is every
+		// move at a built holder the session doesn't number (past that budget it stays done in their game alone).
 		const auto refuse = [&](Protocol::StorageReason a_reason) {
 			if (!budgetOf(a_player).storageRefusals.Take(now)) {
-				++storageUnanswered;
+				++(built ? builtHoldersUnanswered : storageUnanswered);
+				return;
+			}
+			if (built) {
+				++builtHoldersRefused;
+				if (!std::exchange(builtRefusedLogged, true)) {
+					log(std::format("server: a move of player {}'s at a built container ({:08X}) isn't kept ({}): refused, and their game undoes it", a_player.id, sent->container,
+						change->builder == 0 ? "no such piece kept" : "past a budget or a share"));
+				}
+				send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ sent->container, sent->item, sent->count, Protocol::STORAGE_NOT_NUMBERED, a_reason, sent->builder }), true);
 				return;
 			}
 			++storageRefused;
 			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ change->container, change->item, change->count, Protocol::STORAGE_NOT_NUMBERED, a_reason }), true);
 		};
 		if (!allowed) {
-			if (atFriends || a_late) {
+			if (atFriends || a_late || built) {
 				refuse(Protocol::StorageReason::kCantHold);
 			}
+			return;
+		}
+		if (built && change->builder == 0) {
+			refuse(Protocol::StorageReason::kClosed);  // no such piece kept: nobody's to change
 			return;
 		}
 		if (a_late && !atFriends) {
@@ -2866,7 +2889,7 @@ void Server::Run()
 			}
 			return player.storageMapper->ToLocal(a_item).has_value();
 		}, a_late);
-		const bool checked = verdict == StorageBook::Verdict::kAccept;
+		const bool checked = verdict == StorageBook::Verdict::kAccept;  // (and a built holder's: answered too, below)
 		switch (verdict) {
 		case StorageBook::Verdict::kClosed:
 			refuse(Protocol::StorageReason::kClosed);
@@ -2884,7 +2907,7 @@ void Server::Run()
 			break;
 		}
 		if (!allowed || containerChanges.size() >= maxWorldEntries) {
-			if (checked) {
+			if (checked || built) {
 				refuse(Protocol::StorageReason::kCantHold);
 			}
 			return;
@@ -2895,13 +2918,13 @@ void Server::Run()
 			if (!std::exchange(budgetOf(a_player).shareLogged[kContainers], true)) {
 				log(std::format("server: player {} has made {} container changes this session, their share; no more of theirs are kept", a_player.id, containersAuthored[a_player.id]));
 			}
-			if (checked) {
+			if (checked || built) {
 				refuse(Protocol::StorageReason::kCantHold);
 			}
 			return;
 		}
 		if (!withinShare(a_player, kContainers)) {
-			if (checked) {
+			if (checked || built) {
 				refuse(Protocol::StorageReason::kCantHold);
 			}
 			return;
@@ -2934,6 +2957,27 @@ void Server::Run()
 
 	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		takeContainerChange(a_player, a_player.welcomed ? Protocol::DecodeContainerChange(a_data) : std::nullopt, false);
+	};
+
+	// A built piece the session's loot named (builtHolders) leaves the session's building, whichever way: its builder's
+	// scrap (handleWorkshopItem), or their world lacking it (handleWorkshopGone: a crash, an older save loaded). Its emptying
+	// is numbered, by nobody, in order with the changes at it. Every game's book of what the piece holds
+	// (BuiltHolders::Book) starts again from it, and its builder's game lets go of what still waits for that ID (LootSync),
+	// so a new piece their game gives the same ID later holds nothing of the old one's, in a joiner's game too. (What the
+	// piece held is in its builder's world: the engine's scrap puts it in their workbench.)
+	const auto builtGone = [&](const WorkshopStore::Key& a_key) {
+		if (containerChanges.size() >= maxWorldEntries || builtHolders.erase(a_key) == 0) {
+			return;
+		}
+		const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
+		containerChanges.push_back({ numbered, 0, { a_key.second, Protocol::CONTAINER_EMPTIED, -1, a_key.first } });
+		noteFill(kContainers, containerChanges.size());
+		touched();
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+				send(key, Protocol::Encode(containerChangeFor(containerChanges.back(), other)), true);
+			}
+		}
 	};
 
 	// Shared storage (common/StorageBook.h). The host's game lists what one of its storage containers holds, and so claims
@@ -3532,20 +3576,9 @@ void Server::Run()
 			touched();  // relayed: what is kept changed
 			broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
 		}
-		// A container they built that the session's loot named is scrapped: its emptying is numbered, by nobody, in order with
-		// the changes at it. Every game's book of what the piece holds (BuiltHolders::Book) starts again from it, so a new
-		// piece their game gives the same ID later holds nothing of the old one's, in a joiner's game too. (What the piece
-		// held is in its builder's world: the engine's scrap puts it in their workbench.)
-		if (outcome.relay && item->op == Protocol::WorkshopOp::kScrapped && !Protocol::IsShareableRef(item->refId) &&
-			builtHolders.erase({ item->playerId, item->refId }) != 0 && containerChanges.size() < maxWorldEntries) {
-			const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
-			containerChanges.push_back({ numbered, 0, { item->refId, Protocol::CONTAINER_EMPTIED, -1, item->playerId } });
-			noteFill(kContainers, containerChanges.size());
-			for (const auto& [key, other] : players) {
-				if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
-					send(key, Protocol::Encode(containerChangeFor(containerChanges.back(), other)), true);
-				}
-			}
+		// A container they built that the session's loot named is scrapped: emptied for every game (builtGone).
+		if (outcome.relay && item->op == Protocol::WorkshopOp::kScrapped && !Protocol::IsShareableRef(item->refId)) {
+			builtGone({ item->playerId, item->refId });
 		}
 	};
 
@@ -3577,6 +3610,11 @@ void Server::Run()
 		broadcast(Protocol::Encode(scraps), true, a_player.key);
 		log(std::format("server: player {}'s world no longer has {} of the pieces kept as theirs (a save from before they were built): removed for everyone",
 			a_player.id, scraps.size()));
+		// A container among them that the session's loot named is emptied for every game, as their scrap would (builtGone):
+		// their game may give its ID to a new piece (after a crash, an older save loaded).
+		for (const auto& scrap : scraps) {
+			builtGone({ scrap.playerId, scrap.refId });
+		}
 	};
 
 	// Items given between players (common/DropStore.h). A drop is offered to its dropper's game first: it swaps the item

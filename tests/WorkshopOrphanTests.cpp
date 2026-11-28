@@ -563,3 +563,120 @@ TEST("orphan pieces: a second character's piece under an ID the first's piece ha
 	JoinFriend(f, 3, "Carol", CAROL, CAROL_A);
 	CHECK((Others(Received(f, 3)) == std::map<Key, bool>{ { { bob, 0xFF000B01 }, true } }));
 }
+
+// ---- a container among the pieces: its loot (BuiltHoldersTests.cpp has the games' side) ----------------------------
+
+namespace
+{
+	constexpr std::uint32_t STIM = 0x00023736;
+
+	std::vector<Protocol::IndexedContainerChange> Changes(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
+	}
+
+	std::vector<Protocol::StorageRefusal> Refusals(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	}
+
+	// A take (< 0) or a put of stimpaks at a container a player built, named by its builder (Protocol::ContainerChange).
+	std::vector<std::uint8_t> CrateMove(std::uint32_t a_ref, std::int32_t a_count, std::uint32_t a_builder)
+	{
+		return Protocol::Encode(Protocol::ContainerChange{ a_ref, STIM, a_count, a_builder }, MT::kReportContainer);
+	}
+}
+
+TEST("orphan pieces: a lost container's loot is emptied for everyone, a move at it after is refused, and a new piece under its ID starts empty")
+{
+	Fixture    f{ Hosted() };
+	const auto host = JoinHost(f, 1);
+	JoinFriend(f, 2, "Bob", BOB, BOB_A);
+	f.fake->Deliver(1, Built(Chair(0xFF000001, 100.0f)));
+	f.fake->Deliver(1, Built(Chair(0xFF000002, 200.0f)));  // one the session's loot never named
+	f.fake->Deliver(1, CrateMove(0xFF000001, 5, host));
+	Sync(f, 1);
+	Clear(f, { 1, 2 });
+
+	// The host's world lacks both (an older save loaded): the one with loot is emptied, numbered by nobody.
+	f.fake->Deliver(1, GoneReport({ Chair(0xFF000001, 100.0f), Chair(0xFF000002, 200.0f) }));
+	Sync(f, 1);
+	const auto emptied = Changes(Received(f, 2));
+	REQUIRE(emptied.size() == 1);
+	CHECK((emptied[0].change == Protocol::ContainerChange{ 0xFF000001, Protocol::CONTAINER_EMPTIED, -1, host }));
+	CHECK(emptied[0].playerId == 0);
+	const auto toHost = Changes(Received(f, 1));
+	REQUIRE(toHost.size() == 1);  // the host's own game too: what waits there for the ID goes
+	CHECK(toHost[0].change.builder == host);
+
+	// Bob's game hadn't heard yet: his take at his copy is refused, as he named it, so his game undoes it.
+	f.fake->Deliver(2, CrateMove(0xFF000001, -2, host));
+	const auto toBob = Received(f, 2);
+	CHECK(Changes(toBob).empty());
+	const auto refused = Refusals(toBob);
+	REQUIRE(refused.size() == 1);
+	CHECK(refused[0].container == 0xFF000001);
+	CHECK(refused[0].item == STIM);
+	CHECK(refused[0].count == -2);
+	CHECK(refused[0].builder == host);
+	CHECK(refused[0].reason == Protocol::StorageReason::kClosed);
+	CHECK(Changes(Received(f, 1)).empty());
+
+	// The host's game gives a new piece the ID: a joiner is told the old piece's loot, its emptying, then the new one's.
+	f.fake->Deliver(1, Built(Chair(0xFF000001, 300.0f)));
+	f.fake->Deliver(1, CrateMove(0xFF000001, 2, host));
+	Sync(f, 1);
+	JoinFriend(f, 3, "Carol", CAROL, CAROL_A);
+	std::vector<Protocol::IndexedContainerChange> replayed;
+	for (const auto& world : WorldStates(Received(f, 3))) {
+		replayed.insert(replayed.end(), world.containerChanges.begin(), world.containerChanges.end());
+	}
+	REQUIRE(replayed.size() == 3);
+	CHECK(replayed[0].change.count == 5);
+	CHECK(replayed[1].change.item == Protocol::CONTAINER_EMPTIED);
+	CHECK(replayed[2].change.count == 2);
+}
+
+TEST("orphan pieces: a move at a second character's container is named by its builder id to others, as his own to him, and the first's as elsewhere")
+{
+	Fixture    f{ Hosted() };
+	JoinHost(f, 1);
+	const auto bob = JoinFriend(f, 2, "Bob", BOB, BOB_A);
+	f.fake->Deliver(2, Built(Chair(0xFF000B01, 200.0f)));
+	Sync(f, 2);
+	f.fake->Drop(2);
+	REQUIRE(f.LoggedSoon(std::format("player {} left", bob)));
+	Clear(f, { 1 });
+	REQUIRE(JoinFriend(f, 3, "Bob", BOB, BOB_B) == bob);
+	f.fake->Deliver(3, Built(Chair(0xFF000B01, 900.0f)));  // his second character's, under the first's ID
+	Sync(f, 3);
+	const auto hostSees = Others(Received(f, 1));
+	REQUIRE(hostSees.size() == 1);
+	const auto builder = hostSees.begin()->first.first;
+	REQUIRE(WorkshopStore::IsBuilderId(builder));
+	Clear(f, { 1, 3 });
+
+	// His put at his own: the host's game is told the builder id; his own, his player id.
+	f.fake->Deliver(3, CrateMove(0xFF000B01, 5, bob));
+	const auto atHost = Changes(Received(f, 1));
+	REQUIRE(atHost.size() == 1);
+	CHECK(atHost[0].change.builder == builder);
+	const auto atBob = Changes(Received(f, 3));
+	REQUIRE(atBob.size() == 1);
+	CHECK(atBob[0].change.builder == bob);
+
+	// The host's puts at its copies of both: the second's comes to him as his own; the first's, of a world he isn't
+	// playing, as of elsewhere (his game has nothing of it).
+	f.fake->Deliver(1, CrateMove(0xFF000B01, 1, builder));
+	f.fake->Deliver(1, CrateMove(0xFF000B01, 2, bob));
+	const auto toBob = Changes(Received(f, 3));
+	REQUIRE(toBob.size() == 2);
+	CHECK(toBob[0].change.builder == bob);
+	CHECK(toBob[0].change.count == 1);
+	CHECK(toBob[1].change.builder == Protocol::BUILT_ELSEWHERE);
+	CHECK(toBob[1].change.count == 2);
+	const auto echoes = Changes(Received(f, 1));
+	REQUIRE(echoes.size() == 2);
+	CHECK(echoes[0].change.builder == builder);
+	CHECK(echoes[1].change.builder == bob);
+}

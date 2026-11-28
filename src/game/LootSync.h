@@ -10,6 +10,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -101,6 +102,10 @@ namespace LootSync
 		virtual std::optional<BuiltHolders::Key> BuiltKeyOf(std::uint32_t) { return std::nullopt; }
 		// Our copy of someone else's piece, while it is here (in a cell of ours, in memory): its reference ID, 0 when none.
 		virtual std::uint32_t                    CopyOf(const BuiltHolders::Key&) { return 0; }
+		// Our player's own inventory, to undo a move of theirs at one of those that the session never numbered (BuiltRefused):
+		// a_count of the item given back to them (> 0) or taken back (< 0: no more than they have). What moved. Nothing, by
+		// default.
+		virtual std::int64_t                     ChangePlayer(const StorageView::PlayerChange&) { return 0; }
 	};
 
 	// What a holder holds of what the session shares (LootScope's: ammo, aid, junk, and no stack a quest alias holds), item
@@ -150,6 +155,8 @@ namespace LootSync
 		// Changes waiting, at most. Past it one waiting for a living NPC makes room; with none, the new change
 		// is let go.
 		static constexpr std::size_t MAX_PENDING = 4096;
+		// Our moves at copies of built containers kept with what their booking did, until numbered or refused (BuiltRefused).
+		static constexpr std::size_t MAX_BUILT_FLIGHTS = 4096;
 
 		struct Counts
 		{
@@ -177,6 +184,9 @@ namespace LootSync
 			std::uint32_t builtElsewhere = 0;  // changes at a piece of another of our characters' worlds (nothing here)
 			std::uint32_t builtRescued = 0;    // stacks taken out of a copy as it went, as its builder's piece has them
 			std::uint32_t builtUnknown = 0;    // copies that went with what in them was our player's not known: nothing given
+			std::uint32_t builtRefused = 0;    // the player's moves at those the session didn't number (refused, or unsent): undone
+			std::uint32_t builtRefusedOld = 0; // ...answered for a move not made in the world we have now (a load since): left
+			std::uint32_t builtStale = 0;      // other players' changes at a piece of ours numbered before its emptying: left out
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -227,7 +237,10 @@ namespace LootSync
 				}
 				if (built) {
 					// Named as the session names the piece (BuiltHolders::ToWire). Our book of a copy's piece has our move
-					// at once, as our copy does: a copy is shown the book, and must not lose what our player just put in.
+					// at once, as our copy does: a copy is shown the book, and must not lose what our player just put in
+					// (booked only as its echo came, a change of a friend's shown first would take it out again). The move is
+					// made in our world already either way, so one the session doesn't number has to be undone there anyway:
+					// the server answers it refused, and BuiltRefused undoes the move and its booking (kept until its echo).
 					const auto change = BuiltHolders::ToWire(*built, liveId, move.item, move.count);
 					if (!change || !Protocol::IsValid(*change)) {
 						continue;
@@ -237,7 +250,11 @@ namespace LootSync
 					++counts.sent;
 					++counts.builtSent;
 					if (built->builder != 0) {
-						book.Own(BuiltHolders::KeyOf(*change), move.holder, move.item, move.count, CountOf(move.holder, move.item, a_world));
+						const auto moved = book.Own(BuiltHolders::KeyOf(*change), move.holder, move.item, move.count, CountOf(move.holder, move.item, a_world));
+						if (builtFlights.size() >= MAX_BUILT_FLIGHTS) {
+							builtFlights.pop_front();  // (its refusal, if one comes, finds nothing to undo in our book)
+						}
+						builtFlights.push_back({ *change, moved });
 					}
 					continue;
 				}
@@ -293,6 +310,8 @@ namespace LootSync
 				sessionPut.clear();
 				friendTook.clear();
 				book.NewSession();  // (what our copies show stays: it is still the old session's loot in them)
+				builtFlights.clear();
+				ownEmptied.clear();
 			}
 		}
 
@@ -313,6 +332,7 @@ namespace LootSync
 			receiver.Load(a_session, a_next);
 			pending = std::move(a_pending);
 			book = std::move(a_book);
+			builtFlights.clear();  // our moves on their way were made in the world before: the save's has none of them
 			// In session order, whatever order the record holds them in: a container's changes go in in that order.
 			std::ranges::stable_sort(pending, {}, &Pending::index);
 		}
@@ -328,6 +348,7 @@ namespace LootSync
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
 				book.NewSession();
+				ownEmptied.clear();
 			}
 			++asked;
 			return receiver.Request(a_now, Protocol::WorldRequest::kLoad);
@@ -358,6 +379,7 @@ namespace LootSync
 
 		void Live(const Protocol::IndexedContainerChange& a_change, Clock::time_point a_now, World& a_world)
 		{
+			Emptied(a_change);  // (it may wait in the ledger behind a gap, and the changes before it go in first)
 			receiver.Live(a_change, a_now, [&](const Protocol::IndexedContainerChange& a_ready) { ApplyInOrder(a_ready, a_world); }, OwnOf(a_world));
 		}
 
@@ -365,12 +387,17 @@ namespace LootSync
 		// ContainerLedger::Ledger::OnChunk).
 		std::uint32_t CatchUp(std::uint32_t a_firstIndex, const std::vector<Protocol::IndexedContainerChange>& a_changes, Clock::time_point a_now, World& a_world)
 		{
+			// The emptyings of our own built pieces first: the changes before one, in this chunk, are of the piece that went.
+			for (const auto& change : a_changes) {
+				Emptied(change);
+			}
 			const auto lost = receiver.CatchUp(a_firstIndex, a_changes, a_now, [&](const Protocol::IndexedContainerChange& a_ready) { ApplyInOrder(a_ready, a_world); }, OwnOf(a_world));
 			if (lost) {
 				// Changes from the lost part of the server's log that still wait for their container go too:
 				// the server gives their numbers to new changes. (A reply that rewinds has no changes, so
-				// none of these came in it.)
+				// none of these came in it.) So do its emptyings of our pieces.
 				std::erase_if(pending, [&](const Pending& a_pending) { return a_pending.index >= a_firstIndex; });
+				std::erase_if(ownEmptied, [&](const auto& a_entry) { return a_entry.second >= a_firstIndex; });
 			}
 			return lost;
 		}
@@ -381,6 +408,7 @@ namespace LootSync
 		// together.
 		void Retry(World& a_world, Clock::duration a_elapsed)
 		{
+			DropStale();
 			std::unordered_set<std::uint32_t> blocked, alive;
 			std::erase_if(pending, [&](Pending& a_pending) {
 				const auto container = a_pending.change.container;
@@ -419,6 +447,7 @@ namespace LootSync
 		// good by the rule).
 		std::size_t Retry(std::uint32_t a_container, World& a_world, bool a_menuOpen = false)
 		{
+			DropStale();
 			std::size_t applied = 0;
 			bool        blocked = false;
 			bool        alive = false;
@@ -532,9 +561,17 @@ namespace LootSync
 		}
 
 		// Our own changes as the ledger lets them through, in order: those at a friend's storage go to a_world (OwnStorage).
+		// One at a built holder is numbered: its booking stays (BuiltRefused undoes no more), and so do those of the moves
+		// before it, which the server answered by then (or never will: past its refusals' budget).
 		ContainerLedger::Receiver::Own OwnOf(World& a_world)
 		{
-			return [&a_world](const Protocol::IndexedContainerChange& a_change, bool a_lacking) {
+			return [this, &a_world](const Protocol::IndexedContainerChange& a_change, bool a_lacking) {
+				if (Protocol::IsBuiltHolder(a_change.change)) {
+					if (const auto it = std::ranges::find(builtFlights, a_change.change, &BuiltFlight::change); it != builtFlights.end()) {
+						builtFlights.erase(builtFlights.begin(), std::next(it));
+					}
+					return;
+				}
 				if (a_change.change.item != Protocol::CONTAINER_EMPTIED && a_world.Keeper(a_change.change.container) == StorageView::Keeper::kFriend &&
 					a_change.index >= a_world.KeptSince(a_change.change.container)) {
 					a_world.OwnStorage(a_change, a_lacking);
@@ -573,6 +610,50 @@ namespace LootSync
 
 		// The save's record didn't read: what the save's copies hold of the session's loot can't be known.
 		void BuiltUnsure() { book.MarkUnsure(); }
+
+		// A move of ours at a container a player built that the session never numbered: the server refused it (no such
+		// piece kept, or past a budget, a share or the session's table: Protocol::StorageRefusal), or it couldn't be sent
+		// (Session::SendOut: the session's numbering has no ID for its item). Our world made it already, and our book of a
+		// copy's piece booked it (Report): both are undone, so neither the session's loot nor our player's own is had twice
+		// or lost. At our own piece what was taken goes back in (what our player still has of it) and what was put in comes
+		// back out; at a copy our book is as it was without it, the copy is shown that (now, or when it is next here), and our
+		// player gives back the session's share of what they took or gets back what they put in. Nothing for a move not
+		// made in the world we have now (a load since: that world never had it). True when it was undone.
+		bool BuiltRefused(const Protocol::ContainerChange& a_change, World& a_world)
+		{
+			if (!Protocol::IsValid(a_change) || !Protocol::IsBuiltHolder(a_change) || a_change.item == Protocol::CONTAINER_EMPTIED) {
+				return false;
+			}
+			std::optional<BuiltHolders::Book::Moved> booked;
+			if (const auto it = std::ranges::find(builtFlights, a_change, &BuiltFlight::change); it != builtFlights.end()) {
+				booked = it->moved;
+				builtFlights.erase(it);
+			}
+			if (!receiver.Unreport(a_change)) {
+				++counts.builtRefusedOld;
+				return false;
+			}
+			++counts.builtRefused;
+			switch (BuiltHolders::WhoseIs(a_change, liveId)) {
+			case BuiltHolders::Whose::kOurs:
+				UndoOwnBuilt(a_change, a_world);
+				break;
+			case BuiltHolders::Whose::kCopy: {
+				const auto key = BuiltHolders::KeyOf(a_change);
+				if (booked) {
+					book.Apply(key, a_change.item, -booked->book);  // (nothing once the piece was emptied since: Forget)
+					a_world.ChangePlayer(StorageView::PlayerChange{ a_change.item, booked->shown });
+				}
+				if (const auto local = a_world.CopyOf(key); local != 0) {
+					Show(key, local, a_world);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+			return true;
+		}
 
 		[[nodiscard]] const BuiltHolders::Book& Built() const { return book; }
 
@@ -842,15 +923,24 @@ namespace LootSync
 			return Applied::kDone;
 		}
 
-		// Another player's change, next in session order (the ledger keeps the order). Changes to one
-		// container stay in order; different containers don't wait for each other.
 		// Another player's change at a container our player built: put into the piece itself, as at a plugin's container
 		// (waiting while its cell isn't loaded), once it is still a container of ours we built (none: it was scrapped since,
-		// and its ID may name something else now). A built container has no roll of loot to wait for (Stocked).
+		// and its ID may name something else now). A built container has no roll of loot to wait for (Stocked). Nothing
+		// numbered before the piece's emptying (Emptied): its ID may be a new piece's of ours by now, which holds none of it.
 		Applied TryOwnBuilt(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world, bool a_menuOpen)
 		{
 			if (BuiltHolders::WhoseIs(a_change, liveId) != BuiltHolders::Whose::kOurs) {
 				return liveId == 0 ? Applied::kNotLoaded : Applied::kDone;  // (a copy's never waits: ToCopy)
+			}
+			// The server's word that the piece left the session's building (scrapped, or lost): ours went with our own scrap,
+			// or our world lacks it. Taken before anything is asked of the piece: the changes waiting behind it at its ID go.
+			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
+				Emptied({ a_index, 0, a_change });
+				return Applied::kDone;
+			}
+			if (Stale(a_index, a_change)) {
+				++counts.builtStale;
+				return Applied::kDone;
 			}
 			if (!Reachable(a_change.container, a_world)) {
 				return Applied::kNotLoaded;
@@ -859,9 +949,6 @@ namespace LootSync
 			if (!key || key->builder != 0) {
 				++counts.builtGone;
 				return Applied::kDone;
-			}
-			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
-				return Applied::kDone;  // the server's word that the piece was scrapped: ours went with our own scrap
 			}
 			auto plain = a_change;
 			plain.builder = 0;
@@ -905,6 +992,12 @@ namespace LootSync
 			}
 			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
 				book.Forget(key);
+				// Our moves at it still on their way were booked into what is forgotten now: a refusal of one undoes no booking.
+				for (auto& flight : builtFlights) {
+					if (BuiltHolders::KeyOf(flight.change) == key) {
+						flight.moved.book = 0;
+					}
+				}
 			} else {
 				book.Apply(key, a_change.item, a_change.count);
 			}
@@ -919,6 +1012,12 @@ namespace LootSync
 		{
 			const auto& change = a_change.change;
 			if (ToCopy(change, a_world)) {
+				return;
+			}
+			// A piece of ours left the session's building: what waits for its ID from before goes (Emptied), and that is all.
+			if (Protocol::IsBuiltHolder(change) && change.item == Protocol::CONTAINER_EMPTIED && BuiltHolders::WhoseIs(change, liveId) == BuiltHolders::Whose::kOurs) {
+				Emptied(a_change);
+				DropStale();
 				return;
 			}
 			if (SkipStorage(a_change.index, change, a_world)) {
@@ -958,6 +1057,83 @@ namespace LootSync
 			pending.push_back(a_change);
 		}
 
+		// ---- our own built pieces' emptyings, our refused moves at built pieces -------------------------------------
+
+		// The server numbered the emptying of a piece of ours (it left the session's building: our scrap, or our world lacking
+		// it, as after a crash or an older save loaded). Every change at its ID numbered before it is the old piece's: our game
+		// may have given the ID to a new piece since, which holds none of it. Noted as the emptying arrives (Live, CatchUp:
+		// before the changes ahead of it in the ledger or the chunk go in), whatever waits.
+		void Emptied(const Protocol::IndexedContainerChange& a_change)
+		{
+			const auto& change = a_change.change;
+			if (!Protocol::IsBuiltHolder(change) || change.item != Protocol::CONTAINER_EMPTIED || BuiltHolders::WhoseIs(change, liveId) != BuiltHolders::Whose::kOurs) {
+				return;
+			}
+			auto& at = ownEmptied.try_emplace(change.container, a_change.index).first->second;
+			at = (std::max)(at, a_change.index);
+		}
+
+		// A change at a piece of ours numbered before (or as) its latest emptying (Emptied).
+		[[nodiscard]] bool Stale(std::uint32_t a_index, const Protocol::ContainerChange& a_change) const
+		{
+			const auto it = ownEmptied.find(a_change.container);
+			return it != ownEmptied.end() && a_index <= it->second;
+		}
+
+		// What waits at a piece of ours from before its emptying goes, the emptying too (a save's record, or one held while our
+		// player id wasn't known yet, may hold them).
+		void DropStale()
+		{
+			const auto ours = [&](const Pending& a_pending) {
+				return Protocol::IsBuiltHolder(a_pending.change) && BuiltHolders::WhoseIs(a_pending.change, liveId) == BuiltHolders::Whose::kOurs;
+			};
+			for (const auto& waiting : pending) {
+				if (ours(waiting)) {
+					Emptied({ waiting.index, 0, waiting.change });
+				}
+			}
+			if (ownEmptied.empty()) {
+				return;
+			}
+			counts.builtStale += static_cast<std::uint32_t>(std::erase_if(pending, [&](const Pending& a_pending) {
+				return ours(a_pending) && Stale(a_pending.index, a_pending.change);
+			}));
+		}
+
+		// Our move a_change at our own piece the session never numbered (BuiltRefused): what it took goes back in (what our
+		// player still has of it), what it put in comes back out to them, while it is still that piece of ours. Its scrap
+		// since put what it held into our workbench, and that stays ours. Our piece not here (its cell went in the moment):
+		// our player's side now, the piece's when it is here again (held as a change of ours at it, in order after what waits).
+		void UndoOwnBuilt(const Protocol::ContainerChange& a_change, World& a_world)
+		{
+			const auto key = a_world.BuiltKeyOf(a_change.container);
+			if (!key || key->builder != 0) {
+				return;  // gone (or our copy of someone's at the ID ours had): what it held is in our workbench, ours
+			}
+			const auto here = Reachable(a_change.container, a_world);
+			std::int64_t back = 0;  // into the piece (< 0: out of it)
+			if (a_change.count < 0) {
+				back = -a_world.ChangePlayer(StorageView::PlayerChange{ a_change.item, a_change.count });
+			} else if (here) {
+				back = -(std::min)(CountOf(a_change.container, a_change.item, a_world), std::int64_t{ a_change.count });
+				a_world.ChangePlayer(StorageView::PlayerChange{ a_change.item, -back });
+			} else {
+				back = -a_change.count;
+				a_world.ChangePlayer(StorageView::PlayerChange{ a_change.item, a_change.count });
+			}
+			if (back == 0) {
+				return;
+			}
+			const Protocol::ContainerChange undo{ a_change.container, a_change.item, static_cast<std::int32_t>(std::clamp<std::int64_t>(back, -Protocol::MAX_ITEM_COUNT, Protocol::MAX_ITEM_COUNT)),
+				a_change.builder };
+			if (here && std::ranges::none_of(pending, [&](const Pending& a_pending) { return a_pending.change.container == a_change.container; })) {
+				a_world.Apply({ undo.container, undo.item, undo.count });
+				a_world.ItemWorked(undo.container);
+				return;
+			}
+			Hold({ receiver.Numbers().Next(), undo });
+		}
+
 		ContainerLedger::Receiver receiver;
 		std::uint64_t             live = 0;    // the session we are welcomed into (0: none, or the connection went)
 		std::uint32_t             liveId = 0;  // our player ID in it
@@ -973,6 +1149,16 @@ namespace LootSync
 		std::unordered_map<std::uint32_t, std::unordered_set<std::uint32_t>> friendTook;
 		// What the session put into each container someone else built, and what our copy of each shows (BuiltHolders).
 		BuiltHolders::Book        book;
+		// Our moves at copies of those on their way (reported, not yet numbered), with what booking them did: a refusal undoes
+		// it (BuiltRefused). Oldest first.
+		struct BuiltFlight
+		{
+			Protocol::ContainerChange  change;
+			BuiltHolders::Book::Moved moved;
+		};
+		std::deque<BuiltFlight> builtFlights;
+		// The pieces of ours whose emptying the session numbered, by ID: the latest emptying's number (Emptied).
+		std::unordered_map<std::uint32_t, std::uint32_t> ownEmptied;
 		Counts                    counts;
 	};
 }

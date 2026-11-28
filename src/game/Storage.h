@@ -122,6 +122,10 @@ namespace Storage
 	// reported), and the menus reading it are filled again; true if it was one. Any other container's is WorldSync's to make.
 	// Main thread.
 	[[nodiscard]] bool ApplyAtBench(const Protocol::ContainerChange& a_change);
+	// Our player's inventory changed to undo a move of theirs the session never numbered (a container a player built:
+	// LootSync's BuiltRefused, which alone makes such a change besides StorageView), as one of Storage's own changes (never
+	// reported): given back (> 0) or taken back (< 0, no more than they have). What moved. Main thread.
+	std::int64_t UndoOnPlayer(const StorageView::PlayerChange& a_change);
 	// A change our own game made to a workbench outside any menu (a repair a friend asked for, paid from it:
 	// WorkshopSync): the menus reading it are filled again. WorldSync reports the change itself, as any of the engine's
 	// there. Main thread.

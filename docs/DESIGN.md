@@ -1947,12 +1947,25 @@ copies under: the builder (a player id, or a builder id: WorkshopStore) and the 
 (`ContainerChange::builder`, written after the container only when its top byte is 0xFF, so a plugin reference's change
 is the same bytes as before). The sender names its own piece with its own player id and a copy with the copy's key
 (`ToWire`; a runtime reference that is neither, `LootSync::World::BuiltKeyOf`, stays unreported). The server puts its own
-piece under the key the piece is kept under (`WorkshopStore::BuilderOf`), takes a copy's change only for a piece it knows
-(`WorkshopStore::Knows`), and tells each game the key as it is to them (`WorkshopStore::BuilderFor`): its own piece in
-the world it plays as its own player id, a piece of another of its characters' worlds as `BUILT_ELSEWHERE`, which that
-game leaves alone; a joiner's world state carries the same, rewritten for them. A scrap of a built piece the loot named
-numbers its emptying (`CONTAINER_EMPTIED` by player 0 at that key), so a new piece given the same id starts empty in every
-game's book. Shared storage keeps plugin references only: a built container is never anybody's true copy, and container
+piece under the key the piece is kept under (`WorkshopStore::BuilderOf`), takes a copy's change only for a piece that
+stands in the session (`WorkshopStore::Built`: not one scrapped or lost), and tells each game the key as it is to them
+(`WorkshopStore::BuilderFor`): its own piece in the world it plays as its own player id, a piece of another of its
+characters' worlds as `BUILT_ELSEWHERE`, which that game leaves alone; a joiner's world state carries the same, rewritten
+for them. A piece the loot named that leaves the session, scrapped or reported lost (`kReportWorkshopGone`: its builder's
+world lacks it), numbers its emptying (`CONTAINER_EMPTIED` by player 0 at that key), so a new piece given the same id
+starts empty in every game's book, and the builder's game lets go of the changes still waiting for the old one
+(`builtStale=`: those numbered before the emptying, checked before whether the piece is loaded).
+A move at a built container the server doesn't number, for whatever reason (no such piece stands, the event budget, the
+player's share, a full table), is answered with a `kStorageRefused` naming its builder (`StorageRefusal::builder`, after
+the reason, only for a runtime container), and so is one the session can't name (FormTranslate drops it: Session hands it
+to `WorldSync::Unsent`). The sender's game booked the move as it went: booking only at the echo would let another
+player's change, shown first, take back out of the copy what the player had just put in, and the move is made in the
+game anyway, so it needs undoing either way. So `LootSync::BuiltRefused` undoes it: at a copy, the book by what booking
+it moved (nothing once the piece's emptying came) and the player's inventory by what the copy showed of it, then the
+copy is brought to the book again; at its own piece, a take goes back in and a put comes back out (what is still there),
+now or as the piece next loads. `builtRefused=` counts them, `builtRefusedOld=` the answers for a move a load has since
+undone. Past the refusals' own budget a move gets no answer and stays done in that game alone. A refused take of things
+the player has used since is taken back only as far as they still have them. Shared storage keeps plugin references only: a built container is never anybody's true copy, and container
 gifts (`bContainerGifts`) still go through plugin containers only. Weapons, armor and personal items stay per player as
 anywhere else.
 
@@ -1963,11 +1976,14 @@ anywhere else.
   order, clamped at nothing as `removeitem` is. A change goes into the book at once, never waiting, and into the copy if
   one stands here (`WorkshopSync::LiveCopyOf`); a copy not here is brought to the book as its menu opens or with the next
   change. A copy is brought on from what it was last shown, kept by the copy's own id, so what it holds that the book
-  can't explain (things put in before this, a stack a mod of ours alone makes) stays; one never shown is taken to show
-  what it holds of the book already (one just made is given all of it). The player's own moves at a copy go into the
-  book, and into what the copy shows, as they are reported. Book and shares go into the co-save's session record
-  (version 2, which also keeps each waiting change's builder; version 1 still reads), written while there is a session or
-  any share, so a copy a save kept is known by what it showed then. A new session empties the book; the shares stay.
+  can't explain (things put in before this, a stack a mod of ours alone makes) stays. One never shown holds none of
+  the book (one just made, or one a save from before this kept, which held only the player's own) and is given all of
+  it; only when the book is unsure (below) is what it holds of the book taken to be the book's. The player's own moves
+  at a copy go into the book, and into what the copy shows, as they are reported. Book and shares go into the co-save's session record
+  (version 2, which also keeps each waiting change's builder; `ResyncRecord.h`), written while there is a session or
+  any share, so a copy a save kept is known by what it showed then; a record with neither a book nor a waiting change at
+  a built container is written as version 1, the old layout, so the save still loads in a build from before (which
+  would otherwise ask for the whole session again). A new session empties the book; the shares stay.
 - *A copy going* first takes out what it shows of the book (`WorldSync::CopyGoing`, `builtRescued=`): those are in the
   piece, in its builder's world, or in their workbench once they scrapped it. Only what the player kept there beyond that
   goes to their pockets (`WorkshopApply::Rescues`), so nothing is had twice. Every path goes through WorkshopSync's
@@ -1978,7 +1994,8 @@ anywhere else.
   gives the player nothing, with a warning in the log (`built=` counts it): a lost item rather than one had twice. A save
   from before this holds no book, and its copies held only what the player put in: those go to them as before.
 - The session file holds built holders in its container changes as layout 47, written only when there is one; a file
-  of an older layout that holds one is damaged. `net status` counts `built=sent/applied/shown/ours/gone/elsewhere/rescued/unknown` and `builtBook=pieces/copies`.
+  of an older layout that holds one is damaged. `net status` counts
+  `built=sent/applied/shown/ours/gone/elsewhere/rescued/unknown/refused/refusedOld/stale` and `builtBook=pieces/copies`.
   Tested without the game (`tests/BuiltHoldersTests.cpp`, two games through the real server); the rig repro is
   `tools/rig/repro/workshop-host-builds.sh` (phase `containers`). Not yet tested in a game.
 
