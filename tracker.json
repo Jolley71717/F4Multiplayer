@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T08:36:55+00:00",
+ "updated": "2026-11-28T09:01:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2185,8 +2185,9 @@
    "title": "Settlements: a container the host built and its copy in the friend's game don't hold the same loot (needs a protocol change)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being built for 0.24.0: a host-built container's loot is shared"
+   "stage": 2,
+   "note": "Built containers now share loot both ways: changes name the piece by its builder and their own id; draft PR open, CI green, rig test next",
+   "pr": 653
   },
   {
    "id": "grij",
