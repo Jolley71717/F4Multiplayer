@@ -268,6 +268,16 @@ namespace InertShot
 		return a_ownCopies < (a_goesOff ? MAX_COPIES : MAX_COPIES - COPIES_FOR_BLASTS);
 	}
 
+	// What an engine caller's launch gets back. The engine's weapon fire (TESObjectWEAP::Fire, +4799B0 in 1.11.240) reads the
+	// first projectile it asked for with no check that one was made (+47A297: mov ecx,[rax+0x260], rax 0), so a launch we refuse
+	// by handing back an empty handle crashed both games of a player whose guns were many (a mod's of dozens of rounds took the
+	// copies' room: GitHub 554). Only a launch of our own (InertShots::Launch), which looks at what it got, may come back empty;
+	// an engine caller's refused launch flies the engine's record with its blast and its damage taken off.
+	constexpr bool MayComeBackEmpty(bool a_ours)
+	{
+		return a_ours;
+	}
+
 	// The casting source a direct launch's data carries (ProjectileLaunchData::castingSource): what the engine's own launch
 	// of a stand-in's gun trail carries, read on the rig (launchlog's trail=engine lines: 10mm pistol, submachine gun,
 	// combat shotgun, laser). CommonLibF4 declares MagicSystem::CastingSource with no values to name it by.

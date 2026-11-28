@@ -253,6 +253,33 @@ namespace InertShots
 			a_data->alwaysHit = a_given.alwaysHit;
 		}
 
+		std::atomic<std::uint32_t> neutralLaunched{ 0 };  // engine launches we would have refused, flown with their blast and damage taken off instead
+		std::atomic<std::uint32_t> neutralLogged{ 0 };
+
+		// An engine caller's launch that we cannot make inert (no room for a copy, the live list full, the engine made nothing from
+		// the copy): the engine's weapon fire reads the projectile it asked for unchecked and crashes on an empty handle
+		// (InertShot::MayComeBackEmpty), so the engine's own record is launched, and what it made has no blast and no damage, and
+		// is ended with the inert ones (Keep, over the cap: there are few of these). a_data's record is the engine's again.
+		RE::ProjectileHandle* LaunchNeutral(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data, RE::BGSProjectile* a_base, const char* a_why)
+		{
+			a_data->projectileBase = a_base;
+			const auto result = continuation(a_out, a_data);
+			RE::NiPointer<RE::Projectile> made;
+			if (a_out) {
+				made = a_out->get();
+			}
+			if (const auto projectile = made.get()) {
+				projectile->explosion = nullptr;
+				projectile->damage = 0.0f;
+				Keep({ .handle = *a_out, .launched = Clock::now() });
+			}
+			neutralLaunched.fetch_add(1, std::memory_order_relaxed);
+			if (neutralLogged.fetch_add(1) < 20) {
+				REX::WARN("InertShots: a launch of {:08X} that could not be made inert ({}) flew as the engine's, with no blast and no damage{}", a_base->GetFormID(), a_why, made ? "" : " (the engine made none)");
+			}
+			return result;
+		}
+
 		RE::ProjectileHandle* LaunchInner(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data)
 		{
 			// Ours (Launch) is this launch alone: any the engine makes from inside it is its own again.
@@ -340,6 +367,9 @@ namespace InertShots
 				if (ourNote) {
 					*ourNote = "refused (live list full)";
 				}
+				if (!InertShot::MayComeBackEmpty(ours)) {
+					return LaunchNeutral(a_out, a_data, base, "the live list is full");
+				}
 				if (a_out) {
 					a_out->reset();
 				}
@@ -363,6 +393,9 @@ namespace InertShots
 				++refused;
 				if (ourNote) {
 					*ourNote = "refused (no inert copy)";
+				}
+				if (!InertShot::MayComeBackEmpty(ours)) {
+					return LaunchNeutral(a_out, a_data, base, "no inert copy of the record to be had");
 				}
 				if (a_out) {
 					a_out->reset();
@@ -391,6 +424,10 @@ namespace InertShots
 			}
 			if (given) {
 				PutBack(a_data, *given);
+			}
+			if (!InertShot::MayComeBackEmpty(ours) && (!a_out || !a_out->get())) {
+				// The engine made nothing from the copy: its caller would crash on that, so the engine's own record flies instead.
+				return LaunchNeutral(a_out, a_data, base, "the engine made no projectile from the copy");
 			}
 			++swapped;
 			if (spawned) {

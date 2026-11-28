@@ -11,6 +11,7 @@
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
 #include "game/PackageRelease.h"
+#include "game/PuppetCombat.h"
 #include "game/Papyrus.h"
 #include "game/RealTime.h"
 #include "game/StandInTime.h"
@@ -31,6 +32,8 @@ namespace Puppets
 		constexpr std::size_t UPDATE_INDEX = 0xCF;
 		// TESObjectREFR::UpdateAnimation(float), Actor's override in the same vtable (RE/T/TESObjectREFR.h).
 		constexpr std::size_t UPDATE_ANIMATION_INDEX = 0x9F;
+		// Actor::UpdateCombat, the engine's combat behaviour tree step (RE/A/Actor.h; +CD0310 in 1.11.240, no direct caller).
+		constexpr std::size_t UPDATE_COMBAT_INDEX = 0xFF;
 
 		// The engine periodically re-evaluates AI packages, so the idle package is re-applied.
 		constexpr auto IDLE_REFRESH = 2s;
@@ -99,6 +102,9 @@ namespace Puppets
 		std::uintptr_t hookedVtable = 0;
 		UpdateFn       originalUpdate = nullptr;
 		UpdateFn       originalUpdateAnimation = nullptr;  // Actor::UpdateAnimation (UpdateAnimationHook)
+		using UpdateCombatFn = void (*)(RE::Actor*);
+		UpdateCombatFn            originalUpdateCombat = nullptr;  // Actor::UpdateCombat (UpdateCombatHook)
+		std::atomic<std::uint32_t> combatKeptOut{ 0 };             // combat updates of puppets not run (PuppetCombat.h)
 
 		// Dev: the stand-in animation steps scaled to real time (UpdateAnimationHook), across all puppets.
 		std::atomic<std::uint32_t> scaledSteps{ 0 };
@@ -1055,6 +1061,32 @@ namespace Puppets
 			originalUpdateAnimation(a_this, step);
 		}
 
+		// The engine's combat update, on its job threads, for an actor in a fight. A puppet is driven by us and its fight is its
+		// owner's game's (PuppetCombat.h): the behaviour tree that would aim its gun, sight a foe and throw a grenade by performing
+		// actions on its animation graph, off the main thread, is not run. Most of the call's time is the lookup: any other actor
+		// goes straight to the engine's.
+		void UpdateCombatHook(RE::Actor* a_this)
+		{
+			if (puppetCount.load(std::memory_order_relaxed) != 0) {
+				bool puppet = false;
+				bool aiAllowed = false;
+				{
+					std::scoped_lock l{ lock };
+					if (const auto it = puppets.find(a_this); it != puppets.end() && it->second.formId == a_this->GetFormID()) {
+						puppet = true;
+						aiAllowed = std::chrono::steady_clock::now() < it->second.aiUntil;
+					}
+				}
+				if (!PuppetCombat::Runs(puppet, aiAllowed)) {
+					if (const auto n = combatKeptOut.fetch_add(1, std::memory_order_relaxed) + 1; n == 1 || n % 500 == 0) {
+						REX::INFO("Puppets: the engine's combat update of puppet {:08X} was not run ({} so far): a puppet's fight is its owner's game's", a_this->GetFormID(), n);
+					}
+					return;
+				}
+			}
+			originalUpdateCombat(a_this);
+		}
+
 		void InstallHook(RE::Actor* a_actor)
 		{
 			const auto vtable = *reinterpret_cast<std::uintptr_t*>(a_actor);
@@ -1073,12 +1105,15 @@ namespace Puppets
 			// The animation update's slot is read before either is written, so neither original is ever our own hook.
 			const auto animationSlot = vtable + sizeof(void*) * UPDATE_ANIMATION_INDEX;
 			originalUpdateAnimation = *reinterpret_cast<UpdateFn*>(animationSlot);
+			const auto combatSlot = vtable + sizeof(void*) * UPDATE_COMBAT_INDEX;
+			originalUpdateCombat = *reinterpret_cast<UpdateCombatFn*>(combatSlot);
 			REL::WriteSafeData(slot, hook);
 			REL::WriteSafeData(animationSlot, reinterpret_cast<std::uintptr_t>(&UpdateAnimationHook));
+			REL::WriteSafeData(combatSlot, reinterpret_cast<std::uintptr_t>(&UpdateCombatHook));
 			hookedVtable = vtable;
 			const auto base = reinterpret_cast<std::uintptr_t>(REX::W32::GetModuleHandleW(nullptr));  // the game's image, to log the RVA
-			REX::INFO("Puppets: hooked actor update (vtable {:X}) and its animation update (+{:X})", vtable,
-				reinterpret_cast<std::uintptr_t>(originalUpdateAnimation) - base);
+			REX::INFO("Puppets: hooked actor update (vtable {:X}), its animation update (+{:X}) and its combat update (+{:X})", vtable,
+				reinterpret_cast<std::uintptr_t>(originalUpdateAnimation) - base, reinterpret_cast<std::uintptr_t>(originalUpdateCombat) - base);
 		}
 
 		// Activation (pressing E) is handled by the base form. Puppets must not start the
