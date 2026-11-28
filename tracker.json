@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T06:01:54+00:00",
+ "updated": "2026-11-28T07:09:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -4430,8 +4430,9 @@
    "title": "Protocol number = the mod's major.minor: patch versions always join each other",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Being built: the join check compares major.minor versions"
+   "stage": 2,
+   "note": "Pull request up and CI green: joins check the same major.minor version, refusals name both versions",
+   "pr": 651
   },
   {
    "id": "xegs",
@@ -4482,6 +4483,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 460
+  },
+  {
+   "id": "xsgl",
+   "title": "Flaky unit test: join approval, a Steam friend and the host's own game are never asked about",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "xus7",
