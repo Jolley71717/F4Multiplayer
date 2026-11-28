@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T05:23:33+00:00",
+ "updated": "2026-11-28T06:01:54+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -4430,8 +4430,8 @@
    "title": "Protocol number = the mod's major.minor: patch versions always join each other",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": "queued for 0.24.0"
+   "stage": 1,
+   "note": "Being built: the join check compares major.minor versions"
   },
   {
    "id": "xegs",
