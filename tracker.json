@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T01:43:42+00:00",
+ "updated": "2026-11-28T01:44:35+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -411,7 +411,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Didn't reproduce on 0.21.0: every piece reached the other game; need the player's logs",
+   "note": "settlement bundle: host builds missing",
    "pr": 494
   },
   {
@@ -2478,8 +2478,8 @@
    "title": "Settlements: a player who leaves and rejoins doesn't see buildings the host placed or changed meanwhile; scrapped lamps leave floating items; shared loot not in the same container",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Player report: settlement builds missing after rejoining, floating lamps"
+   "stage": 1,
+   "note": "settlement bundle: host builds missing"
   },
   {
    "id": "ikwn",
