@@ -34,6 +34,7 @@
 #include "game/WorkshopPower.h"
 #include "game/WorkshopResources.h"
 #include "game/WorkshopSettle.h"
+#include "game/WorldSync.h"
 
 #include "game/DeferredDelete.h"
 #include "game/Destructibles.h"
@@ -1379,7 +1380,12 @@ namespace WorkshopSync
 		// container's (WorkshopApply::Rescues): a turret or a robot holds its own gear.
 		void Delete(RE::TESObjectREFR* a_ref)
 		{
-			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref), Blocked(*a_ref) && !IsWorkshopObject(a_ref))) {
+			// A copy of a container someone built shows the session's loot of the piece (BuiltHolders): that is in the piece,
+			// in its builder's game, and comes out first. Only what our player kept in it beyond that comes to them.
+			// When that can't be known (the save's record didn't read), nothing in it goes to them: a lost thing of theirs
+			// rather than the session's loot had twice (WorldSync says so in the log).
+			const bool known = KindOf(a_ref) != WorkshopApply::Kind::kContainer || WorldSync::CopyGoing(a_ref->GetFormID());
+			if (known && WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref), Blocked(*a_ref) && !IsWorkshopObject(a_ref))) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
 				Hud::Notify(Text::Get("workshop.rescued"));
@@ -10854,6 +10860,41 @@ namespace WorkshopSync
 		return std::format("{} copies ({} loaded), found again={}, graveyard={} ({} not loaded), lightsMade={}", copies.size(), loaded, refound, graveyard.size(), unloaded,
 			       copyLightsMade.load()) +
 		       list;
+	}
+
+	std::optional<std::pair<std::uint32_t, std::uint32_t>> BuiltContainerKey(RE::TESObjectREFR& a_ref)
+	{
+		MainThread::Assert("WorkshopSync::BuiltContainerKey");
+		const auto id = a_ref.GetFormID();
+		const auto base = a_ref.GetObjectReference();
+		if (!Protocol::IsBuiltHolderRef(id) || a_ref.IsDeleted() || !base || !base->Is(RE::ENUM_FORM_ID::kCONT) || IsWorkbenchAnchor(&a_ref)) {
+			return std::nullopt;
+		}
+		for (const auto& [key, copy] : copies) {
+			if (copy.id == id) {
+				const auto live = Live(copy);
+				return live.get() == &a_ref ? std::optional{ key } : std::nullopt;
+			}
+		}
+		if (PlayersOwnPiece(a_ref)) {
+			return std::pair<std::uint32_t, std::uint32_t>{ 0, id };
+		}
+		return std::nullopt;
+	}
+
+	std::uint32_t LiveCopyOf(std::uint32_t a_builder, std::uint32_t a_ref)
+	{
+		MainThread::Assert("WorkshopSync::LiveCopyOf");
+		const auto it = copies.find({ a_builder, a_ref });
+		if (it == copies.end()) {
+			return 0;
+		}
+		const auto live = Live(it->second);
+		const auto base = live ? live->GetObjectReference() : nullptr;
+		if (!live || live->IsDeleted() || !live->GetParentCell() || !base || !base->Is(RE::ENUM_FORM_ID::kCONT)) {
+			return 0;
+		}
+		return live->GetFormID();
 	}
 
 	std::string DescribePutAway()

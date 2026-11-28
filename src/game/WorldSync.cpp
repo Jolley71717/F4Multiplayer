@@ -39,6 +39,7 @@
 #include "game/RackDisplays.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/ResyncRecord.h"
 #include "game/Papyrus.h"
 #include "game/Party.h"
 #include "game/ScriptDoors.h"
@@ -273,6 +274,9 @@ namespace WorldSync
 		LootSync::Loot    loot;
 		bool              lootFullWarned = false;
 		Clock::time_point lootAgedAt{};  // when the wait for living NPCs was last counted (see AgeLoot)
+		// When our copies of containers others built were last brought to the book (LootSync's ShowCopies), every COPIES_SHOWN.
+		Clock::time_point copiesShownAt{};
+		constexpr auto    COPIES_SHOWN = std::chrono::milliseconds(500);
 
 		// Vendors' chests (each faction's merchant container): trading stays in each player's game.
 		std::unordered_set<std::uint32_t> vendorChests;
@@ -1132,9 +1136,12 @@ namespace WorldSync
 				if (count <= 0 || count > Protocol::MAX_ITEM_COUNT) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				if (a_event.newContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.oldContainerFormID)) {
+				// A plugin's reference, or one our game made at runtime that may be a container a player built (BuiltHolders:
+				// LootSync::Report keeps only those of the runtime ones, on the main thread).
+				const auto holder = [](std::uint32_t a_id) { return IsShareableRef(a_id) || Protocol::IsBuiltHolderRef(a_id); };
+				if (a_event.newContainerFormID == PLAYER_REF_ID && holder(a_event.oldContainerFormID)) {
 					move = Move{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count };
-				} else if (a_event.oldContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.newContainerFormID)) {
+				} else if (a_event.oldContainerFormID == PLAYER_REF_ID && holder(a_event.newContainerFormID)) {
 					move = Move{ a_event.newContainerFormID, a_event.baseObjectFormID, count };
 				}
 				if (!move) {
@@ -1394,6 +1401,15 @@ namespace WorldSync
 			using Holder = LootScope::Holder;
 			LootScope::HolderFacts facts;
 			if (!IsShareableRef(a_id)) {
+				// A container a player built, ours or our copy of a friend's (BuiltHolders): a container that keeps what is put
+				// in it (storage: never a roll of loot), shared as a plugin's chest is.
+				if (Protocol::IsBuiltHolderRef(a_id)) {
+					if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id); ref && WorkshopSync::BuiltContainerKey(*ref)) {
+						facts.kind = Holder::kContainer;
+						facts.storage = true;
+						return facts;
+					}
+				}
 				facts.kind = a_id == Protocol::PLAYER_REF_ID ? Holder::kPlayer : Holder::kRuntime;
 				return facts;
 			}
@@ -1533,6 +1549,19 @@ namespace WorldSync
 			}
 
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
+
+			// Containers players built (BuiltHolders): the piece one of ours is, and our copy of a friend's piece.
+			std::optional<BuiltHolders::Key> BuiltKeyOf(std::uint32_t a_holder) override
+			{
+				const auto ref = Protocol::IsBuiltHolderRef(a_holder) ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder) : nullptr;
+				const auto key = ref ? WorkshopSync::BuiltContainerKey(*ref) : std::nullopt;
+				return key ? std::optional{ BuiltHolders::Key{ key->first, key->second } } : std::nullopt;
+			}
+
+			std::uint32_t CopyOf(const BuiltHolders::Key& a_key) override { return WorkshopSync::LiveCopyOf(a_key.builder, a_key.ref); }
+
+			// A refused move of ours at one of those undone (LootSync's BuiltRefused): Storage changes our player, unreported.
+			std::int64_t ChangePlayer(const StorageView::PlayerChange& a_change) override { return Storage::UndoOnPlayer(a_change); }
 
 			std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
 			{
@@ -2858,7 +2887,8 @@ namespace WorldSync
 		}
 
 		constexpr std::uint32_t RESYNC_RECORD = 'CONT';
-		constexpr std::uint32_t RESYNC_VERSION = 1;
+		// The most a session record is read from: far above any real one (each waiting change is 20 bytes).
+		constexpr std::uint32_t RESYNC_MAX_LENGTH = 64u << 20;
 	}
 
 	bool InWorld()
@@ -3553,6 +3583,14 @@ namespace WorldSync
 			retryUsMax = (std::max)(retryUsMax, retryUs);
 		}
 		AgeLoot(now, inWorld);
+		// A copy of a container another player built that our game made again (a rejoin, a load, its cell loaded again) holds
+		// none of the session's loot in its piece until shown it, nor one that was away as a change came (LootSync's ShowCopies).
+		if (inWorld && now - copiesShownAt >= COPIES_SHOWN) {
+			copiesShownAt = now;
+			if (const auto brought = loot.ShowCopies(engine)) {
+				REX::INFO("WorldSync: {} copies of containers other players built shown what the session put in them (made again, or away as it changed)", brought);
+			}
+		}
 	}
 
 	void ReportBenchMove(std::uint32_t a_bench, std::uint32_t a_item, std::int32_t a_count)
@@ -3562,6 +3600,47 @@ namespace WorldSync
 		}
 		std::scoped_lock l{ inboxLock };
 		lootInbox.push_back(Move{ a_bench, a_item, a_count });
+	}
+
+	bool CopyGoing(std::uint32_t a_local)
+	{
+		MainThread::Assert("WorldSync::CopyGoing");
+		const auto going = loot.CopyGoing(a_local, engine);
+		if (going.taken != 0) {
+			REX::INFO("WorldSync: copy {:08X} goes: {} stacks of the session's loot in it stay its builder's", a_local, going.taken);
+		}
+		if (!going.known) {
+			REX::WARN("WorldSync: copy {:08X} goes, and what in it is our player's can't be known (the save's record of built containers didn't read): it goes with what it holds", a_local);
+		}
+		return going.known;
+	}
+
+	namespace
+	{
+		// A move of ours at a container a player built that the session never numbered, undone (LootSync's BuiltRefused).
+		void BuiltUndo(const Protocol::ContainerChange& a_move, std::string_view a_why)
+		{
+			if (loot.BuiltRefused(a_move, engine)) {
+				REX::INFO("WorldSync: our move at built container {:08X} ({} of {:08X}, builder {:08X}) {}: undone", a_move.container, a_move.count, a_move.item, a_move.builder, a_why);
+			}
+		}
+	}
+
+	void OnBuiltRefused(const Protocol::StorageRefusal& a_refusal)
+	{
+		MainThread::Assert("WorldSync::OnBuiltRefused");
+		BuiltUndo({ a_refusal.container, a_refusal.item, a_refusal.count, a_refusal.builder }, "was refused");
+	}
+
+	void Unsent(std::span<const std::uint8_t> a_packet)
+	{
+		if (a_packet.empty() || a_packet[0] != static_cast<std::uint8_t>(Protocol::MessageType::kReportContainer)) {
+			return;
+		}
+		if (const auto change = Protocol::DecodeContainerChange(a_packet); change && Protocol::IsBuiltHolder(*change)) {
+			MainThread::Assert("WorldSync::Unsent");
+			BuiltUndo(*change, "couldn't be sent (the session can't name its item)");
+		}
 	}
 
 	void FlushLoot()
@@ -3662,51 +3741,42 @@ namespace WorldSync
 	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc)
 	{
 		const auto point = loot.Point();
-		if (point.sessionId == 0) {
+		// With no session, still written while our copies of built containers hold the session's loot (BuiltHolders::Book):
+		// a save made after a session keeps them, and their share must be known when they go.
+		if (point.sessionId == 0 && loot.Built().Empty()) {
 			return;
 		}
-		const auto& waiting = loot.Waiting();
-		const auto  count = static_cast<std::uint32_t>(waiting.size());
-		if (!a_intfc->OpenRecord(RESYNC_RECORD, RESYNC_VERSION) ||
-			!a_intfc->WriteRecordData(point.sessionId) || !a_intfc->WriteRecordData(point.containerFrom) || !a_intfc->WriteRecordData(count)) {
+		// Version 1 while nothing in it needs 2 (ResyncRecord.h): a save from this build still loads in one from before.
+		const auto version = ResyncRecord::VersionFor(loot.Waiting(), loot.Built());
+		const auto bytes = ResyncRecord::Encode(point, loot.Waiting(), loot.Built(), version);
+		if (!a_intfc->OpenRecord(RESYNC_RECORD, version) || !a_intfc->WriteRecordData(bytes.data(), static_cast<std::uint32_t>(bytes.size()))) {
 			REX::ERROR("WorldSync: failed to save the session record");
-			return;
-		}
-		for (const auto& entry : waiting) {
-			a_intfc->WriteRecordData(entry.index);
-			a_intfc->WriteRecordData(entry.change.container);
-			a_intfc->WriteRecordData(entry.change.item);
-			a_intfc->WriteRecordData(entry.change.count);
 		}
 	}
 
 	void LoadResyncPoint(const F4SE::SerializationInterface* a_intfc, std::uint32_t a_version, std::uint32_t a_length)
 	{
 		RevertResyncPoint();
-		std::uint64_t savedSession = 0;
-		std::uint32_t savedNext = 0;
-		std::uint32_t count = 0;
-		constexpr std::uint32_t HEADER = sizeof(savedSession) + sizeof(savedNext) + sizeof(count);
-		constexpr std::uint32_t ENTRY = 4 * sizeof(std::uint32_t);
-		if (a_version != RESYNC_VERSION || a_length < HEADER ||
-			a_intfc->ReadRecordData(savedSession) != sizeof(savedSession) ||
-			a_intfc->ReadRecordData(savedNext) != sizeof(savedNext) ||
-			a_intfc->ReadRecordData(count) != sizeof(count) || count > (a_length - HEADER) / ENTRY) {
-			REX::WARN("WorldSync: ignoring an unreadable session record");
+		std::optional<ResyncRecord::Record> record;
+		if (a_length <= RESYNC_MAX_LENGTH) {
+			std::vector<std::uint8_t> bytes(a_length);
+			if (a_intfc->ReadRecordData(bytes.data(), a_length) == a_length) {
+				record = ResyncRecord::Decode(a_version, bytes);
+			}
+		}
+		if (!record) {
+			REX::WARN("WorldSync: ignoring an unreadable session record (version {}, {} bytes)", a_version, a_length);
+			loot.BuiltUnsure();  // our copies of built containers may hold the session's loot: none of it is our player's
 			return;
 		}
-		std::vector<LootSync::Pending> saved;
-		for (std::uint32_t i = 0; i < count; ++i) {
-			LootSync::Pending entry{};
-			a_intfc->ReadRecordData(entry.index);
-			a_intfc->ReadRecordData(entry.change.container);
-			a_intfc->ReadRecordData(entry.change.item);
-			a_intfc->ReadRecordData(entry.change.count);
-			saved.push_back(entry);
+		if (!record->bookRead) {
+			REX::WARN("WorldSync: the session record's book of built containers doesn't read; copies of them show what the session puts in from now on, and give nothing to our player as they go");
 		}
-		const auto waiting = saved.size();
-		loot.LoadRecord(savedSession, savedNext, std::move(saved));
-		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", savedSession, savedNext, waiting);
+		const auto waiting = record->waiting.size();
+		const auto pieces = record->book.Pieces();
+		loot.LoadRecord(record->session, record->next, std::move(record->waiting), std::move(record->book));
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting, {} built containers in the book, version {})", record->session, record->next, waiting,
+			pieces, a_version);
 	}
 
 	void RevertResyncPoint()
@@ -3738,6 +3808,8 @@ namespace WorldSync
 		       std::format(" friendsKills={}", friendsKills) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
-		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft);
+		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft) +
+		       std::format(" built={}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{} builtBook={}/{} builtCaughtUp={}", stats.builtSent, stats.builtApplied, stats.builtShown, stats.builtOurs, stats.builtGone, stats.builtElsewhere,
+			   stats.builtRescued, stats.builtUnknown, stats.builtRefused, stats.builtRefusedOld, stats.builtStale, loot.Built().Pieces(), loot.Built().Copies(), stats.builtCaughtUp);
 	}
 }

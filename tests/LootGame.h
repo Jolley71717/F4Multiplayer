@@ -12,6 +12,7 @@
 #include "ServerFixture.h"
 
 #include "game/LootSync.h"
+#include "game/ResyncRecord.h"
 #include "game/StorageView.h"
 #include "game/SupplyLines.h"
 
@@ -80,8 +81,13 @@ namespace LootTest
 		std::array<std::uint32_t, static_cast<std::size_t>(StorageView::Notice::kCount)> notices{};
 		// Items of ours that weren't moved where an engine call said (our player lacked them): see ChangePlayer.
 		std::int64_t                          lacked = 0;
+		// Refusals of our moves at containers players built (kStorageRefused naming a builder) heard.
+		int builtRefusals = 0;
 		// Moves the session's numbering can't carry (FormTranslate drops them at Session::SendOut): the items here.
 		std::set<std::uint32_t>               untranslatable;
+		// Containers players built that this game has (WorkshopSync's): a runtime reference -> its piece's key (builder 0:
+		// our own piece).
+		std::map<std::uint32_t, BuiltHolders::Key> built;
 
 		struct Save
 		{
@@ -93,6 +99,9 @@ namespace LootTest
 			std::vector<Protocol::ContainerChange> unanswered;
 			std::vector<std::uint32_t>             lacks;      // and our numbered moves its world lacks
 			std::uint32_t                          lacksFrom = 0;
+			BuiltHolders::Book                     book;  // WorldSync's session record, version 2
+			std::map<std::uint32_t, BuiltHolders::Key> built;
+			std::uint32_t                          version = 0;  // the session record's (ResyncRecord::VersionFor)
 		};
 
 		Game(PeerId a_peer, std::uint64_t a_identity) :
@@ -215,7 +224,12 @@ namespace LootTest
 					}
 				} else if (IsType(packet, MT::kStorageRefused)) {
 					if (const auto msg = Protocol::DecodeStorageRefusal(packet)) {
-						storage.OnRefused(*msg);
+						if (Protocol::IsBuiltHolderRef(msg->container) && msg->builder != 0) {
+							++builtRefusals;
+							loot.BuiltRefused({ msg->container, msg->item, msg->count, msg->builder }, *this);  // WorldSync::OnBuiltRefused
+						} else {
+							storage.OnRefused(*msg);
+						}
 					}
 				} else if (IsType(packet, MT::kStorageCaughtUp)) {
 					// Storage::OnCaughtUp: our moves at a friend's storage settle once the world state answers our latest request.
@@ -263,6 +277,7 @@ namespace LootTest
 				++requests;
 			}
 			loot.Retry(*this, APPLY_INTERVAL);
+			loot.ShowCopies(*this);  // our copies of built containers, made again or back, shown the book (every COPIES_SHOWN)
 			if (connected) {
 				storage.Frame();
 				storage.RetryCaughtUp(loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0);
@@ -600,7 +615,16 @@ namespace LootTest
 		Save SaveGame(Fixture& a_f)
 		{
 			BeforeSaveOrLoad(a_f);
-			return { holders, carried, loot.Point(), loot.Waiting(), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom() };
+			// WorldSync's session record, as the co-save writes and reads it (SaveResyncPoint, LoadResyncPoint).
+			const auto version = ResyncRecord::VersionFor(loot.Waiting(), loot.Built());
+			auto       record = ResyncRecord::Decode(version, ResyncRecord::Encode(loot.Point(), loot.Waiting(), loot.Built(), version));
+			REQUIRE(record);
+			REQUIRE(record->bookRead);
+			auto point = loot.Point();
+			point.sessionId = record->session;
+			point.containerFrom = record->next;
+			return { holders, carried, point, std::move(record->waiting), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom(),
+				std::move(record->book), built, version };
 		}
 
 		// Loads a save while connected: Session::OnBeforeSaveOrLoad, the co-save records (F4SE reverts them
@@ -716,6 +740,45 @@ namespace LootTest
 
 		bool Stocked(std::uint32_t a_holder) override { return !unstocked.contains(a_holder); }
 
+		// ---- containers players built (BuiltHolders) ------------------------------------------------------------
+
+		std::optional<BuiltHolders::Key> BuiltKeyOf(std::uint32_t a_holder) override
+		{
+			const auto it = built.find(a_holder);
+			return it != built.end() ? std::optional{ it->second } : std::nullopt;
+		}
+
+		std::uint32_t CopyOf(const BuiltHolders::Key& a_key) override
+		{
+			for (const auto& [ref, key] : built) {
+				if (key == a_key && key.builder != 0 && !away.contains(ref)) {
+					return ref;
+				}
+			}
+			return 0;
+		}
+
+		// WorkshopSync makes our copy a_local of a_key's piece (empty, as a placed reference is).
+		void MakeCopy(std::uint32_t a_local, const BuiltHolders::Key& a_key)
+		{
+			built[a_local] = a_key;
+			holders.erase(a_local);
+			away.erase(a_local);
+		}
+
+		// WorkshopSync::Delete removes our copy: WorldSync::CopyGoing, then WorkshopApply::Rescues hands what is left to our
+		// player.
+		void RemoveCopy(std::uint32_t a_local)
+		{
+			if (loot.CopyGoing(a_local, *this).known) {
+				for (const auto& [item, count] : holders[a_local]) {
+					carried[item] += count;
+				}
+			}
+			holders.erase(a_local);
+			built.erase(a_local);
+		}
+
 	private:
 		// Adds to or takes from a count (a take takes no more than there is): what was changed.
 		static std::int64_t Change(std::int64_t& a_have, std::int64_t a_count)
@@ -755,7 +818,11 @@ namespace LootTest
 				}
 				if (IsType(packet, MT::kReportContainer)) {
 					if (const auto change = Protocol::DecodeContainerChange(packet); change && untranslatable.contains(change->item)) {
-						storage.Unsent(*change);
+						if (Protocol::IsBuiltHolder(*change)) {
+							loot.BuiltRefused(*change, *this);  // WorldSync::Unsent
+						} else {
+							storage.Unsent(*change);
+						}
 						continue;
 					}
 				}
@@ -782,7 +849,8 @@ namespace LootTest
 			carried = a_save.carried;
 			dead.clear();  // WorldSync::Reset
 			loot.LoadRecord(0, 0, {});
-			loot.LoadRecord(a_save.point.sessionId, a_save.point.containerFrom, a_save.waiting);
+			built = a_save.built;
+			loot.LoadRecord(a_save.point.sessionId, a_save.point.containerFrom, a_save.waiting, a_save.book);
 			const auto session = connected ? sessionId : a_save.movesSession;
 			const bool same = a_save.movesSession == session;
 			storage.OnLoad(session, same ? a_save.unanswered : std::vector<Protocol::ContainerChange>{}, same ? a_save.lacks : std::vector<std::uint32_t>{}, same ? a_save.lacksFrom : 0);

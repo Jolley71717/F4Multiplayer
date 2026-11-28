@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 
 namespace LootSync
 {
@@ -110,6 +111,19 @@ namespace WorldSync
 	// now, while the world they were made in stands, and what is the session's joins what TakeOutgoing
 	// returns (ahead of a load's request, so the server numbers it before answering).
 	void FlushLoot();
+
+	// WorkshopSync is about to remove our copy of a container someone built: what it shows of the session's loot of the piece
+	// comes out of it first (that is in the piece, in its builder's game), so only our player's own things go to their pockets.
+	// False when what in it is our player's can't be known (BuiltHolders::Book::Unsure): nothing in it is to go to them.
+	[[nodiscard]] bool CopyGoing(std::uint32_t a_local);
+
+	// The server refused a move of ours at a container a player built (a StorageRefusal naming its builder: the piece is
+	// gone, or the move was past a limit): it is undone, in the book of a copy and in our player's inventory, or in our own
+	// piece (LootSync's BuiltRefused). Main thread.
+	void OnBuiltRefused(const Protocol::StorageRefusal& a_refusal);
+	// A packet we were to send that the session's numbering couldn't carry (FormTranslate dropped it): a move of ours at a
+	// container a player built among them is undone the same way, as it never went. Main thread.
+	void Unsent(std::span<const std::uint8_t> a_packet);
 
 	// A put (a_count > 0) or a take (< 0) of ours at a workbench shared storage watches that the container watcher didn't
 	// see (Storage made it as one of its own changes: a build taken back returns what the workbench gave it, and takes out
