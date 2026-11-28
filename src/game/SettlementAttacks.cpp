@@ -66,6 +66,14 @@ namespace SettlementAttacks
 		std::vector<std::string_view> missingFiles;
 		bool                          resolved = false;
 
+		// AttackBook::SIEGES in this game.
+		struct SiegeQuest
+		{
+			RE::TESQuest*             quest = nullptr;
+			const AttackBook::Siege* siege = nullptr;
+		};
+		std::vector<SiegeQuest> siegeQuests;
+
 		// The host's game.
 		AttackBook::HostRuns  hostRuns;
 		AttackBook::HostWords hostWords;
@@ -126,6 +134,20 @@ namespace SettlementAttacks
 		std::unordered_map<std::uint32_t, Closing> closing;  // by quest
 		bool                                       sweepPending = false;  // a load came: its leftovers are looked for
 
+		// A friend's game: its own run of a siege quest, held back for the host's (AttackBook::NextSiege).
+		struct SiegeRun
+		{
+			bool              held = false;          // we marked its startStage done
+			bool              objectiveShown = false;
+			bool              hostDefended = false;  // the host's run reached its doneStage
+			bool              hostOver = false;      // the host's run was told over (a new one clears both)
+			bool              ownLogged = false;
+			Clock::time_point attackersSeen{};
+			Clock::time_point endAsked{};
+		};
+		std::unordered_map<std::uint32_t, SiegeRun> sieges;     // by quest
+		std::vector<std::uint32_t>                  releasing;  // held sieges let go once the world is there (the session ended)
+
 		// Counts for `net status`.
 		std::uint32_t reported = 0;       // our phases sent (host)
 		std::uint32_t answered = 0;       // questions answered (host)
@@ -139,6 +161,10 @@ namespace SettlementAttacks
 		std::uint32_t closedDown = 0;     // runs closed down after a session's end or a load
 		std::uint32_t leftovers = 0;      // runs a load brought that a session left defused
 		std::uint32_t savedDefused = 0;   // runs defused just before a save
+		std::uint32_t siegesHeld = 0;     // our siege fights held back for the host's (friend)
+		std::uint32_t siegesEnded = 0;    // our siege end stages set from the host's (friend)
+		std::uint32_t siegesReleased = 0; // held fights let go (friend, or a session's end)
+		std::uint32_t siegeTimers = 0;    // siege timers started again (a release, or a load)
 
 		void Resolve()
 		{
@@ -148,6 +174,16 @@ namespace SettlementAttacks
 			const auto handler = RE::TESDataHandler::GetSingleton();
 			if (!handler) {
 				return;
+			}
+			for (const auto& siege : AttackBook::SIEGES) {
+				if (!handler->LookupLoadedModByName(siege.file)) {
+					continue;
+				}
+				if (const auto quest = handler->LookupForm<RE::TESQuest>(siege.quest, siege.file)) {
+					siegeQuests.push_back({ quest, &siege });
+				} else {
+					REX::WARN("SettlementAttacks: {} ({:06X}) is not in {} here; its siege is each game's own", siege.editorId, siege.quest, siege.file);
+				}
 			}
 			for (const auto& attack : AttackBook::ATTACKS) {
 				if (std::ranges::contains(missingFiles, attack.file)) {
@@ -199,6 +235,23 @@ namespace SettlementAttacks
 			}
 			seen.begun = QuestStageLayout::IsStageDone(a_quest, AttackBook::START_STAGE);
 			seen.done = QuestStageLayout::IsStageDone(a_quest, AttackBook::DONE_STAGE);
+			return seen;
+		}
+
+		// A siege quest as the attacks' look reads it: begun is its startStage, done its doneStage.
+		AttackBook::Seen ReadSiege(const SiegeQuest& a_siege)
+		{
+			const auto       quest = a_siege.quest;
+			AttackBook::Seen seen{ quest->GetFormID() };
+			seen.running = Running(quest);
+			if (seen.running) {
+				const auto workshop = quest->GetAliasedRef(a_siege.siege->workshopAlias).get();
+				seen.workshop = workshop && Protocol::IsShareableRef(workshop->GetFormID()) ? workshop->GetFormID() : 0;
+				const auto location = AliasedLocation(quest, a_siege.siege->locationAlias);
+				seen.location = Protocol::IsShareableRef(location) ? location : 0;
+			}
+			seen.begun = QuestStageLayout::IsStageDone(quest, a_siege.siege->startStage);
+			seen.done = QuestStageLayout::IsStageDone(quest, a_siege.siege->doneStage);
 			return seen;
 		}
 
@@ -366,6 +419,11 @@ namespace SettlementAttacks
 			for (const auto quest : quests) {
 				seen.push_back(Read(quest));
 			}
+			// The Castle's siege is reported as the attacks are: rolled while the quest runs, underway at its fight, defended
+			// at its end stage, over as it stops.
+			for (const auto& siege : siegeQuests) {
+				seen.push_back(ReadSiege(siege));
+			}
 			for (const auto& report : hostRuns.Look(seen)) {
 				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(report.quest);
 				REX::INFO("SettlementAttacks: our attack {:08X} '{}' on {:08X} ({}): phase {}{}", report.quest, EditorId(quest), report.workshop, PlaceName(report.workshop, report.location),
@@ -433,12 +491,17 @@ namespace SettlementAttacks
 		}
 
 		// Whether the host's attackers (our copies of friends' NPCs) stand at the settlement here, lately.
+		bool AttackersNear(std::uint32_t a_workshop, Clock::time_point& a_seen, Clock::time_point a_now)
+		{
+			if (Spawns::CopiesNear(Workbench(a_workshop), ATTACKERS_RADIUS) > 0) {
+				a_seen = a_now;
+			}
+			return a_seen != Clock::time_point{} && a_now - a_seen < ATTACKERS_LINGER;
+		}
+
 		bool AttackersHere(Mirror& a_mirror, Clock::time_point a_now)
 		{
-			if (Spawns::CopiesNear(Workbench(a_mirror.workshop), ATTACKERS_RADIUS) > 0) {
-				a_mirror.attackersSeen = a_now;
-			}
-			return a_mirror.attackersSeen != Clock::time_point{} && a_now - a_mirror.attackersSeen < ATTACKERS_LINGER;
+			return AttackersNear(a_mirror.workshop, a_mirror.attackersSeen, a_now);
 		}
 
 		// Our mirror of the host's attack in a_quest (AttackBook::Next). False: it is done with (forget it).
@@ -597,6 +660,151 @@ namespace SettlementAttacks
 			}
 		}
 
+		// --- a siege (AttackBook::SIEGES) ---
+
+		const SiegeQuest* SiegeOf(std::uint32_t a_quest)
+		{
+			const auto it = std::ranges::find_if(siegeQuests, [&](const SiegeQuest& a_siege) { return a_siege.quest->GetFormID() == a_quest; });
+			return it != siegeQuests.end() ? &*it : nullptr;
+		}
+
+		// An objective's state here (QUEST_OBJECTIVE_STATE: 1 shown, 2 completed), 0 if it has none.
+		std::int32_t ObjectiveState(const RE::TESQuest* a_quest, std::uint16_t a_index)
+		{
+			for (const auto objective : a_quest->objectives) {
+				if (objective && objective->index == a_index) {
+					return static_cast<std::int32_t>(objective->state);
+				}
+			}
+			return 0;
+		}
+
+		// Starts the siege's fight timer again (the script's own function), for a run whose player has arrived: its fight
+		// then comes as the game would have it.
+		bool StartSiegeTimer(const SiegeQuest& a_siege)
+		{
+			const auto self = Papyrus::BoundObject(a_siege.quest, a_siege.siege->script, false);
+			return self && Papyrus::CallOn(self, a_siege.siege->timerFunction, [](RE::BSScrapArray<RE::BSScript::Variable>& a_out) { a_out = RE::BSScrapArray<RE::BSScript::Variable>{}; });
+		}
+
+		// Our held fight is ours again: our mark on its startStage cleared, its timer started again where our player has
+		// arrived (the hold may have let its end go by: the timer sets startStage only if it isn't done).
+		void ReleaseSiege(const SiegeQuest& a_siege, bool a_objectiveShown, std::string_view a_why)
+		{
+			const auto  quest = a_siege.quest;
+			const auto& siege = *a_siege.siege;
+			if (a_objectiveShown) {
+				Console(std::format("setobjectivedisplayed {:08X} {} 0", quest->GetFormID(), siege.objective));
+			}
+			if (QuestStageLayout::IsStageDone(quest, siege.doneStage) || !QuestStageLayout::ClearDone(quest, siege.startStage)) {
+				return;
+			}
+			++siegesReleased;
+			const bool arrived = Running(quest) && QuestStageLayout::IsStageDone(quest, siege.arrivedStage);
+			const bool timer = arrived && StartSiegeTimer(a_siege);
+			if (timer) {
+				++siegeTimers;
+			}
+			REX::INFO("SettlementAttacks: our siege {:08X} '{}' is ours again ({}): stage {} cleared{}", quest->GetFormID(), EditorId(quest), a_why, siege.startStage,
+				timer ? ", its timer started again" : arrived ? "; its timer couldn't be started (no script bound)" : " (its player hasn't arrived: its timer starts as they do)");
+		}
+
+		// Our own run of a siege quest while the host's game decides it (AttackBook::NextSiege).
+		void SiegeLook(const SiegeQuest& a_siege, Clock::time_point a_now)
+		{
+			const auto  quest = a_siege.quest;
+			const auto& siege = *a_siege.siege;
+			const auto  id = quest->GetFormID();
+			const auto  seen = ReadSiege(a_siege);
+			const auto  live = view.LiveOf(id);
+			auto&       run = sieges[id];
+			if (live) {
+				if (run.hostOver && live->phase < Phase::kDefended) {
+					run.hostOver = false;  // a new run of the host's
+					run.hostDefended = false;
+				}
+				run.hostDefended = run.hostDefended || live->phase >= Phase::kDefended;
+			}
+			if (!seen.running) {
+				run.held = false;
+				run.objectiveShown = false;
+				run.ownLogged = false;
+				if (run.hostOver || !live) {
+					run.hostDefended = false;  // a run of ours that starts later is a new one
+				}
+				return;
+			}
+			const auto workshop = seen.workshop != 0 ? seen.workshop : live ? live->workshop : 0;
+			const bool loadedHere = workshop != 0 && LoadedHere(workshop);
+			const AttackBook::SiegeFacts facts{
+				.running = true,
+				.begun = seen.begun,
+				.held = run.held,
+				.done = seen.done,
+				.hostRun = live != nullptr,
+				.hostPhase = live ? live->phase : Phase::kOver,
+				.hostDefended = run.hostDefended,
+				.hostOwns = workshop != 0 && view.WordOn(workshop, a_now) == AttackBook::Word::kHost,
+				.objectiveShown = run.objectiveShown,
+				.loadedHere = loadedHere,
+				.hostAttackersHere = loadedHere && live && live->phase == Phase::kUnderway && AttackersNear(workshop, run.attackersSeen, a_now),
+			};
+			if (seen.begun && !run.held && !seen.done && (facts.hostRun || facts.hostOwns) && !run.ownLogged) {
+				run.ownLogged = true;
+				REX::WARN("SettlementAttacks: our own siege {:08X} '{}' began before the host's word: its fight is left to run (never stopped mid-fight)", id, EditorId(quest));
+			}
+			switch (AttackBook::NextSiege(facts)) {
+			case AttackBook::SiegeStep::kNone:
+				break;
+			case AttackBook::SiegeStep::kHold:
+				if (QuestStageLayout::MarkDone(quest, siege.startStage)) {
+					run.held = true;
+					++siegesHeld;
+					REX::INFO("SettlementAttacks: our siege {:08X} '{}' at {:08X} ({}) is held: the host's game decides it (stage {} marked done, its fight never begins here)", id, EditorId(quest),
+						workshop, PlaceName(workshop, seen.location), siege.startStage);
+				} else if (!run.ownLogged) {
+					run.ownLogged = true;
+					REX::WARN("SettlementAttacks: our siege {:08X} '{}' couldn't be held (no stage {})", id, EditorId(quest), siege.startStage);
+				}
+				break;
+			case AttackBook::SiegeStep::kShowObjective:
+				run.objectiveShown = true;
+				Console(std::format("setobjectivedisplayed {:08X} {} 1", id, siege.objective));
+				REX::INFO("SettlementAttacks: our player is at {:08X} during the host's siege, its attackers there: our objective {} is shown", workshop, siege.objective);
+				break;
+			case AttackBook::SiegeStep::kHideObjective:
+				run.objectiveShown = false;
+				Console(std::format("setobjectivedisplayed {:08X} {} 0", id, siege.objective));
+				REX::INFO("SettlementAttacks: our siege's objective {} at {:08X} is hidden ({})", siege.objective, workshop, !loadedHere ? "our player left" : "the host's attackers aren't here");
+				break;
+			case AttackBook::SiegeStep::kEnd:
+				if (a_now - run.endAsked >= STEP_AGAIN) {
+					run.endAsked = a_now;
+					// What the startStage our hold skipped does to the objectives before it (completes the "get ready" one,
+					// hides the "go there" one), then the end stage, with its own script: our end, our scenes, our reward.
+					if (const auto ready = ObjectiveState(quest, siege.beforeObjective); (ready & 1) != 0 && (ready & 2) == 0) {
+						Console(std::format("setobjectivecompleted {:08X} {} 1", id, siege.beforeObjective));
+					}
+					if (const auto go = ObjectiveState(quest, siege.goObjective); (go & 1) != 0 && (go & 2) == 0) {
+						Console(std::format("setobjectivedisplayed {:08X} {} 0", id, siege.goObjective));
+					}
+					if (!run.objectiveShown) {
+						Console(std::format("setobjectivedisplayed {:08X} {} 1", id, siege.objective));
+					}
+					run.objectiveShown = false;
+					Console(std::format("setstage {:08X} {}", id, siege.doneStage));
+					++siegesEnded;
+					REX::INFO("SettlementAttacks: the host's siege at {:08X} ({}) was won: our {:08X} '{}' sets stage {} (its end, once)", workshop, PlaceName(workshop, seen.location), id, EditorId(quest),
+						siege.doneStage);
+				}
+				break;
+			case AttackBook::SiegeStep::kRelease:
+				ReleaseSiege(a_siege, false, "the host's run ended and the settlement isn't the host's");
+				run.held = false;
+				break;
+			}
+		}
+
 		void FriendLook(Clock::time_point a_now)
 		{
 			for (const auto quest : view.Expire(a_now)) {
@@ -634,6 +842,9 @@ namespace SettlementAttacks
 					mirrors.erase(it);
 				}
 			}
+			for (const auto& siege : siegeQuests) {
+				SiegeLook(siege, a_now);
+			}
 		}
 
 		// --- in a session or not ---
@@ -643,6 +854,17 @@ namespace SettlementAttacks
 		void Sweep()
 		{
 			sweepPending = false;
+			// A siege waiting for its fight (its player arrived, the fight not begun): its timer started again, as a session's
+			// hold may have let it go by in the save (the timer sets the fight's stage only if it isn't done). At most a
+			// timer's length (2 game hours) later than the game's own.
+			for (const auto& siege : siegeQuests) {
+				const auto quest = siege.quest;
+				if (Running(quest) && QuestStageLayout::IsStageDone(quest, siege.siege->arrivedStage) && !QuestStageLayout::IsStageDone(quest, siege.siege->startStage) &&
+					!QuestStageLayout::IsStageDone(quest, siege.siege->doneStage) && StartSiegeTimer(siege)) {
+					++siegeTimers;
+					REX::INFO("SettlementAttacks: the loaded game's siege {:08X} '{}' waits for its fight: its timer is started again", quest->GetFormID(), EditorId(quest));
+				}
+			}
 			for (const auto quest : quests) {
 				const auto seen = Read(quest);
 				if (!AttackBook::Leftover(seen)) {
@@ -716,6 +938,16 @@ namespace SettlementAttacks
 			}
 		}
 
+		// The sieges a session's end let go, once the world is there.
+		void ReleaseAll()
+		{
+			for (const auto id : std::exchange(releasing, {})) {
+				if (const auto siege = SiegeOf(id)) {
+					ReleaseSiege(*siege, false, "the session ended");
+				}
+			}
+		}
+
 		bool InWorldNow()
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -735,7 +967,7 @@ namespace SettlementAttacks
 		if (now - lastLook < LOOK_INTERVAL || Story::InOpening() || !WorldSync::InWorld() || !Hud::IsSettled() || Hud::LoadingScreenUp()) {
 			return;
 		}
-		if (!a_inSession && !sweepPending && closing.empty()) {
+		if (!a_inSession && !sweepPending && closing.empty() && releasing.empty()) {
 			return;
 		}
 		lastLook = now;
@@ -745,6 +977,9 @@ namespace SettlementAttacks
 		}
 		if (!closing.empty()) {
 			CloseOut(now);
+		}
+		if (!releasing.empty()) {
+			ReleaseAll();
 		}
 		if (!a_inSession) {
 			return;
@@ -779,6 +1014,13 @@ namespace SettlementAttacks
 				it->second.hostPhase = Phase::kOver;
 				it->second.outcome = a_attack.outcome;
 			}
+			if (SiegeOf(a_attack.quest)) {
+				auto& run = sieges[a_attack.quest];
+				run.hostOver = true;
+				run.hostDefended = run.hostDefended || a_attack.outcome == Outcome::kDefended;
+			}
+		} else if (a_attack.phase == Phase::kDefended && SiegeOf(a_attack.quest)) {
+			sieges[a_attack.quest].hostDefended = true;
 		}
 		lastLook = {};  // looked at again next frame
 	}
@@ -805,6 +1047,22 @@ namespace SettlementAttacks
 
 	void BeforeSave()
 	{
+		// A held siege's mark never goes into a save: one loaded without a session (or without this plugin) has its fight
+		// to come. Held again at the next look.
+		for (auto& [id, run] : sieges) {
+			const auto siege = run.held ? SiegeOf(id) : nullptr;
+			if (!siege) {
+				continue;
+			}
+			run.held = false;
+			if (run.objectiveShown) {
+				run.objectiveShown = false;
+				Console(std::format("setobjectivedisplayed {:08X} {} 0", id, siege->siege->objective));
+			}
+			if (!QuestStageLayout::IsStageDone(siege->quest, siege->siege->doneStage) && QuestStageLayout::ClearDone(siege->quest, siege->siege->startStage)) {
+				REX::INFO("SettlementAttacks: before the save: our held siege {:08X} '{}' has its stage {} cleared (held again after)", id, EditorId(siege->quest), siege->siege->startStage);
+			}
+		}
 		if (hosting || (mirrors.empty() && own.empty() && closing.empty())) {
 			return;  // the host's runs are the session's real attacks; with nothing of a session's, nothing to defuse
 		}
@@ -842,6 +1100,14 @@ namespace SettlementAttacks
 		// being closed down was the world before the load; what the loaded one holds of a session is swept (Sweep).
 		own.clear();
 		closing.clear();
+		releasing.clear();  // the save has no mark of ours (BeforeSave)
+		for (auto& [id, run] : sieges) {
+			run.held = false;
+			run.objectiveShown = false;
+			run.ownLogged = false;
+			run.attackersSeen = {};
+			run.endAsked = {};
+		}
 		sweepPending = true;
 		for (auto& [id, mirror] : mirrors) {
 			mirror.running = false;
@@ -876,6 +1142,21 @@ namespace SettlementAttacks
 				closing.insert_or_assign(id, Closing{ .workshop = run.workshop, .why = "the session ended: our own roll at the host's settlement" });
 			}
 		}
+		// Every held siege's fight is ours again: no player is left waiting on a host who left.
+		for (const auto& [id, run] : sieges) {
+			const auto siege = SiegeOf(id);
+			if (!run.held || !siege) {
+				continue;
+			}
+			if (run.objectiveShown && InWorldNow()) {
+				Console(std::format("setobjectivedisplayed {:08X} {} 0", id, siege->siege->objective));
+			}
+			releasing.push_back(id);
+		}
+		sieges.clear();
+		if (!releasing.empty() && InWorldNow()) {
+			ReleaseAll();
+		}
 		if (!closing.empty()) {
 			REX::INFO("SettlementAttacks: the session ended: {} run(s) of the host's to close down{}", closing.size(), InWorldNow() ? "" : ", once the world is back");
 			if (InWorldNow()) {
@@ -898,9 +1179,9 @@ namespace SettlementAttacks
 	{
 		return std::format(
 			"attacks: hosting={} live={} mirrors={} reported={} answered={} ownerChanges={} asked={} mirrorStarts={} mirrorsEnded={} ownDefused={} ownStopped={} timerPushes={} closing={} "
-			"closedDown={} leftovers={} savedDefused={}",
+			"closedDown={} leftovers={} savedDefused={} siegesHeld={} siegesEnded={} siegesReleased={} siegeTimers={}",
 			hosting, hosting ? hostRuns.Size() : view.LiveCount(), mirrors.size(), reported, answered, ownerChanges, asked, mirrorStarts, mirrorsEnded, ownDefused, ownStopped, timerPushes,
-			closing.size(), closedDown, leftovers, savedDefused);
+			closing.size(), closedDown, leftovers, savedDefused, siegesHeld, siegesEnded, siegesReleased, siegeTimers);
 	}
 
 	std::string List()
@@ -922,6 +1203,16 @@ namespace SettlementAttacks
 				out += std::format("word={} ", word == AttackBook::Word::kHost ? "host" : word == AttackBook::Word::kNotHost ? "notHost" : "unknown");
 			}
 			out += "; ";
+		}
+		for (const auto& siege : siegeQuests) {
+			const auto seen = ReadSiege(siege);
+			if (!seen.running) {
+				continue;
+			}
+			const auto run = sieges.find(seen.quest);
+			out += std::format("{:08X} '{}' siege workshop={:08X} arrived={} begun={} done={} held={} hostDefended={}; ", seen.quest, EditorId(siege.quest), seen.workshop,
+				QuestStageLayout::IsStageDone(siege.quest, siege.siege->arrivedStage), seen.begun, seen.done, run != sieges.end() && run->second.held,
+				run != sieges.end() && run->second.hostDefended);
 		}
 		if (out.empty()) {
 			out = "no attack running here; ";

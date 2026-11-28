@@ -69,13 +69,13 @@ namespace
 	}
 }
 
-TEST("radiants: the Minutemen's settlement requests are shared by their run; the Castle's siege and the factions' other radiants are left alone")
+TEST("radiants: the Minutemen's settlement requests are shared by their run; the Castle's siege (the host's, as the attacks) and the factions' other radiants are left alone")
 {
 	CHECK(ShareOf(0, MIN_RECRUIT01) == Share::kShared);
 	CHECK(ShareOf(0, MIN_RECRUIT02) == Share::kShared);
 	CHECK(ShareOf(0, 0x0003DF95) == Share::kShared);  // MinRadiantOwned02: raiders near a settlement of the player's
 	CHECK(ShareOf(0, 0x0003E0C1) == Share::kShared);  // MinRadiantOwned03: kidnapping
-	// A settlement attacked: the host's run shared (Entry::attack). The Castle's siege: each game's own.
+	// A settlement attacked: the host's run shared (Entry::attack). The Castle's siege: not a shared run (AttackBook::SIEGES).
 	CHECK(ShareOf(0, MIN_OWNED01) == Share::kShared);
 	CHECK(ShareOf(0, MIN_DEFEND_CASTLE) == Share::kLeftAlone);
 	// Not radiants: QuestFilter decides.
@@ -101,14 +101,16 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 	for (const std::uint32_t minutemen : { 0x00106F05u, 0x0015F03Fu, 0x0015F040u, 0x00161D1Du, 0x00162F44u, 0x00109D73u }) {
 		CHECK(ShareOf(0, minutemen) == Share::kShared);
 	}
-	// The synth boss made at runtime is the owner's (Entry::spawned); the refugees, who become settlers, are each game's own.
-	const auto synthBoss = Find(0, 0x00157577);
-	REQUIRE(synthBoss != nullptr);
-	CHECK(synthBoss->share == Share::kShared);
-	CHECK(synthBoss->spawned);
-	CHECK(!synthBoss->replace);
-	CHECK(!synthBoss->attack);
-	CHECK(ShareOf(0, 0x00164167) == Share::kLeftAlone);
+	// The synth boss and the refugees made at runtime are the owner's (Entry::spawned), never started again here.
+	for (const std::uint32_t spawned : { 0x00157577u, 0x00164167u }) {
+		const auto entry = Find(0, spawned);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(!entry->replace);
+		CHECK(!entry->attack);
+		CHECK(!Restarts(spawned));
+	}
 	// Preston's settlement attacks: the host's run (Entry::attack); its attackers are copies in the friends' games already,
 	// so none is followed or forced (not spawned), and a friend's own run is never stopped for it.
 	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u }) {
@@ -119,7 +121,7 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 		CHECK(!entry->spawned);
 		CHECK(!entry->replace);
 	}
-	// The Castle's siege, its starter and its waves' helper: each game's own.
+	// The Castle's siege, its starter and its waves' helper: no shared run (the host decides the siege: AttackBook::SIEGES).
 	for (const std::uint32_t castle : { 0x000BDB04u, 0x00176328u, 0x0022FD6Eu }) {
 		CHECK(ShareOf(0, castle) == Share::kLeftAlone);
 	}
@@ -252,6 +254,7 @@ TEST("radiants: Learning Curve and the Minutemen's synth boss, offered only whil
 	constexpr std::uint32_t BOSR04 = 0x000CF3E2;
 	CHECK(!Restarts(BOSR04));
 	CHECK(!Restarts(0x00157577));  // MinRecruit08: Preston's story event starts it; one started by hand sits mute
+	CHECK(!Restarts(0x00164167));  // MinRecruit09: the same event
 	CHECK(Restarts(BOSR03));      // Kells offers it at its start-up stage 5
 	CHECK(Restarts(0x000EDCEF));  // Appropriation
 	CHECK(Restarts(0x000EDE28));  // Reclamation

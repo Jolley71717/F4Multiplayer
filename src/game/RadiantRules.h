@@ -33,12 +33,13 @@
 // settlement requests, Preston's requests from settlements the player has (but their attacks), the Brotherhood's,
 // the Institute's and the Railroad's jobs, and Diamond City's wanted posters. The jobs whose targets or helpers are
 // NPCs the quest makes at runtime (a courser, a patrol, a captive, a synth, an assault's defenders, the Brotherhood's
-// squire and scribe, the Minutemen's synth boss) are shared by their run too, with those actors the run's owner's
+// squire and scribe, the Minutemen's synth boss and refugees) are shared by their run too, with those actors the run's owner's
 // (Entry::spawned): one game's runtime NPCs are in its friends' games already, as copies (Spawns), placed while both
 // players stand near them, and a friend's game puts its copies into the quest's aliases in place of the second set its
 // own start made. Preston's "defend the settlement" jobs are attacks (Entry::attack): shared only from the game that
 // hosts the session, whose attackers are the only ones; a friend's game holds its own attack back. Left alone, each
-// player's own: the Castle's siege, the Minutemen's refugees, a vertibird flown by a scene. Those stay unshared even
+// player's own: a vertibird flown by a scene. The Castle's siege is the session host's, as the settlement attacks are
+// (common/AttackBook.h, SIEGES: src/game/SettlementAttacks.cpp), not a run shared here. Those stay unshared even
 // when the story is (before, a friend's stage started them here with this game's own targets). Kept free of the game
 // so it can be tested; RadiantSync reads the quests.
 namespace RadiantRules
@@ -91,10 +92,15 @@ namespace RadiantRules
 		// A synth boss made at runtime at its dungeon's boss (its 200 the boss dead, its 400 the reward): the owner's
 		// stands in every game, as the Brotherhood's squire does (Entry::spawned).
 		Entry{ 0, 0x157577, "MinRecruit08", Share::kShared, false, true },
-		// Refugees made at runtime, two to five of them enabled at random by its start (the rest deleted), who become the
-		// settlement's settlers at its 400 (WorkshopParent's AddActorToWorkshopPUBLIC on each in its own collection, an
-		// alias that can't be forced): a friend's game would add its own set, or none. Left alone.
-		Entry{ 0, 0x164167, "MinRecruit09", Share::kLeftAlone },
+		// Refugees made at runtime (a collection its start creates, two to five of them enabled at random, the rest
+		// deleted, and their spokesman), who are to settle the hostile settlement the player clears, becoming its settlers
+		// at its 400 (WorkshopParent's AddActorToWorkshopPUBLIC on each living one of its own collection; the settlement
+		// the player's: SetOwnedByPlayer). The owner's stand in every game (Entry::spawned): the spokesman's alias is forced
+		// onto the friend's copy, and the friend's own refugees are removed as the owner's come, so a friend's 400 adds
+		// none of its own (the collection can't be forced: the owner's are the owner's settlers, the copies a friend sees).
+		// Its 400 is set once in each game, the reward each player's own. Started by Preston's story event, as the synth
+		// boss's: never started again here (NOT_RESTARTED).
+		Entry{ 0, 0x164167, "MinRecruit09", Share::kShared, false, true },
 		// Preston's requests from the player's own settlements.
 		Entry{ 0, 0x03DF95, "MinRadiantOwned02", Share::kShared },               // raiders
 		Entry{ 0, 0x03E0C1, "MinRadiantOwned03ChangeLocOnly", Share::kShared },  // kidnapping
@@ -116,8 +122,10 @@ namespace RadiantRules
 		Entry{ 0, 0x0E477F, "MinRadiantOwned04_BOS", Share::kShared, false, false, true },
 		Entry{ 0, 0x1533A9, "MinRadiantOwned11", Share::kShared, false, false, true },  // synths (WorkshopSynthAttackScript)
 		// The Castle's siege: scripted waves from a holding cell (its _Attackers quest fills each wave), vertibirds and
-		// Preston's lines, started by its starter at a story event. Left alone: a siege belongs with the attacks the
-		// session's host books for everyone, not with the jobs shared by their run.
+		// Preston's lines, started by its starter at a story event. Not shared by its run: the session's host decides it
+		// as the settlement attacks (common/AttackBook.h, SIEGES): a friend's game holds its own fight back while the
+		// host's is on and sets its own end stage when the host's is won. Its starter and its waves' helper run in each
+		// game for its own run; the waves are the host's runtime actors, copies in a friend's game.
 		Entry{ 0, 0x0BDB04, "MinDefendCastle", Share::kLeftAlone },
 		Entry{ 0, 0x176328, "MinDefendCastleRadiantStarter", Share::kLeftAlone },
 		Entry{ 0, 0x22FD6E, "MinDefendCastle_Attackers", Share::kLeftAlone },
@@ -330,7 +338,7 @@ namespace RadiantRules
 	// Leading by Example (BoSR03) is started again: its start-up stage is 5, and Kells' greeting that offers it is
 	// conditioned on its stage being 5 (the same state his own line leaves it in). The Institute's start when the player
 	// joins and wait at their 5 or 10 for the giver, and the Railroad's are offered at their 50 by their own start.
-	// The Minutemen's synth boss job (MinRecruit08) is started by Preston's story event (MinutemenCentralQuest's, which
+	// The Minutemen's synth boss and refugee jobs (MinRecruit08 and 09) are started by Preston's story event (MinutemenCentralQuest's, which
 	// turns his intro on), which can't start a quest that runs: one started by hand has no event and would sit mute until
 	// its shutdown days run out, Preston offering none of its kind meanwhile; its dialogue is conditioned on its 20 not
 	// being done. Preston's attacks are started by the same event, but are never run again here: never stopped for a
@@ -338,6 +346,7 @@ namespace RadiantRules
 	inline constexpr std::array NOT_RESTARTED{
 		0x000CF3E2u,  // BoSR04
 		0x00157577u,  // MinRecruit08
+		0x00164167u,  // MinRecruit09
 	};
 
 	// Whether this game's own run of the quest, stopped, is started again by this game (false: left to its giver).

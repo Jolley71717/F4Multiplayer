@@ -31,6 +31,7 @@
 // at, is stopped the same way (Judge). A mirror left behind (a session that ended out of the world, a save loaded later)
 // has stage 100 done and stage 20 not: every load stops such a run (Leftover). Pure, so it is tested on its own and with
 // the server (tests/AttackBookTests.cpp, tests/ServerAttackTests.cpp); src/game/SettlementAttacks.cpp reads the game for it.
+// The Castle's siege is the host's the same way, mirrored by its own steps (SIEGES, NextSiege).
 namespace AttackBook
 {
 	using Clock = std::chrono::steady_clock;
@@ -62,11 +63,15 @@ namespace AttackBook
 	// script's start and done stages; Automatron's merge their robots into the Attackers collection at stage 10; Nuka-World's
 	// are on the raider outposts and turn the outpost's turrets on the attackers; the Brotherhood's 02 and 03 there bring
 	// a vertibird and its crew, created disabled and enabled at stages 20 and 22, which a mirror never reaches, and the
-	// host's reach a friend as any runtime actors the host's game has loaded). Not here: Preston's "Defend X" jobs
-	// (MinRadiantOwned*), shared as radiants, the host's run alone (src/game/RadiantRules.h, Entry::attack); the Castle's
-	// defence, each player's own; VRWorkshopShared_AttackQuest (Fallout4.esm 0024A38D) is no
-	// settlement attack (a Creation Club VR workshop's wave: no WorkshopAttackScript, no event, no Workshop alias).
-	inline constexpr std::array<Attack, 24> ATTACKS{ {
+	// host's reach a friend as any runtime actors the host's game has loaded). The synth infiltrators (WorkshopSynthInfiltrator01
+	// and 02) are WorkshopSynthAttackScript, which extends WorkshopAttackScript with the same stages and aliases: their 10
+	// moves the settlement's infiltrator settlers (an alias filled by conditions, not created: the settlement's own NPCs)
+	// into their Synths collection and their 20 turns them hostile, so a mirror, defused before 20, leaves them settlers;
+	// the host's turn on our player as the host's NPCs do. Not here: Preston's "Defend X" jobs (MinRadiantOwned*), shared
+	// as radiants, the host's run alone (src/game/RadiantRules.h, Entry::attack); the Castle's siege, the host's too but
+	// of another shape (SIEGES); VRWorkshopShared_AttackQuest (Fallout4.esm 0024A38D) is no settlement attack (a Creation
+	// Club VR workshop's wave: no WorkshopAttackScript, no event, no Workshop alias).
+	inline constexpr std::array<Attack, 26> ATTACKS{ {
 		{ FALLOUT4, 0x00097CC6, "WorkshopSuperMutantAttack01" },
 		{ FALLOUT4, 0x00097CC7, "WorkshopFeralGhoulAttack01" },
 		{ FALLOUT4, 0x000C97A8, "WorkshopGunnerAttack01" },
@@ -80,6 +85,8 @@ namespace AttackBook
 		{ FALLOUT4, 0x00249080, "WorkshopYaoGuaiAttack01" },
 		{ FALLOUT4, 0x00249081, "WorkshopDeathclawAttack02" },
 		{ FALLOUT4, 0x0024918C, "WorkshopSuperMutantAttack02" },
+		{ FALLOUT4, 0x001357DA, "WorkshopSynthInfiltrator01" },
+		{ FALLOUT4, 0x001357DB, "WorkshopSynthInfiltrator02" },
 		{ FAR_HARBOR, 0x0004B651, "DLC03WorkshopTrapperAttack01" },
 		{ AUTOMATRON, 0x0000FD0D, "DLC01WorkshopRobotAttack01" },
 		{ AUTOMATRON, 0x0000FD13, "DLC01WorkshopRobotAttack02" },
@@ -107,6 +114,109 @@ namespace AttackBook
 	{
 		const auto it = std::ranges::find_if(ATTACKS, [&](const Attack& a_attack) { return a_attack.quest == (a_id & 0x00FFFFFFu) && SameFile(a_attack.file, a_file); });
 		return it != ATTACKS.end() ? &*it : nullptr;
+	}
+
+	// A siege: a settlement's scripted defence that the story gives, not a random roll, on a quest that runs long before
+	// and after its fight. The Castle's (MinDefendCastle, MinDefendCastleAttackScript and MinDefendCastleScript, read off
+	// the game's scripts): its starter (MinDefendCastleRadiantStarter) or the story starts it, its 10 makes and enables
+	// its Defenders (created at runtime, made the Castle's settlers) and picks its attackers at random, its 70 is the player
+	// arriving (MinDefendCastleScript.CheckLocation), which starts a 2 game-hour timer (startTimeOutAttack, timer 99)
+	// whose end sets its 150 if 150 isn't done; its 120 (the defences built) sets 150 too. 150 is the fight: it completes
+	// objective 20, hides 10, shows 30 and begins the waves (StartAttack: squads from a holding cell its
+	// MinDefendCastle_Attackers quest fills, the vertibird drops its VertibirdAirDrop quests fly), which only run while
+	// the Castle is loaded (TryToStartAttackPhase). 200 is the waves dead (DoBattleEnd: 98% of the attackers): it
+	// completes 30, shows 35 and starts MinDefendCastlePost, whose scenes set 300 and then 400, the reward
+	// (MinRecruitQuestScript.FinishQuest), and 500 stops it. It never rolls damage (CheckResolveAttack is never called).
+	//
+	// The host decides, as for the attacks: the host's run is the siege, its waves the only ones (a friend's game has them
+	// as the copies of the host's runtime actors), its 200 the outcome. A friend's game whose own run of the quest is on
+	// holds its own fight back (its 150 marked done without its script, so neither the timer nor 120 begins it:
+	// QuestStageLayout::MarkDone), shows 30 while the host's fight is on around our player, and sets its own 200 when
+	// the host's is set: its own end stage, once, and from there its own Post scenes and its own 400 reward, once. Its
+	// fight is let go (150 cleared, its timer started again when the player has arrived) when the host's run ends
+	// undefended and the host doesn't own the settlement, or when the session ends; a save never holds the mark
+	// (BeforeSave), and a load starts the timer of a run left waiting at 70 again (Sweep). The quest is never stopped
+	// from here: its Defenders are the settlement's settlers.
+	struct Siege
+	{
+		std::string_view file;
+		std::uint32_t    quest = 0;
+		std::string_view editorId;
+		std::uint16_t    arrivedStage = 0;  // the player arrived: the fight's timer starts
+		std::uint16_t    startStage = 0;    // the fight begins
+		std::uint16_t    doneStage = 0;     // the fight won: the end stage
+		std::uint16_t    objective = 0;     // "Defend <settlement>", shown at startStage, completed at doneStage
+		std::uint16_t    beforeObjective = 0;  // the "get ready" objective startStage completes when shown
+		std::uint16_t    goObjective = 0;      // the "go there" objective startStage hides when shown and not completed
+		std::uint32_t    locationAlias = 0;
+		std::uint32_t    workshopAlias = 0;
+		std::string_view script;           // its fight's script (the timer's)
+		std::string_view timerFunction;    // the script's function that starts the fight's timer again
+	};
+
+	inline constexpr std::array<Siege, 1> SIEGES{ {
+		{ FALLOUT4, 0x000BDB04, "MinDefendCastle", 70, 150, 200, 30, 20, 10, 3, 6, "MinDefendCastleAttackScript", "startTimeOutAttack" },
+	} };
+
+	// The siege a form ID of a file is (its ID there, the load index left out), or none.
+	[[nodiscard]] inline const Siege* FindSiege(std::string_view a_file, std::uint32_t a_id)
+	{
+		const auto it = std::ranges::find_if(SIEGES, [&](const Siege& a_siege) { return a_siege.quest == (a_id & 0x00FFFFFFu) && SameFile(a_siege.file, a_file); });
+		return it != SIEGES.end() ? &*it : nullptr;
+	}
+
+	// A friend's game: its own run of a siege quest at the host's settlement, by the host's word and what our run has.
+	struct SiegeFacts
+	{
+		bool  running = false;          // our quest runs
+		bool  begun = false;            // our startStage is done (by us, if held)
+		bool  held = false;             // we marked startStage done (our fight held back)
+		bool  done = false;             // our doneStage is done
+		bool  hostRun = false;          // the host's run is live (told, not over)
+		Phase hostPhase = Phase::kRolled;
+		bool  hostDefended = false;     // the host's run reached its doneStage (told so, live or over since)
+		bool  hostOwns = false;         // the host owns the settlement (their word)
+		bool  objectiveShown = false;   // we show the siege's objective now
+		bool  loadedHere = false;       // the settlement is 3D-loaded here: our player is there
+		bool  hostAttackersHere = false;  // the host's attackers' copies stand at the settlement here lately
+	};
+
+	enum class SiegeStep : std::uint8_t
+	{
+		kNone,
+		kHold,            // mark our startStage done without its script: our fight never begins while the host's decides
+		kShowObjective,   // the host's fight is on around our player: the siege's objective shown here too
+		kHideObjective,   // shown, and our player or the host's attackers left
+		kEnd,             // the host's siege was won: our doneStage set (its own script: our end, once)
+		kRelease,         // our fight is ours again: startStage cleared, its timer started again
+	};
+
+	[[nodiscard]] constexpr SiegeStep NextSiege(const SiegeFacts& a_facts)
+	{
+		if (!a_facts.running || a_facts.done) {
+			return SiegeStep::kNone;  // ended, ours or set from the host's: our game's own scenes and reward from here
+		}
+		if (a_facts.begun && !a_facts.held) {
+			return SiegeStep::kNone;  // our own fight began before the host's word: left to run (never stopped mid-fight)
+		}
+		if (a_facts.hostDefended) {
+			return a_facts.held ? SiegeStep::kEnd : SiegeStep::kHold;
+		}
+		const bool fighting = a_facts.hostRun && a_facts.hostPhase == Phase::kUnderway && a_facts.loadedHere && a_facts.hostAttackersHere;
+		if (!a_facts.hostRun && !a_facts.hostOwns) {
+			// Not the host's to decide (any more): our own fight, as our game would have it.
+			if (!a_facts.held) {
+				return SiegeStep::kNone;
+			}
+			return a_facts.objectiveShown ? SiegeStep::kHideObjective : SiegeStep::kRelease;
+		}
+		if (!a_facts.held) {
+			return SiegeStep::kHold;
+		}
+		if (a_facts.objectiveShown != fighting) {
+			return fighting ? SiegeStep::kShowObjective : SiegeStep::kHideObjective;
+		}
+		return SiegeStep::kNone;
 	}
 
 	// An attack quest as a game reads it at a look: whether it runs, at which settlement, and its stages.
