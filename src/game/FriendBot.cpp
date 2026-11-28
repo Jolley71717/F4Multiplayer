@@ -3,6 +3,9 @@
 #include "Config.h"
 #include "game/Downed.h"
 #include "game/FriendBotPlan.h"
+#include "game/GameStop.h"
+#include "game/Hud.h"
+#include "game/OpenMenus.h"
 #include "game/PackageRelease.h"
 #include "game/PadPlan.h"
 #include "game/RemotePlayers.h"
@@ -171,26 +174,18 @@ namespace FriendBot
 			return a_actor && !a_actor->IsDeleted() && !a_actor->IsDisabled() && a_actor->Get3D() && a_actor->GetParentCell() ? a_actor : nullptr;
 		}
 
+		// A menu that stops the game (GameStop: the UI's menu count) or takes the player's hands (OpenMenus).
 		bool MenuTakesControl()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			if (!ui) {
-				return false;
-			}
-			if (ui->menuMode != 0) {
-				return true;
-			}
-			static const std::array<RE::BSFixedString, 18> MENUS{ "PipboyMenu", "ContainerMenu", "BarterMenu", "ExamineMenu", "LooksMenu",
-				"WorkshopMenu", "TerminalMenu", "Console", "PauseMenu", "MessageBoxMenu", "FavoritesMenu", "LockpickingMenu", "BookMenu",
-				"SPECIALMenu", "LevelUpMenu", "CookingMenu", "VATSMenu", "SleepWaitMenu" };
-			return std::ranges::any_of(MENUS, [&](const RE::BSFixedString& a_name) { return ui->GetMenuOpen(a_name); });
+			using M = OpenMenus::Menu;
+			return GameStop::Now() || OpenMenus::AnyOpen({ M::kConsole, M::kDialogue, M::kLooks, M::kPause, M::kPipboy, M::kPowerArmorMod, M::kVats, M::kWorkshop,
+										  M::kBarter, M::kBook, M::kContainer, M::kCooking, M::kExamine, M::kHolotape, M::kLevelUp, M::kLockpicking, M::kMessageBox,
+										  M::kSitWait, M::kSleepWait, M::kTerminal, M::kTerminalHolotape, M::kCaravan, M::kRobotMod, M::kMultiplayer });
 		}
 
 		bool Loading()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			static const RE::BSFixedString LOADING{ "LoadingMenu" };
-			return ui && ui->GetMenuOpen(LOADING);
+			return Hud::LoadingScreenUp() || OpenMenus::Open(OpenMenus::Menu::kFader);
 		}
 
 		// Drops the package we gave the player, as Puppets drops a mirror's do-nothing package (the engine's own clear),
