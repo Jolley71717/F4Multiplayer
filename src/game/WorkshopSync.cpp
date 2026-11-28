@@ -1469,6 +1469,9 @@ namespace WorkshopSync
 		std::vector<SavedCopies::Entry>  savedCopiesRead;        // the record a load read, until the load's end takes it (under the lock)
 		std::vector<std::uint8_t>        savedCopiesRecord;      // the record for the save under way, made before it (under the lock)
 		Clock::time_point                nextSavedCopiesLook{};
+		// When the session's building last came to us: the session began, our world loaded, or a report arrived (see
+		// SavedCopies::SessionMayClaim). Nanosecond ticks of the steady clock; the reports come in on another thread than the frame.
+		std::atomic<std::int64_t>        claimInputAt{ 0 };
 		constexpr auto                   SAVED_COPIES_LOOK_INTERVAL = std::chrono::seconds(1);
 		std::uint32_t                    savedCopiesSaid = 0;    // removals said in the log (the first few of a run)
 
@@ -9496,6 +9499,7 @@ namespace WorkshopSync
 
 	void OnWelcome(std::uint32_t a_hostId)
 	{
+		claimInputAt.store(Clock::now().time_since_epoch().count());  // the session's building comes now (SavedCopies::SessionMayClaim)
 		hostId.store(a_hostId);
 		hostGone = false;
 		// The server's table of the host's settlement figures may be another session's: the host's game tells them all again,
@@ -10125,7 +10129,6 @@ namespace WorkshopSync
 		const bool shares = BuiltWalk::Shares(a_host, HostRules::Get());
 		++frameNumber;  // what the grids name is read again (GridNamed)
 		SweepGraveyard(now);
-		LookAtSavedCopies(now, true);  // in a session the session's reports find them; settled once it keeps them
 		if (now >= nextCellLook) {
 			nextCellLook = now + CELL_LOOK_INTERVAL;
 			std::vector<WorkshopCells::Where> attachedNow;
@@ -10159,6 +10162,10 @@ namespace WorkshopSync
 		if (inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [] { return Clock::now(); }, ApplyNow) > 0) {
 			applyUsMax = (std::max)(applyUsMax, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - applyStart).count());
 		}
+		// In a session the session's reports find the copies a save held (FindExisting) and the book settles each as the session
+		// keeps it; one that no report claimed once the session's building has come in is a piece the host has scrapped or moved
+		// since that save, and goes (SavedCopies::SessionMayClaim).
+		LookAtSavedCopies(now, SavedCopies::SessionMayClaim(inbox.Queued(), now - Clock::time_point{ Clock::duration{ claimInputAt.load() } }));
 		if (a_host) {
 			WalkAndSend(now);
 		}
@@ -10243,6 +10250,7 @@ namespace WorkshopSync
 
 	void Apply(const Protocol::WorkshopItem& a_item)
 	{
+		claimInputAt.store(Clock::now().time_since_epoch().count());
 		inbox.Arrive({ a_item.playerId, a_item.refId }, a_item);
 	}
 
@@ -10396,6 +10404,7 @@ namespace WorkshopSync
 	void OnGameLoaded(bool a_newGame)
 	{
 		++loadGeneration;  // ...and from before a new game, or posted during the load
+		claimInputAt.store(Clock::now().time_since_epoch().count());  // the server sends the session's building again after a load
 		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
 		// let go unread. The copies the save holds are found again, at their spots, when the server sends
 		// the session's building again after the load (FindExisting); one it had removed since the save
