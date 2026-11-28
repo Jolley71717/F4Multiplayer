@@ -77,6 +77,11 @@ namespace WeaponFire
 	// stage's own: one within a_radius of it is reported for the next few seconds, as after a throw (no other one).
 	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius);
 
+	// An explosive that lies in our game alone, found by the traps' walk (a mine one of ours laid: a runtime reference,
+	// no other game has it): once it lies no more, its blast is looked for and reported as after a throw, however long
+	// it lay (RemoteEdits::LaidExplosives). Anything else is left be. Main thread.
+	void NoteLaidExplosive(RE::TESObjectREFR* a_ref);
+
 	// The explosion that dealt a blow on a_target just now (the one the hit names, a_source: its HitData's source
 	// reference; else the nearest that reaches it), and what became of it: reported, each game's own, or ours alone
 	// (RemoteEdits::Fate, RemoteEdits::BlastLog::At). One not looked at yet is decided now, as the scan would have.

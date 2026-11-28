@@ -318,6 +318,51 @@ TEST("remote edits: a destructible object's watch covers only its own blast radi
 	CHECK(!watches.Covers({ 0, 0x3C, 0.0f, 0.0f, 0.0f }, t));  // the soonest to end went first
 }
 
+TEST("remote edits: a laid mine is known while it lies, and a watch is due where it lay once it is gone")
+{
+	LaidExplosives<int> laid;
+	const Spot          doorway{ 0x1F00, 0, 100.0f, 200.0f, 0.0f };
+	const Spot          stairs{ 0x1F00, 0, 900.0f, 200.0f, 64.0f };
+	laid.Note(7, { 0x1F00, 0, 80.0f, 150.0f, 40.0f }, 300.0f);  // still in the air
+	laid.Note(7, doorway, 300.0f);                                // where it came to lie: the same one
+	laid.Note(9, stairs, 450.0f);
+	laid.Note(11, stairs, 0.0f);  // no blast: nothing to watch for
+	CHECK(laid.Size() == 2u);
+	// Both lie: nothing is due, however often it is asked.
+	CHECK(laid.TakeGone([](int) { return true; }).empty());
+	CHECK(laid.Size() == 2u);
+	// The one in the doorway went off (or was picked up): a watch where it lay last, once.
+	const auto gone = laid.TakeGone([](int a_handle) { return a_handle != 7; });
+	REQUIRE(gone.size() == 1u);
+	CHECK(gone[0].handle == 7);
+	CHECK(gone[0].at.x == 100.0f);
+	CHECK(gone[0].at.y == 200.0f);
+	CHECK(gone[0].at.cell == 0x1F00u);
+	CHECK(gone[0].radius == 300.0f);
+	CHECK(laid.Size() == 1u);
+	CHECK(laid.TakeGone([](int a_handle) { return a_handle != 7; }).empty());
+	// A handle is the reference, not its id: one laid later under a new handle is another mine.
+	laid.Note(12, doorway, 300.0f);
+	CHECK(laid.Size() == 2u);
+	laid.Clear();
+	CHECK(laid.Size() == 0u);
+	CHECK(laid.TakeGone([](int) { return false; }).empty());
+}
+
+TEST("remote edits: more laid mines than are kept push out the one known longest")
+{
+	LaidExplosives<int> laid;
+	for (int i = 0; i < static_cast<int>(LaidExplosives<int>::MAX) + 2; ++i) {
+		laid.Note(i, { 0, 0x3C, static_cast<float>(i) * 100.0f, 0.0f, 0.0f }, 300.0f);
+	}
+	CHECK(laid.Size() == LaidExplosives<int>::MAX);
+	const auto gone = laid.TakeGone([](int) { return false; });
+	REQUIRE(gone.size() == LaidExplosives<int>::MAX);
+	CHECK(gone.front().handle == 2);  // 0 and 1 were pushed out
+	CHECK(gone.back().handle == static_cast<int>(LaidExplosives<int>::MAX) + 1);
+	CHECK(laid.Size() == 0u);
+}
+
 TEST("remote edits: a friend's build is shown no smaller than a tenth and no bigger than ten times")
 {
 	CHECK(ClampScale(1.0f) == 1.0f);
