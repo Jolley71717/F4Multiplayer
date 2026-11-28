@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T01:07:26+00:00",
+ "updated": "2026-11-28T01:41:15+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -572,9 +572,9 @@
    "title": "Crash on join in the host's game: behavior graph (hkbStateMachine::getStateIndex) from Actor::PerformAction",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "crash bundle: runtime actors' weapons",
-   "pr": 646
+   "stage": 2,
+   "note": "PR 647: refused launches fly neutral; puppets' engine combat update not run",
+   "pr": 647
   },
   {
    "id": "4c0",
@@ -1090,8 +1090,9 @@
    "title": "Crash with the WARS mod (rewrites bullet trajectories): host and client crash logs attached",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "crash bundle: runtime actors' weapons"
+   "stage": 2,
+   "note": "PR 647: refused launches fly neutral; puppets' engine combat update not run",
+   "pr": 647
   },
   {
    "id": "8bqc",
@@ -3802,8 +3803,9 @@
    "title": "Host crash in the combat AI job on a runtime actor (BSFixedString::operator= under CombatBehaviorTree, pipe gun), 2026-11-10 12:32, no plugin frame, untracked",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "crash bundle: runtime actors' weapons"
+   "stage": 2,
+   "note": "PR 647: refused launches fly neutral; puppets' engine combat update not run",
+   "pr": 647
   },
   {
    "id": "sn44",
