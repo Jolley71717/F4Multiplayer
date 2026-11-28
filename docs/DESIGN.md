@@ -1587,7 +1587,9 @@ whose scenes set 300 and 400 (the reward, MinRecruitQuestScript.FinishQuest), an
 The host's game reports it as an attack (kReportSettlementAttack, no new message or field): rolled while the quest runs,
 underway at its 150, defended at its 200, over as it stops. A friend's game never starts the quest for the host's and
 never stops its own (its Defenders are the Castle's settlers): its own run, if it has one (the same point of the
-story), is held while the host's run is on or the host's game says the Castle is the host's. Held: its 150 is marked
+story), is held while the host's run is on or the host's game has said the Castle is the host's (that holds for the
+session, as a siege waits for its fight far longer than a word or a live run is kept, until the host's game says otherwise
+or leaves). Held: its 150 is marked
 done without its fragment (QuestStageLayout::MarkDone), so neither its timer nor its 120 begins its fight, and the
 host's waves, copies of the host's runtime actors, are the only ones. Objective 30 is shown while the host's fight is
 on with the friend's player and the host's attackers' copies at the Castle, hidden when either leaves. When the host's

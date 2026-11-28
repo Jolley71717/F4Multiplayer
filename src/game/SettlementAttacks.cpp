@@ -141,6 +141,7 @@ namespace SettlementAttacks
 			bool              objectiveShown = false;
 			bool              hostDefended = false;  // the host's run reached its doneStage
 			bool              hostOver = false;      // the host's run was told over (a new one clears both)
+			bool              hostSaid = false;      // the host's run, or its word that the settlement is the host's, came in this session
 			bool              ownLogged = false;
 			Clock::time_point attackersSeen{};
 			Clock::time_point endAsked{};
@@ -718,6 +719,8 @@ namespace SettlementAttacks
 			const auto  seen = ReadSiege(a_siege);
 			const auto  live = view.LiveOf(id);
 			auto&       run = sieges[id];
+			const auto word = live || seen.workshop != 0 ? view.WordOn(live ? live->workshop : seen.workshop, a_now) : AttackBook::Word::kUnknown;
+			run.hostSaid = (run.hostSaid || live || word == AttackBook::Word::kHost) && word != AttackBook::Word::kNotHost;
 			if (live) {
 				if (run.hostOver && live->phase < Phase::kDefended) {
 					run.hostOver = false;  // a new run of the host's
@@ -744,7 +747,9 @@ namespace SettlementAttacks
 				.hostRun = live != nullptr,
 				.hostPhase = live ? live->phase : Phase::kOver,
 				.hostDefended = run.hostDefended,
-				.hostOwns = workshop != 0 && view.WordOn(workshop, a_now) == AttackBook::Word::kHost,
+				// The host's word expires in minutes and a live run after hours (View), while a siege waits for its fight
+				// far longer: once said in this session it holds until the host's game says otherwise or the session ends.
+				.hostOwns = workshop != 0 && run.hostSaid,
 				.objectiveShown = run.objectiveShown,
 				.loadedHere = loadedHere,
 				.hostAttackersHere = loadedHere && live && live->phase == Phase::kUnderway && AttackersNear(workshop, run.attackersSeen, a_now),
@@ -1032,8 +1037,11 @@ namespace SettlementAttacks
 		}
 		view.OnOwner(a_owner, Clock::now());
 		if (a_owner.workshop == 0) {
-			REX::INFO("SettlementAttacks: the host's game left: nothing it said of settlements stands; our mirrors end");
+			REX::INFO("SettlementAttacks: the host's game left: nothing it said of settlements stands; our mirrors end, our held sieges are let go");
 			toldUnderway.clear();
+			for (auto& [id, run] : sieges) {
+				run.hostSaid = false;
+			}
 		} else {
 			REX::INFO("SettlementAttacks: settlement {:08X} is {}the host's", a_owner.workshop, a_owner.hostOwned ? "" : "not ");
 		}
