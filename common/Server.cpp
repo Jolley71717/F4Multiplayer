@@ -2824,7 +2824,11 @@ void Server::Run()
 		// move at a built holder the session doesn't number (past that budget it stays done in their game alone).
 		const auto refuse = [&](Protocol::StorageReason a_reason) {
 			if (!budgetOf(a_player).storageRefusals.Take(now)) {
-				++(built ? builtHoldersUnanswered : storageUnanswered);
+				if (built) {
+					++builtHoldersUnanswered;
+				} else {
+					++storageUnanswered;
+				}
 				return;
 			}
 			if (built) {
