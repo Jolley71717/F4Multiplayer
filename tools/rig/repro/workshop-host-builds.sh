@@ -322,16 +322,18 @@ for ph in $PHASES; do
 		say "containers: console additem and the dev transfer (storage put) stand for the loot a player puts in (the menu's own transfer)"
 		for c in "$CONTAINER $CC built" "$PRE $PRE pre-placed"; do
 			set -- $c; h=$1; f=$2; what=$3
+			# counted as changes (the settlement's container may hold what earlier sessions put there: the session replays those to a joiner)
+			h0=$(dc host "count $h $IT" | grep -oE '[0-9]+$'); f0=$(dc vm "count $f $IT" | grep -oE '[0-9]+$')
 			dc host "console player.additem $IT 7" >/dev/null; sleep 1
 			dc host "storage put $h $IT 7" >/dev/null; sleep 8
 			hc=$(dc host "count $h $IT" | grep -oE '[0-9]+$'); fc=$(dc vm "count $f $IT" | grep -oE '[0-9]+$')
-			say "containers: $what: the host put 7 stimpaks in $h: it holds ${hc:-?}; the friend's $f holds ${fc:-?}"
-			[ "${hc:-0}" = "${fc:-0}" ] || fail "containers: the host's $what container holds ${hc:-?} stimpaks, the friend's holds ${fc:-?}"
+			say "containers: $what: the host put 7 stimpaks in $h (held ${h0:-?}): it holds ${hc:-?}; the friend's $f (held ${f0:-?}) holds ${fc:-?}"
+			[ $(( ${hc:-0} - ${h0:-0} )) = $(( ${fc:-0} - ${f0:-0} )) ] || fail "containers: the host put 7 in its $what container (${h0:-?} to ${hc:-?}); the friend's copy went ${f0:-?} to ${fc:-?}"
 			dc vm "console player.additem $IT 3" >/dev/null; sleep 1
 			dc vm "storage put $f $IT 3" >/dev/null; sleep 8
-			hc=$(dc host "count $h $IT" | grep -oE '[0-9]+$'); fc=$(dc vm "count $f $IT" | grep -oE '[0-9]+$')
-			say "containers: $what: the friend then put 3 in $f: the host's $h holds ${hc:-?}, the friend's holds ${fc:-?}"
-			[ "${hc:-0}" = "${fc:-0}" ] || fail "containers: after the friend's put the $what container holds ${hc:-?} for the host and ${fc:-?} for the friend"
+			h1=$(dc host "count $h $IT" | grep -oE '[0-9]+$'); f1=$(dc vm "count $f $IT" | grep -oE '[0-9]+$')
+			say "containers: $what: the friend then put 3 in $f: the host's $h holds ${h1:-?}, the friend's holds ${f1:-?}"
+			[ $(( ${h1:-0} - ${hc:-0} )) = $(( ${f1:-0} - ${fc:-0} )) ] || fail "containers: the friend put 3 in its copy of the $what container (${fc:-?} to ${f1:-?}); the host's went ${hc:-?} to ${h1:-?}"
 		done ;;
 	esac
 done
@@ -342,4 +344,4 @@ grep -E 'WorkshopSync: not placing|refused' "$REPRO_OUT/workshop-host-builds-vm.
 [ -n "$STANDING$GONE" ] || verdict VOID "no host piece was put down"
 if [ -n "$FAILS" ]; then verdict YES "${FAILS#; }"; fi
 case "${RESULTS//wire:void/}" in *void*) verdict VOID "steps could not be done (${RESULTS# }), so the run did not test everything it should: no pass";; esac
-verdict NO "every host piece reached the friend's game, the friend's layout matched the host's after a rejoin and an older save's load, and both containers held the same"
+verdict NO "every host piece reached the friend's game, the friend's layout matched the host's after a rejoin and an older save's load (containers: only when that phase ran)"
