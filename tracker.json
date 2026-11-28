@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T01:44:35+00:00",
+ "updated": "2026-11-28T04:40:37+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -411,8 +411,8 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "settlement bundle: host builds missing",
-   "pr": 494
+   "note": "not reproduced again on 0.23.2; repro script in the PR; needs the reporter's logs",
+   "pr": 648
   },
   {
    "id": "322q",
@@ -2181,6 +2181,14 @@
    "pr": 255
   },
   {
+   "id": "gncz",
+   "title": "Settlements: a container the host built and its copy in the friend's game don't hold the same loot (needs a protocol change)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "built container's loot isn't shared with its copy: needs a protocol change"
+  },
+  {
    "id": "grij",
    "title": "Friend markers and ping rings are missing on the power armor compass",
    "kind": "bug",
@@ -2478,8 +2486,9 @@
    "title": "Settlements: a player who leaves and rejoins doesn't see buildings the host placed or changed meanwhile; scrapped lamps leave floating items; shared loot not in the same container",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "settlement bundle: host builds missing"
+   "stage": 4,
+   "note": "stale copies after an older save's load fixed and rig-verified (twice); built containers' loot still not shared (needs a protocol change)",
+   "pr": 648
   },
   {
    "id": "ikwn",
