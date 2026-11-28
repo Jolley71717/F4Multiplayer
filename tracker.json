@@ -1,7 +1,7 @@
 {
  "release": "0.23.2",
  "known_issues": [],
- "updated": "2026-11-28T10:06:21+00:00",
+ "updated": "2026-11-28T10:09:41+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3010,6 +3010,14 @@
    "note": "Question: a game-backed dedicated server"
   },
   {
+   "id": "m0y6",
+   "title": "Friend bot: let go on a save/load request, pass the friend's own keys through",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "m4da",
    "title": "A player walking into a friend's stand-in can stick fast against it (stick pushed 20 s, no movement)",
    "kind": "bug",
@@ -4137,6 +4145,14 @@
    "priority": 2,
    "stage": 7,
    "note": "Live on the status site"
+  },
+  {
+   "id": "uj91",
+   "title": "VM game crashed loading quest data during coc from the main menu",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ukyv",
