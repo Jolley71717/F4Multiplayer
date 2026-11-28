@@ -6,7 +6,18 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
 
 ## How it's made
 
-Built through agentic engineering: Claude Code (AI) writes most of the code, and I direct, review and test every change. Every build runs about 4,000 unit and component tests (the real server driven by simulated players, the loot engine against simulated games). Bugs are reproduced, and their fixes tested again, in two real copies of Fallout 4 playing together on two PCs, and every release candidate must pass a scripted run of the whole mod on them before it ships. The Nexus page carries the same disclosure.
+AI writes most of the code. Claude Code, Anthropic's coding agent, does the programming, and I run it the way I'd run any software project after more than 10 years as a software engineer. I decide what gets built, review the work and play it.
+
+That doesn't mean it's thrown together. Every change goes through the same steps:
+
+- A bug gets reproduced first, in two real copies of Fallout 4 playing together on two PCs.
+- The fix goes on its own branch and pull request, and GitHub builds and tests it.
+- About 4,000 automated tests run on every build. They include the real server with simulated players, and the loot rules run against a simulated game.
+- Every pull request gets a separate code review before it merges, and any new commit means a new review.
+- The same in-game test runs again to prove the fix. The test players walk, fight and open doors with real inputs. Nobody gets teleported to make a test pass.
+- Releases go out as a test build first and have to pass a scripted run of the whole mod on both PCs, about 300 checks. Bigger releases also have to survive a 90-minute session.
+
+All of it is public here: the code, every change and its review in the pull requests, and a [design document](docs/DESIGN.md) that explains how each part syncs and why. Over 700 changes have gone through this so far. If something breaks, the [bug form](https://github.com/Jolley71717/F4Multiplayer/issues/new/choose) is the quickest way to get it fixed. The Nexus page carries the same section.
 
 ## Playing together
 
