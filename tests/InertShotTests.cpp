@@ -280,3 +280,9 @@ TEST("InertShot: a shotgun's pellets are spread round the friend's aim, the firs
 	CHECK(SpreadOf(90.0f) == MAX_SPREAD);
 	CHECK(SpreadOf(std::numeric_limits<float>::quiet_NaN()) == DEFAULT_SPREAD);
 }
+
+TEST("InertShot: a launch the engine itself asks for always gets a projectile; only our own may come back empty")
+{
+	CHECK(!InertShot::MayComeBackEmpty(false));
+	CHECK(InertShot::MayComeBackEmpty(true));
+}
